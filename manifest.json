@@ -1,8 +1,8 @@
 {
   "name": "Album Inbox",
   "short_name": "Inbox",
-  "start_url": "/music-queue/",
-  "scope": "/music-queue/",
+  "start_url": "/groovepede/",
+  "scope": "/groovepede/",
   "display": "standalone",
   "background_color": "#121212",
   "theme_color": "#1DB954",
