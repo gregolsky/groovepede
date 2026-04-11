@@ -1,6 +1,6 @@
 {
-  "name": "Album Inbox",
-  "short_name": "Inbox",
+  "name": "Groovepede",
+  "short_name": "Groovepede",
   "start_url": "/groovepede/",
   "scope": "/groovepede/",
   "display": "standalone",
@@ -8,13 +8,13 @@
   "theme_color": "#1DB954",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/3050/3050201.png",
+      "src": "https://gregolsky.github.io/favicon.png",
       "sizes": "512x512",
       "type": "image/png"
     }
   ],
   "share_target": {
-    "action": "/music-queue/",
+    "action": "/groovepede/",
     "method": "GET",
     "params": {
       "title": "title",
