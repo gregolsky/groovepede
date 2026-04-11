@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Album Inbox</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; padding: 20px; }
+        .album-card { background: #1db954; color: black; padding: 15px; margin-bottom: 10px; border-radius: 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+        a { color: black; text-decoration: none; flex-grow: 1; }
+        .delete-btn { background: #000; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>💿 Must Listen</h1>
+    <div id="list"></div>
+
+    <script>
+        // 1. Handle the Share Target
+        window.addEventListener('DOMContentLoaded', () => {
+            const parsedUrl = new URL(window.location);
+            // Spotify shares links via the "text" or "url" param
+            const sharedLink = parsedUrl.searchParams.get('text') || parsedUrl.searchParams.get('url');
+
+            if (sharedLink) {
+                const cleanLink = sharedLink.match(/https:\/\/open\.spotify\.com\/album\/[a-zA-Z0-9]+/g);
+                if (cleanLink) {
+                    saveAlbum(cleanLink[0]);
+                    // Clean the URL so it doesn't re-add on refresh
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                }
+            }
+            render();
+        });
+
+        // 2. Storage Logic
+        function saveAlbum(url) {
+            let queue = JSON.parse(localStorage.getItem('albumInbox')) || [];
+            if (!queue.includes(url)) {
+                queue.push(url);
+                localStorage.setItem('albumInbox', JSON.stringify(queue));
+            }
+        }
+
+        function removeAlbum(index) {
+            let queue = JSON.parse(localStorage.getItem('albumInbox'));
+            queue.splice(index, 1);
+            localStorage.setItem('albumInbox', JSON.stringify(queue));
+            render();
+        }
+
+        function render() {
+            const queue = JSON.parse(localStorage.getItem('albumInbox')) || [];
+            const listDiv = document.getElementById('list');
+            listDiv.innerHTML = queue.map((link, i) => `
+                <div class="album-card">
+                    <a href="${link}" target="_blank">Listen to Album</a>
+                    <button class="delete-btn" onclick="removeAlbum(${i})">DONE</button>
+                </div>
+            `).join('');
+        }
+
+        // 3. Register Service Worker (Required for PWA)
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
+        }
+    </script>
+</body>
+</html>
