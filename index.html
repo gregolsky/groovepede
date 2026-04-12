@@ -18,7 +18,7 @@
       padding: 24px 16px 48px;
     }
 
-    .wrap { max-width: 540px; margin: 0 auto; }
+    .wrap { max-width: 560px; margin: 0 auto; }
 
     /* Header */
     .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
@@ -69,20 +69,23 @@
 
     /* Cards */
     .list { display: flex; flex-direction: column; gap: 10px; }
-    .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 14px; overflow: hidden; display: flex; align-items: stretch; transition: border-color 0.15s; }
+    .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 14px; overflow: hidden; transition: border-color 0.15s; }
     .card:hover { border-color: #3a3a3a; }
+    .card-main { display: flex; align-items: stretch; }
 
-    .card-cover { width: 88px; flex-shrink: 0; background: #222; }
+    .card-cover { width: 90px; flex-shrink: 0; background: #222; }
     .card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .card-cover-placeholder { width: 100%; height: 100%; min-height: 88px; display: flex; align-items: center; justify-content: center; }
+    .card-cover-placeholder { width: 100%; height: 100%; min-height: 90px; display: flex; align-items: center; justify-content: center; }
 
-    .card-body { flex: 1; min-width: 0; padding: 13px 14px; display: flex; flex-direction: column; gap: 4px; }
+    .card-body { flex: 1; min-width: 0; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
     .card-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .card-artist { font-size: 13px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .card-meta { font-size: 11px; color: #555; }
     .card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
-    .tag { font-size: 10px; padding: 2px 8px; border-radius: 20px; background: #222; border: 1px solid #333; color: #888; text-transform: capitalize; }
-    .tag.genre { border-color: #1DB95440; color: #1DB954; background: #1DB95415; }
+    .tag { font-size: 10px; padding: 2px 8px; border-radius: 20px; background: #222; border: 1px solid #333; color: #888; text-transform: capitalize; cursor: default; }
+    .tag.genre { border-color: #1DB95440; color: #1DB954; background: #1DB95415; cursor: pointer; }
+    .tag.genre:hover { background: #1DB95430; }
+    .tag.year { border-color: #ffffff20; color: #666; }
 
     .card-actions { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 12px 12px 12px 0; flex-shrink: 0; }
     .btn { height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid #333; background: transparent; color: #ccc; font-size: 12px; font-family: inherit; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: background 0.15s, border-color 0.15s; white-space: nowrap; }
@@ -91,6 +94,21 @@
     .btn-listen:hover { background: #1ed760; border-color: #1ed760; }
     .btn-done { color: #555; border-color: #2a2a2a; font-size: 11px; }
     .btn-done:hover { color: #888; }
+    .btn-expand { color: #555; border-color: #2a2a2a; font-size: 11px; }
+    .btn-expand:hover { color: #888; }
+
+    /* Artist panel */
+    .artist-panel { border-top: 1px solid #2a2a2a; padding: 14px 16px; display: none; }
+    .artist-panel.open { display: block; }
+    .artist-panel-header { font-size: 12px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+    .artist-bio { font-size: 13px; color: #999; line-height: 1.65; margin-bottom: 12px; }
+    .artist-bio a { color: #1DB954; text-decoration: none; }
+    .artist-bio a:hover { text-decoration: underline; }
+    .similar-label { font-size: 11px; color: #555; margin-bottom: 6px; }
+    .similar-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .similar-chip { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 1px solid #2a2a2a; color: #aaa; background: #161616; text-decoration: none; transition: all 0.15s; }
+    .similar-chip:hover { border-color: #444; color: #fff; background: #222; }
+    .loading-bio { font-size: 13px; color: #555; font-style: italic; }
 
     /* Empty state */
     .empty { text-align: center; padding: 3rem 1rem; }
@@ -128,6 +146,7 @@
 const CLIENT_ID    = 'f92bb3efa7834769a202cd583d3ddf5f';
 const REDIRECT     = 'https://gregolsky.github.io/groovepede/';
 const SCOPES       = 'user-read-private';
+const LASTFM_KEY   = '85219c8fc56c9e7cde4a4b9cb8a303d1';
 const STORAGE_KEY  = 'gp_albums';
 const DONE_KEY     = 'gp_done';
 const TOKEN_KEY    = 'gp_token';
@@ -189,16 +208,63 @@ async function spotifyGet(path) {
 async function fetchAlbumMeta(id) {
   const data = await spotifyGet('/albums/' + id);
   if (!data) return null;
+  const artistName = data.artists[0]?.name || '';
+  const albumName  = data.name;
+
+  // Fetch Last.fm tags in parallel
+  const lfmData = await fetchLastfmAlbum(artistName, albumName);
+
   return {
     id,
-    url:    data.external_urls.spotify,
-    title:  data.name,
-    artist: data.artists.map(a => a.name).join(', '),
-    cover:  (data.images[0] || {}).url || null,
-    year:   (data.release_date || '').slice(0, 4) || null,
-    genres: data.genres || [],
+    url:     data.external_urls.spotify,
+    title:   albumName,
+    artist:  data.artists.map(a => a.name).join(', '),
+    artistId: data.artists[0]?.id || null,
+    cover:   (data.images[0] || {}).url || null,
+    year:    (data.release_date || '').slice(0, 4) || null,
+    tags:    lfmData.tags,
     addedAt: new Date().toISOString(),
   };
+}
+
+// ── Last.fm API ───────────────────────────────────────────────────────────────
+const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
+
+async function lfmGet(params) {
+  const p = new URLSearchParams({ ...params, api_key: LASTFM_KEY, format: 'json' });
+  try {
+    const res = await fetch(LASTFM + '?' + p);
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
+
+async function fetchLastfmAlbum(artist, album) {
+  const data = await lfmGet({ method: 'album.getinfo', artist, album, autocorrect: '1' });
+  const tags = (data?.album?.tags?.tag || [])
+    .slice(0, 5)
+    .map(t => t.name.toLowerCase())
+    .filter(t => t.length > 1);
+  return { tags };
+}
+
+async function fetchLastfmArtist(artistName) {
+  const [infoData, similarData] = await Promise.all([
+    lfmGet({ method: 'artist.getinfo', artist: artistName, autocorrect: '1' }),
+    lfmGet({ method: 'artist.getsimilar', artist: artistName, limit: '6', autocorrect: '1' }),
+  ]);
+
+  // Bio — strip Last.fm "Read more" link, trim to ~400 chars
+  let bio = infoData?.artist?.bio?.summary || '';
+  bio = bio.replace(/<a href="https:\/\/www\.last\.fm[^"]*"[^>]*>.*?<\/a>/gi, '').trim();
+  bio = bio.replace(/<[^>]+>/g, '').trim();
+  if (bio.length > 420) bio = bio.slice(0, 420).replace(/\s+\S*$/, '') + '…';
+
+  const similar = (similarData?.similarartists?.artist || [])
+    .slice(0, 6)
+    .map(a => ({ name: a.name, url: a.url }));
+
+  return { bio, similar };
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────
@@ -213,9 +279,11 @@ function extractAlbumId(url) {
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let userProfile  = null;
-let activeFilter = 'all';
-let loadingAdd   = false;
+let userProfile   = null;
+let activeFilter  = 'all';
+let loadingAdd    = false;
+let expandedCards = new Set(); // album ids with open artist panel
+let artistCache   = {};        // artistName -> { bio, similar }
 
 function todayStr() { return new Date().toISOString().slice(0,10); }
 function timeAgo(iso) {
@@ -226,13 +294,12 @@ function timeAgo(iso) {
   if (h < 24) return h + 'h ago';
   return Math.floor(h/24) + 'd ago';
 }
-function allGenres(albums) {
+function allTags(albums) {
   const s = new Set();
-  albums.forEach(a => (a.genres||[]).forEach(g => s.add(g)));
+  albums.forEach(a => (a.tags||[]).forEach(t => s.add(t)));
   return [...s].sort();
 }
 
-// ── Spotify icon path ─────────────────────────────────────────────────────────
 const spotifyPath = 'M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.8 3.3-7.3 1.7-20-12.2-45.2-15-74.9-8.2-2.9.7-5.7-1.1-6.4-4-.7-2.9 1.1-5.7 4-6.4 32.5-7.4 60.4-4.2 82.9 9.5 2.5 1.6 3.3 4.9 1.7 7.4zm10.3-22.8c-2 3.1-6.1 4.1-9.2 2.1-22.9-14.1-57.8-18.1-84.9-9.9-3.4 1-7.1-.9-8.2-4.3-1-3.4.9-7.1 4.3-8.2 31-9.4 69.5-4.9 95.8 11.2 3.1 2 4.1 6.1 2.2 9.1zm.9-23.7C108.4 59 63.5 57.6 37.8 65.5c-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.7-9 79.1-7.3 110.3 11 3.7 2.2 4.9 6.9 2.7 10.5-2.1 3.7-6.9 4.9-10.5 2.7z';
 
 // ── Render auth area ──────────────────────────────────────────────────────────
@@ -268,7 +335,7 @@ function renderApp() {
         </svg>
       </div>
       <h2>Your album inbox</h2>
-      <p>Connect your Spotify account to save albums<br>with covers, artists, genres and release years.</p>
+      <p>Connect your Spotify account to save albums<br>with covers, artists, genres and more.</p>
       <button class="auth-btn" onclick="login()">
         <svg width="16" height="16" viewBox="0 0 168 168" fill="currentColor"><path d="${spotifyPath}"/></svg>
         Connect with Spotify
@@ -277,10 +344,10 @@ function renderApp() {
     return;
   }
 
-  const albums   = loadAlbums();
-  const genres   = allGenres(albums);
-  const visible  = activeFilter === 'all' ? albums : albums.filter(a => (a.genres||[]).includes(activeFilter));
-  const today    = todayStr();
+  const albums  = loadAlbums();
+  const tags    = allTags(albums);
+  const visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags||[]).includes(activeFilter));
+  const today   = todayStr();
   const addedToday = albums.filter(a => (a.addedAt||'').slice(0,10) === today).length;
 
   let html = `
@@ -296,10 +363,10 @@ function renderApp() {
       </button>
     </div>`;
 
-  if (genres.length) {
+  if (tags.length) {
     html += `<div class="filter-bar">
       <button class="filter-chip ${activeFilter==='all'?'active':''}" onclick="setFilter('all')">All</button>
-      ${genres.map(g => `<button class="filter-chip ${activeFilter===g?'active':''}" onclick="setFilter(${JSON.stringify(g)})">${g}</button>`).join('')}
+      ${tags.map(t => `<button class="filter-chip ${activeFilter===t?'active':''}" onclick="setFilter(${JSON.stringify(t)})">${t}</button>`).join('')}
     </div>`;
   }
 
@@ -313,36 +380,65 @@ function renderApp() {
           <circle cx="12" cy="12" r="1.5" fill="#444" stroke="none"/>
         </svg>
       </div>
-      <div class="empty-title">${activeFilter !== 'all' ? 'No albums in this genre' : 'Nothing queued yet'}</div>
+      <div class="empty-title">${activeFilter !== 'all' ? 'No albums with this tag' : 'Nothing queued yet'}</div>
       <div class="empty-body">${activeFilter !== 'all' ? 'Try a different filter.' : 'Share a Spotify album link to this app,<br>or paste one in the bar above.'}</div>
     </div>`;
   } else {
     visible.forEach(album => {
       const realIndex = albums.indexOf(album);
-      const tags = [
-        album.year ? `<span class="tag">${album.year}</span>` : '',
-        ...(album.genres||[]).map(g => `<span class="tag genre">${g}</span>`),
+      const isExpanded = expandedCards.has(album.id);
+      const cachedArtist = artistCache[album.artist];
+
+      const tagHtml = [
+        album.year ? `<span class="tag year">${album.year}</span>` : '',
+        ...(album.tags||[]).map(t => `<span class="tag genre" onclick="setFilter(${JSON.stringify(t)})">${t}</span>`),
       ].filter(Boolean).join('');
 
-      html += `<div class="card">
-        <div class="card-cover">
-          ${album.cover
-            ? `<img src="${album.cover}" alt="" loading="lazy">`
-            : `<div class="card-cover-placeholder"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.5" fill="#333" stroke="none"/></svg></div>`}
+      let panelHtml = '';
+      if (isExpanded) {
+        if (!cachedArtist) {
+          panelHtml = `<div class="artist-panel open" id="panel-${album.id}">
+            <div class="loading-bio">Loading artist info…</div>
+          </div>`;
+        } else {
+          const { bio, similar } = cachedArtist;
+          panelHtml = `<div class="artist-panel open" id="panel-${album.id}">
+            <div class="artist-panel-header">About ${album.artist}</div>
+            ${bio ? `<div class="artist-bio">${bio}</div>` : ''}
+            ${similar.length ? `
+              <div class="similar-label">Similar artists</div>
+              <div class="similar-list">
+                ${similar.map(a => `<a class="similar-chip" href="${a.url}" target="_blank">${a.name}</a>`).join('')}
+              </div>` : ''}
+          </div>`;
+        }
+      }
+
+      html += `<div class="card" id="card-${album.id}">
+        <div class="card-main">
+          <div class="card-cover">
+            ${album.cover
+              ? `<img src="${album.cover}" alt="" loading="lazy">`
+              : `<div class="card-cover-placeholder"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.5" fill="#333" stroke="none"/></svg></div>`}
+          </div>
+          <div class="card-body">
+            <div class="card-title">${album.title || 'Unknown album'}</div>
+            <div class="card-artist">${album.artist || ''}</div>
+            ${tagHtml ? `<div class="card-tags">${tagHtml}</div>` : ''}
+            <div class="card-meta">Added ${timeAgo(album.addedAt)}</div>
+          </div>
+          <div class="card-actions">
+            <button class="btn btn-listen" onclick="window.open(${JSON.stringify(album.url)},'_blank')">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
+              Listen
+            </button>
+            <button class="btn btn-expand" onclick="toggleArtist(${JSON.stringify(album.id)}, ${JSON.stringify(album.artist)})" title="Artist info">
+              ${isExpanded ? '▲ Less' : '▼ Artist'}
+            </button>
+            <button class="btn btn-done" onclick="markDone(${realIndex})">Done</button>
+          </div>
         </div>
-        <div class="card-body">
-          <div class="card-title">${album.title || 'Unknown album'}</div>
-          <div class="card-artist">${album.artist || ''}</div>
-          ${tags ? `<div class="card-tags">${tags}</div>` : ''}
-          <div class="card-meta">Added ${timeAgo(album.addedAt)}</div>
-        </div>
-        <div class="card-actions">
-          <button class="btn btn-listen" onclick="window.open(${JSON.stringify(album.url)},'_blank')">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
-            Listen
-          </button>
-          <button class="btn btn-done" onclick="markDone(${realIndex})">Done</button>
-        </div>
+        ${panelHtml}
       </div>`;
     });
   }
@@ -354,8 +450,26 @@ function renderApp() {
   document.getElementById('url-input').addEventListener('keydown', e => { if (e.key === 'Enter') handleAdd(); });
 }
 
+// ── Artist panel toggle ───────────────────────────────────────────────────────
+async function toggleArtist(albumId, artistName) {
+  if (expandedCards.has(albumId)) {
+    expandedCards.delete(albumId);
+    renderApp();
+    return;
+  }
+  expandedCards.add(albumId);
+  renderApp();
+
+  if (!artistCache[artistName]) {
+    const data = await fetchLastfmArtist(artistName);
+    artistCache[artistName] = data;
+    // Only re-render the panel if still expanded
+    if (expandedCards.has(albumId)) renderApp();
+  }
+}
+
 // ── Actions ───────────────────────────────────────────────────────────────────
-function setFilter(g) { activeFilter = g; renderApp(); }
+function setFilter(t) { activeFilter = t; renderApp(); }
 
 async function handleAdd() {
   const input = document.getElementById('url-input');
@@ -373,6 +487,8 @@ async function handleAdd() {
 
 function markDone(i) {
   const albums = loadAlbums();
+  const album  = albums[i];
+  if (album) expandedCards.delete(album.id);
   albums.splice(i, 1);
   saveAlbums(albums);
   saveDone(loadDone() + 1);
