@@ -1,72 +1,422 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Groovepede</title>
-    <link rel="manifest" href="manifest.json">
-    <link rel="icon" type="image/png" href="favicon.png">
-    <link rel="apple-touch-icon" href="favicon.png">
-    <style>
-        body { font-family: sans-serif; background: #121212; color: white; padding: 20px; }
-        .album-card { background: #1db954; color: black; padding: 15px; margin-bottom: 10px; border-radius: 8px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
-        a { color: black; text-decoration: none; flex-grow: 1; }
-        .delete-btn { background: #000; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Groovepede</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="favicon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #121212;
+      color: #fff;
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+    }
+
+    .wrap { max-width: 540px; margin: 0 auto; }
+
+    /* Header */
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .logo { width: 44px; height: 44px; border-radius: 50%; background: #1DB954; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .logo svg { width: 24px; height: 24px; }
+    .header-text h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+    .header-text p { font-size: 13px; color: #888; margin-top: 2px; }
+
+    /* Auth */
+    .auth-btn { height: 36px; padding: 0 16px; background: #1DB954; border: none; border-radius: 8px; color: #000; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .auth-btn:hover { background: #1ed760; }
+    .auth-btn.secondary { background: transparent; border: 1px solid #333; color: #888; font-weight: 400; }
+    .auth-btn.secondary:hover { border-color: #555; color: #ccc; background: #1a1a1a; }
+    .user-pill { display: flex; align-items: center; gap: 8px; }
+    .user-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+    .user-name { font-size: 13px; color: #888; }
+
+    /* Login screen */
+    .login-screen { text-align: center; padding: 5rem 1rem; }
+    .login-disc { width: 80px; height: 80px; border-radius: 50%; background: #1a1a1a; border: 1px solid #2a2a2a; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; }
+    .login-screen h2 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+    .login-screen p { font-size: 14px; color: #888; line-height: 1.6; margin-bottom: 28px; }
+    .login-screen .auth-btn { margin: 0 auto; width: fit-content; font-size: 14px; height: 42px; padding: 0 24px; }
+
+    /* Stats */
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
+    .stat { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 12px 14px; }
+    .stat-num { font-size: 22px; font-weight: 600; }
+    .stat-num.green { color: #1DB954; }
+    .stat-label { font-size: 12px; color: #888; margin-top: 2px; }
+
+    /* Add bar */
+    .add-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+    .add-input { flex: 1; height: 40px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; color: #fff; padding: 0 14px; font-size: 13px; font-family: inherit; outline: none; transition: border-color 0.15s; }
+    .add-input::placeholder { color: #555; }
+    .add-input:focus { border-color: #1DB954; }
+    .add-input.error { border-color: #e5534b; }
+    .add-btn { height: 40px; padding: 0 18px; background: #1DB954; border: none; border-radius: 8px; color: #000; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+    .add-btn:hover { background: #1ed760; }
+    .add-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Filter bar */
+    .filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .filter-chip { height: 28px; padding: 0 12px; border-radius: 20px; border: 1px solid #2a2a2a; background: transparent; color: #888; font-size: 12px; font-family: inherit; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+    .filter-chip:hover { border-color: #444; color: #ccc; }
+    .filter-chip.active { background: #1DB954; border-color: #1DB954; color: #000; font-weight: 600; }
+
+    /* Cards */
+    .list { display: flex; flex-direction: column; gap: 10px; }
+    .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 14px; overflow: hidden; display: flex; align-items: stretch; transition: border-color 0.15s; }
+    .card:hover { border-color: #3a3a3a; }
+
+    .card-cover { width: 88px; flex-shrink: 0; background: #222; }
+    .card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .card-cover-placeholder { width: 100%; height: 100%; min-height: 88px; display: flex; align-items: center; justify-content: center; }
+
+    .card-body { flex: 1; min-width: 0; padding: 13px 14px; display: flex; flex-direction: column; gap: 4px; }
+    .card-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-artist { font-size: 13px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-meta { font-size: 11px; color: #555; }
+    .card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+    .tag { font-size: 10px; padding: 2px 8px; border-radius: 20px; background: #222; border: 1px solid #333; color: #888; text-transform: capitalize; }
+    .tag.genre { border-color: #1DB95440; color: #1DB954; background: #1DB95415; }
+
+    .card-actions { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 12px 12px 12px 0; flex-shrink: 0; }
+    .btn { height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid #333; background: transparent; color: #ccc; font-size: 12px; font-family: inherit; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: background 0.15s, border-color 0.15s; white-space: nowrap; }
+    .btn:hover { background: #2a2a2a; border-color: #444; }
+    .btn-listen { background: #1DB954; border-color: #1DB954; color: #000; font-weight: 600; }
+    .btn-listen:hover { background: #1ed760; border-color: #1ed760; }
+    .btn-done { color: #555; border-color: #2a2a2a; font-size: 11px; }
+    .btn-done:hover { color: #888; }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 3rem 1rem; }
+    .empty-icon { width: 60px; height: 60px; border-radius: 50%; background: #1a1a1a; border: 1px solid #2a2a2a; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; }
+    .empty-title { font-size: 15px; font-weight: 600; color: #ccc; margin-bottom: 6px; }
+    .empty-body { font-size: 13px; color: #555; line-height: 1.7; }
+
+    /* Spinner */
+    .spinner { width: 14px; height: 14px; border: 2px solid rgba(0,0,0,0.3); border-top-color: #000; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
-    <h1>💿 Must Listen</h1>
-    <div id="list"></div>
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="#000" stroke-width="1.5"/>
+          <circle cx="12" cy="12" r="6"  stroke="#000" stroke-width="1.2"/>
+          <circle cx="12" cy="12" r="2.2" fill="#000"/>
+        </svg>
+      </div>
+      <div class="header-text">
+        <h1>Groovepede</h1>
+        <p>Your album listening inbox</p>
+      </div>
+    </div>
+    <div id="auth-area"></div>
+  </div>
+  <div id="app"></div>
+</div>
 
-    <script>
-        // 1. Handle the Share Target
-        window.addEventListener('DOMContentLoaded', () => {
-            const parsedUrl = new URL(window.location);
-            // Spotify shares links via the "text" or "url" param
-            const sharedLink = parsedUrl.searchParams.get('text') || parsedUrl.searchParams.get('url');
+<script>
+const CLIENT_ID    = 'f92bb3efa7834769a202cd583d3ddf5f';
+const REDIRECT     = 'https://gregolsky.github.io/groovepede/';
+const SCOPES       = 'user-read-private';
+const STORAGE_KEY  = 'gp_albums';
+const DONE_KEY     = 'gp_done';
+const TOKEN_KEY    = 'gp_token';
+const EXPIRY_KEY   = 'gp_expiry';
+const VERIFIER_KEY = 'gp_verifier';
 
-            if (sharedLink) {
-                const cleanLink = sharedLink.match(/https:\/\/open\.spotify\.com\/album\/[a-zA-Z0-9]+/g);
-                if (cleanLink) {
-                    saveAlbum(cleanLink[0]);
-                    // Clean the URL so it doesn't re-add on refresh
-                    window.history.replaceState({}, document.title, window.location.pathname);
-                }
-            }
-            render();
-        });
+// ── PKCE ──────────────────────────────────────────────────────────────────────
+function randomStr(len) {
+  const arr = new Uint8Array(len);
+  crypto.getRandomValues(arr);
+  return btoa(String.fromCharCode(...arr)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+}
+async function sha256(plain) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
+  return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+}
 
-        // 2. Storage Logic
-        function saveAlbum(url) {
-            let queue = JSON.parse(localStorage.getItem('albumInbox')) || [];
-            if (!queue.includes(url)) {
-                queue.push(url);
-                localStorage.setItem('albumInbox', JSON.stringify(queue));
-            }
+// ── Token ─────────────────────────────────────────────────────────────────────
+function getToken()   { return localStorage.getItem(TOKEN_KEY); }
+function tokenValid() { return !!getToken() && Date.now() < parseInt(localStorage.getItem(EXPIRY_KEY)||'0'); }
+function clearToken() { [TOKEN_KEY, EXPIRY_KEY, VERIFIER_KEY].forEach(k => localStorage.removeItem(k)); }
+
+async function login() {
+  const verifier  = randomStr(64);
+  const challenge = await sha256(verifier);
+  localStorage.setItem(VERIFIER_KEY, verifier);
+  const p = new URLSearchParams({ client_id: CLIENT_ID, response_type: 'code',
+    redirect_uri: REDIRECT, scope: SCOPES,
+    code_challenge_method: 'S256', code_challenge: challenge });
+  window.location = 'https://accounts.spotify.com/authorize?' + p;
+}
+
+async function exchangeCode(code) {
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'authorization_code', code,
+      redirect_uri: REDIRECT, client_id: CLIENT_ID,
+      code_verifier: localStorage.getItem(VERIFIER_KEY) }),
+  });
+  const data = await res.json();
+  if (data.access_token) {
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+    localStorage.setItem(EXPIRY_KEY, Date.now() + data.expires_in * 1000);
+    localStorage.removeItem(VERIFIER_KEY);
+    return true;
+  }
+  return false;
+}
+
+// ── Spotify API ───────────────────────────────────────────────────────────────
+async function spotifyGet(path) {
+  const res = await fetch('https://api.spotify.com/v1' + path,
+    { headers: { Authorization: 'Bearer ' + getToken() } });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+async function fetchAlbumMeta(id) {
+  const data = await spotifyGet('/albums/' + id);
+  if (!data) return null;
+  return {
+    id,
+    url:    data.external_urls.spotify,
+    title:  data.name,
+    artist: data.artists.map(a => a.name).join(', '),
+    cover:  (data.images[0] || {}).url || null,
+    year:   (data.release_date || '').slice(0, 4) || null,
+    genres: data.genres || [],
+    addedAt: new Date().toISOString(),
+  };
+}
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+function loadAlbums()  { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; } }
+function saveAlbums(a) { localStorage.setItem(STORAGE_KEY, JSON.stringify(a)); }
+function loadDone()    { return parseInt(localStorage.getItem(DONE_KEY) || '0'); }
+function saveDone(n)   { localStorage.setItem(DONE_KEY, String(n)); }
+
+function extractAlbumId(url) {
+  const m = url.match(/spotify\.com\/album\/([a-zA-Z0-9]+)/);
+  return m ? m[1] : null;
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let userProfile  = null;
+let activeFilter = 'all';
+let loadingAdd   = false;
+
+function todayStr() { return new Date().toISOString().slice(0,10); }
+function timeAgo(iso) {
+  const d = Date.now() - new Date(iso).getTime(), m = Math.floor(d/60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m/60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h/24) + 'd ago';
+}
+function allGenres(albums) {
+  const s = new Set();
+  albums.forEach(a => (a.genres||[]).forEach(g => s.add(g)));
+  return [...s].sort();
+}
+
+// ── Spotify icon path ─────────────────────────────────────────────────────────
+const spotifyPath = 'M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.8 3.3-7.3 1.7-20-12.2-45.2-15-74.9-8.2-2.9.7-5.7-1.1-6.4-4-.7-2.9 1.1-5.7 4-6.4 32.5-7.4 60.4-4.2 82.9 9.5 2.5 1.6 3.3 4.9 1.7 7.4zm10.3-22.8c-2 3.1-6.1 4.1-9.2 2.1-22.9-14.1-57.8-18.1-84.9-9.9-3.4 1-7.1-.9-8.2-4.3-1-3.4.9-7.1 4.3-8.2 31-9.4 69.5-4.9 95.8 11.2 3.1 2 4.1 6.1 2.2 9.1zm.9-23.7C108.4 59 63.5 57.6 37.8 65.5c-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.7-9 79.1-7.3 110.3 11 3.7 2.2 4.9 6.9 2.7 10.5-2.1 3.7-6.9 4.9-10.5 2.7z';
+
+// ── Render auth area ──────────────────────────────────────────────────────────
+function renderAuthArea() {
+  const el = document.getElementById('auth-area');
+  if (!tokenValid()) {
+    el.innerHTML = `<button class="auth-btn" onclick="login()">
+      <svg width="14" height="14" viewBox="0 0 168 168" fill="currentColor"><path d="${spotifyPath}"/></svg>
+      Connect Spotify
+    </button>`;
+  } else {
+    const img  = userProfile?.images?.[0]?.url;
+    const name = userProfile?.display_name || '';
+    el.innerHTML = `<div class="user-pill">
+      ${img ? `<img class="user-avatar" src="${img}" alt="">` : ''}
+      ${name ? `<span class="user-name">${name}</span>` : ''}
+      <button class="auth-btn secondary" onclick="logout()">Log out</button>
+    </div>`;
+  }
+}
+
+// ── Render main app ───────────────────────────────────────────────────────────
+function renderApp() {
+  const app = document.getElementById('app');
+
+  if (!tokenValid()) {
+    app.innerHTML = `<div class="login-screen">
+      <div class="login-disc">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="#333" stroke-width="1.2"/>
+          <circle cx="12" cy="12" r="6"  stroke="#333" stroke-width="1"/>
+          <circle cx="12" cy="12" r="2"  fill="#333"/>
+        </svg>
+      </div>
+      <h2>Your album inbox</h2>
+      <p>Connect your Spotify account to save albums<br>with covers, artists, genres and release years.</p>
+      <button class="auth-btn" onclick="login()">
+        <svg width="16" height="16" viewBox="0 0 168 168" fill="currentColor"><path d="${spotifyPath}"/></svg>
+        Connect with Spotify
+      </button>
+    </div>`;
+    return;
+  }
+
+  const albums   = loadAlbums();
+  const genres   = allGenres(albums);
+  const visible  = activeFilter === 'all' ? albums : albums.filter(a => (a.genres||[]).includes(activeFilter));
+  const today    = todayStr();
+  const addedToday = albums.filter(a => (a.addedAt||'').slice(0,10) === today).length;
+
+  let html = `
+    <div class="stats">
+      <div class="stat"><div class="stat-num">${albums.length}</div><div class="stat-label">queued</div></div>
+      <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
+      <div class="stat"><div class="stat-num">${addedToday}</div><div class="stat-label">added today</div></div>
+    </div>
+    <div class="add-bar">
+      <input class="add-input" id="url-input" placeholder="Paste a Spotify album link…">
+      <button class="add-btn" id="add-btn" ${loadingAdd ? 'disabled' : ''}>
+        ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
+      </button>
+    </div>`;
+
+  if (genres.length) {
+    html += `<div class="filter-bar">
+      <button class="filter-chip ${activeFilter==='all'?'active':''}" onclick="setFilter('all')">All</button>
+      ${genres.map(g => `<button class="filter-chip ${activeFilter===g?'active':''}" onclick="setFilter(${JSON.stringify(g)})">${g}</button>`).join('')}
+    </div>`;
+  }
+
+  html += `<div class="list">`;
+
+  if (!visible.length) {
+    html += `<div class="empty">
+      <div class="empty-icon">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="1.2">
+          <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>
+          <circle cx="12" cy="12" r="1.5" fill="#444" stroke="none"/>
+        </svg>
+      </div>
+      <div class="empty-title">${activeFilter !== 'all' ? 'No albums in this genre' : 'Nothing queued yet'}</div>
+      <div class="empty-body">${activeFilter !== 'all' ? 'Try a different filter.' : 'Share a Spotify album link to this app,<br>or paste one in the bar above.'}</div>
+    </div>`;
+  } else {
+    visible.forEach(album => {
+      const realIndex = albums.indexOf(album);
+      const tags = [
+        album.year ? `<span class="tag">${album.year}</span>` : '',
+        ...(album.genres||[]).map(g => `<span class="tag genre">${g}</span>`),
+      ].filter(Boolean).join('');
+
+      html += `<div class="card">
+        <div class="card-cover">
+          ${album.cover
+            ? `<img src="${album.cover}" alt="" loading="lazy">`
+            : `<div class="card-cover-placeholder"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.5" fill="#333" stroke="none"/></svg></div>`}
+        </div>
+        <div class="card-body">
+          <div class="card-title">${album.title || 'Unknown album'}</div>
+          <div class="card-artist">${album.artist || ''}</div>
+          ${tags ? `<div class="card-tags">${tags}</div>` : ''}
+          <div class="card-meta">Added ${timeAgo(album.addedAt)}</div>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-listen" onclick="window.open(${JSON.stringify(album.url)},'_blank')">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
+            Listen
+          </button>
+          <button class="btn btn-done" onclick="markDone(${realIndex})">Done</button>
+        </div>
+      </div>`;
+    });
+  }
+
+  html += '</div>';
+  app.innerHTML = html;
+
+  document.getElementById('add-btn').addEventListener('click', handleAdd);
+  document.getElementById('url-input').addEventListener('keydown', e => { if (e.key === 'Enter') handleAdd(); });
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+function setFilter(g) { activeFilter = g; renderApp(); }
+
+async function handleAdd() {
+  const input = document.getElementById('url-input');
+  const id    = extractAlbumId(input.value.trim());
+  if (!id) { input.classList.add('error'); setTimeout(() => input.classList.remove('error'), 1200); return; }
+  const albums = loadAlbums();
+  if (albums.find(a => a.id === id)) { input.value = ''; return; }
+  loadingAdd = true; renderApp();
+  const meta = await fetchAlbumMeta(id);
+  if (meta) { albums.push(meta); saveAlbums(albums); }
+  loadingAdd = false; renderApp();
+  const inp = document.getElementById('url-input');
+  if (inp) inp.value = '';
+}
+
+function markDone(i) {
+  const albums = loadAlbums();
+  albums.splice(i, 1);
+  saveAlbums(albums);
+  saveDone(loadDone() + 1);
+  renderApp();
+}
+
+function logout() { clearToken(); userProfile = null; renderAuthArea(); renderApp(); }
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+async function boot() {
+  const params = new URLSearchParams(window.location.search);
+  const code   = params.get('code');
+  const shared = params.get('text') || params.get('url');
+
+  if (code) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    await exchangeCode(code);
+  }
+
+  renderAuthArea();
+  renderApp();
+
+  if (tokenValid()) {
+    userProfile = await spotifyGet('/me');
+    renderAuthArea();
+
+    if (shared) {
+      const id = extractAlbumId(shared);
+      if (id) {
+        const albums = loadAlbums();
+        if (!albums.find(a => a.id === id)) {
+          const meta = await fetchAlbumMeta(id);
+          if (meta) { albums.push(meta); saveAlbums(albums); }
         }
+        window.history.replaceState({}, document.title, window.location.pathname);
+        renderApp();
+      }
+    }
+  }
 
-        function removeAlbum(index) {
-            let queue = JSON.parse(localStorage.getItem('albumInbox'));
-            queue.splice(index, 1);
-            localStorage.setItem('albumInbox', JSON.stringify(queue));
-            render();
-        }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+}
 
-        function render() {
-            const queue = JSON.parse(localStorage.getItem('albumInbox')) || [];
-            const listDiv = document.getElementById('list');
-            listDiv.innerHTML = queue.map((link, i) => `
-                <div class="album-card">
-                    <a href="${link}" target="_blank">Listen to Album</a>
-                    <button class="delete-btn" onclick="removeAlbum(${i})">DONE</button>
-                </div>
-            `).join('');
-        }
-
-        // 3. Register Service Worker (Required for PWA)
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js');
-        }
-    </script>
+boot();
+</script>
 </body>
 </html>
