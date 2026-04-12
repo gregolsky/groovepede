@@ -1,0 +1,48 @@
+import { CLIENT_ID, REDIRECT, SCOPES, TOKEN_KEY, EXPIRY_KEY, VERIFIER_KEY } from './config.js';
+
+function randomStr(len) {
+  const arr = new Uint8Array(len);
+  crypto.getRandomValues(arr);
+  return btoa(String.fromCharCode(...arr)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+async function sha256(plain) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
+  return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+export function getToken()   { return localStorage.getItem(TOKEN_KEY); }
+export function tokenValid() { return !!getToken() && Date.now() < parseInt(localStorage.getItem(EXPIRY_KEY) || '0'); }
+export function clearToken() { [TOKEN_KEY, EXPIRY_KEY, VERIFIER_KEY].forEach(k => localStorage.removeItem(k)); }
+
+export async function login() {
+  const verifier  = randomStr(64);
+  const challenge = await sha256(verifier);
+  localStorage.setItem(VERIFIER_KEY, verifier);
+  const p = new URLSearchParams({
+    client_id: CLIENT_ID, response_type: 'code',
+    redirect_uri: REDIRECT, scope: SCOPES,
+    code_challenge_method: 'S256', code_challenge: challenge,
+  });
+  window.location = 'https://accounts.spotify.com/authorize?' + p;
+}
+
+export async function exchangeCode(code) {
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code', code,
+      redirect_uri: REDIRECT, client_id: CLIENT_ID,
+      code_verifier: localStorage.getItem(VERIFIER_KEY),
+    }),
+  });
+  const data = await res.json();
+  if (data.access_token) {
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+    localStorage.setItem(EXPIRY_KEY, Date.now() + data.expires_in * 1000);
+    localStorage.removeItem(VERIFIER_KEY);
+    return true;
+  }
+  return false;
+}

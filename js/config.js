@@ -1,0 +1,9 @@
+export const CLIENT_ID    = 'f92bb3efa7834769a202cd583d3ddf5f';
+export const REDIRECT     = 'https://gregolsky.github.io/groovepede/';
+export const SCOPES       = 'user-read-private';
+export const LASTFM_KEY   = '85219c8fc56c9e7cde4a4b9cb8a303d1';
+export const STORAGE_KEY  = 'gp_albums';
+export const DONE_KEY     = 'gp_done';
+export const TOKEN_KEY    = 'gp_token';
+export const EXPIRY_KEY   = 'gp_expiry';
+export const VERIFIER_KEY = 'gp_verifier';
