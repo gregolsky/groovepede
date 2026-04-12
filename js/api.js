@@ -34,11 +34,30 @@ export async function fetchAlbumMeta(id) {
 // onUpdate() is called after storage is written so the caller can re-render.
 export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate) {
   const primaryArtist = artistName.split(',')[0].trim();
-  const lfmData = await fetchLastfmAlbum(primaryArtist, albumTitle);
-  if (!lfmData.tags.length) return;
+
+  // Fetch artist + album tags in parallel; artist tags take priority
+  const [artistTags, albumData] = await Promise.all([
+    fetchArtistTags(primaryArtist),
+    fetchLastfmAlbum(primaryArtist, albumTitle),
+  ]);
+
+  // Merge: artist tags first, then album tags that aren't duplicates
+  const seen = new Set(artistTags);
+  const merged = [...artistTags];
+  for (const t of albumData.tags) {
+    if (!seen.has(t)) { merged.push(t); seen.add(t); }
+  }
+
+  // Fall back to similar artists if we still have nothing
+  let tags = merged;
+  if (!tags.length) {
+    tags = await fetchTagsFromSimilarArtists(primaryArtist);
+  }
+
+  if (!tags.length) return;
   const albums = loadAlbums();
   const album = albums.find(x => x.id === albumId);
-  if (album) { album.tags = lfmData.tags; saveAlbums(albums); onUpdate?.(); }
+  if (album) { album.tags = tags.slice(0, 7); saveAlbums(albums); onUpdate?.(); }
 }
 
 // ── Last.fm ───────────────────────────────────────────────────────────────────
@@ -57,11 +76,46 @@ async function lfmGet(params) {
 
 export async function fetchLastfmAlbum(artist, album) {
   const data = await lfmGet({ method: 'album.getinfo', artist, album, autocorrect: '1' });
-  const tags = (data?.album?.tags?.tag || [])
-    .slice(0, 5)
-    .map(t => t.name.toLowerCase())
-    .filter(t => t.length > 1);
+  const tags = cleanTags((data?.album?.tags?.tag || []).slice(0, 5));
   return { tags };
+}
+
+const YEAR_RE = /^\d{4}s?$/;
+const JUNK_TAGS = new Set(['seen live', 'favorites', 'favourite', 'under 2000 listeners']);
+
+function cleanTags(rawTags) {
+  return rawTags
+    .map(t => t.name.toLowerCase())
+    .filter(t => t.length > 1 && !YEAR_RE.test(t) && !JUNK_TAGS.has(t));
+}
+
+async function fetchArtistTags(artist) {
+  const data = await lfmGet({ method: 'artist.gettoptags', artist, autocorrect: '1' });
+  return cleanTags((data?.toptags?.tag || []).filter(t => t.count >= 20).slice(0, 5));
+}
+
+async function fetchTagsFromSimilarArtists(artist) {
+  const simData = await lfmGet({ method: 'artist.getsimilar', artist, limit: '4', autocorrect: '1' });
+  const simArtists = (simData?.similarartists?.artist || []).slice(0, 4);
+  const counts = {};
+  const results = await Promise.all(
+    simArtists.map(a => lfmGet({ method: 'artist.gettoptags', artist: a.name, autocorrect: '1' }))
+  );
+  for (const data of results) {
+    const tags = (data?.toptags?.tag || []).filter(t => t.count >= 40).slice(0, 3);
+    for (const t of tags) {
+      const name = t.name.toLowerCase();
+      if (name.length > 1 && !YEAR_RE.test(name) && !JUNK_TAGS.has(name)) {
+        counts[name] = (counts[name] || 0) + 1;
+      }
+    }
+  }
+  // Keep tags that appear in at least 2 similar artists
+  return Object.entries(counts)
+    .filter(([, c]) => c >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name]) => name);
 }
 
 export async function fetchLastfmArtist(artistName) {
