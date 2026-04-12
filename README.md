@@ -11,8 +11,9 @@ Groovepede is a minimalist, local-first PWA inbox for Spotify albums. Save album
 ## Features
 
 - **Share sheet integration** — share any Spotify album directly to Groovepede from the Spotify app
-- **Album metadata** — covers, artist names, release year and genres fetched from the Spotify API
-- **Genre filtering** — filter your queue by genre as it builds up
+- **Album metadata** — covers, artist names, and release year from the Spotify API; genre tags from Last.fm
+- **Artist info** — expand any album card to see an artist bio and similar artists, powered by Last.fm
+- **Genre filtering** — filter your queue by Last.fm genre tags as they build up
 - **Listening stats** — track how many albums you've queued, listened to, and added today
 - **Installable PWA** — add to your home screen on Android or desktop, works offline
 - **Local-first** — all data lives in your browser's localStorage, nothing is sent anywhere
@@ -31,6 +32,7 @@ No build step, no framework, no dependencies. Plain HTML + native ES modules. De
 
 - Spotify OAuth using the [PKCE flow](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow) — no backend required, no secrets stored
 - [Spotify Web API](https://developer.spotify.com/documentation/web-api) for album metadata
+- [Last.fm API](https://www.last.fm/api) for genre tags, artist bios, and similar artist recommendations
 - Service worker for offline support and PWA installability
 - `localStorage` for persistent album storage
 

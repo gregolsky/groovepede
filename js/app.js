@@ -143,6 +143,14 @@ async function boot() {
     }
   }
 
+  // Enrich any albums missing Last.fm tags
+  const albums = loadAlbums();
+  for (const album of albums) {
+    if ((!album.tags || !album.tags.length) && album.artist && album.title) {
+      enrichWithLastfm(album.id, album.artist, album.title, rerender);
+    }
+  }
+
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 }
 
