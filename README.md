@@ -1,4 +1,4 @@
-# 💿 Groovepede
+# ![Groovepede](favicon.png) Groovepede
 
 **Never lose a great album recommendation again.**
 
@@ -27,7 +27,7 @@ Groovepede is a minimalist, local-first PWA inbox for Spotify albums. Save album
 
 ## Tech
 
-A single `index.html` with no build step, no framework, no dependencies. Deployed via GitHub Pages.
+No build step, no framework, no dependencies. Plain HTML + native ES modules. Deployed via GitHub Pages.
 
 - Spotify OAuth using the [PKCE flow](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow) — no backend required, no secrets stored
 - [Spotify Web API](https://developer.spotify.com/documentation/web-api) for album metadata
@@ -41,7 +41,7 @@ If you want to run your own instance:
 1. Fork this repo
 2. Enable GitHub Pages on the `main` branch
 3. Create a [Spotify Developer app](https://developer.spotify.com/dashboard) and set the redirect URI to your Pages URL
-4. Replace the `CLIENT_ID` value in `index.html` with your own
+4. Replace the `CLIENT_ID` value in `js/config.js` with your own
 5. Push — that's it
 
 ## Privacy
