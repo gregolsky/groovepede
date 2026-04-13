@@ -86,7 +86,7 @@ const JUNK_TAGS = new Set(['seen live', 'favorites', 'favourite', 'under 2000 li
 function cleanTags(rawTags) {
   return rawTags
     .map(t => t.name.toLowerCase())
-    .filter(t => t.length > 1 && !YEAR_RE.test(t) && !JUNK_TAGS.has(t));
+    .filter(t => t.length > 1 && t.length <= 25 && !YEAR_RE.test(t) && !JUNK_TAGS.has(t));
 }
 
 async function fetchArtistTags(artist) {
@@ -105,7 +105,7 @@ async function fetchTagsFromSimilarArtists(artist) {
     const tags = (data?.toptags?.tag || []).filter(t => t.count >= 15).slice(0, 5);
     for (const t of tags) {
       const name = t.name.toLowerCase();
-      if (name.length > 1 && !YEAR_RE.test(name) && !JUNK_TAGS.has(name)) {
+      if (name.length > 1 && name.length <= 25 && !YEAR_RE.test(name) && !JUNK_TAGS.has(name)) {
         counts[name] = (counts[name] || 0) + 1;
       }
     }
