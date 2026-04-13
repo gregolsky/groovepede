@@ -1,4 +1,4 @@
-import { login, clearToken, tokenValid, exchangeCode } from './auth.js';
+import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId } from './storage.js';
 import { renderAuthArea, renderApp } from './render.js';
@@ -119,6 +119,11 @@ async function boot() {
     await exchangeCode(code);
   }
 
+  // Silently refresh expired token if we have a refresh token
+  if (!tokenValid()) {
+    await refreshAccessToken();
+  }
+
   rerender();
 
   if (!tokenValid()) return;
@@ -143,10 +148,12 @@ async function boot() {
     }
   }
 
-  // Enrich any albums missing Last.fm tags
+  // Enrich any albums missing meaningful Last.fm tags
   const albums = loadAlbums();
+  const yearOnly = /^\d{4}s?$/;
   for (const album of albums) {
-    if ((!album.tags || !album.tags.length) && album.artist && album.title) {
+    const hasMeaningfulTags = (album.tags || []).some(t => !yearOnly.test(t));
+    if (!hasMeaningfulTags && album.artist && album.title) {
       enrichWithLastfm(album.id, album.artist, album.title, rerender);
     }
   }

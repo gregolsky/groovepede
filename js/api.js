@@ -91,7 +91,7 @@ function cleanTags(rawTags) {
 
 async function fetchArtistTags(artist) {
   const data = await lfmGet({ method: 'artist.gettoptags', artist, autocorrect: '1' });
-  return cleanTags((data?.toptags?.tag || []).filter(t => t.count >= 20).slice(0, 5));
+  return cleanTags((data?.toptags?.tag || []).filter(t => t.count >= 5).slice(0, 5));
 }
 
 async function fetchTagsFromSimilarArtists(artist) {
@@ -102,7 +102,7 @@ async function fetchTagsFromSimilarArtists(artist) {
     simArtists.map(a => lfmGet({ method: 'artist.gettoptags', artist: a.name, autocorrect: '1' }))
   );
   for (const data of results) {
-    const tags = (data?.toptags?.tag || []).filter(t => t.count >= 40).slice(0, 3);
+    const tags = (data?.toptags?.tag || []).filter(t => t.count >= 15).slice(0, 5);
     for (const t of tags) {
       const name = t.name.toLowerCase();
       if (name.length > 1 && !YEAR_RE.test(name) && !JUNK_TAGS.has(name)) {

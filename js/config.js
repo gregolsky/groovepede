@@ -7,3 +7,4 @@ export const DONE_KEY     = 'gp_done';
 export const TOKEN_KEY    = 'gp_token';
 export const EXPIRY_KEY   = 'gp_expiry';
 export const VERIFIER_KEY = 'gp_verifier';
+export const REFRESH_KEY  = 'gp_refresh';
