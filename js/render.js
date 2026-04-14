@@ -85,7 +85,7 @@ export function renderApp(el, { activeFilter, loadingAdd, expandedCards, artistC
       <div class="stat"><div class="stat-num">${addedToday}</div><div class="stat-label">added today</div></div>
     </div>
     <div class="add-bar">
-      <input class="add-input" id="url-input" placeholder="Paste a Spotify album link…">
+      <input class="add-input" id="url-input" placeholder="Paste a Spotify album link or ID…">
       <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
         ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
       </button>
