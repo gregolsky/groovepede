@@ -55,18 +55,20 @@ export function renderApp(el, { activeFilter, loadingAdd, expandedCards, artistC
   if (!tokenValid()) {
     el.innerHTML = `
       <div class="login-screen">
-        <div class="login-disc">
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="10" stroke="#333" stroke-width="1.2"/>
-            <circle cx="12" cy="12" r="6"  stroke="#333" stroke-width="1"/>
-            <circle cx="12" cy="12" r="2"  fill="#333"/>
-          </svg>
-        </div>
-        <h2>Your album inbox</h2>
-        <p>Connect your Spotify account to save albums<br>with covers, artists, genres and more.</p>
+        <img class="login-logo" src="favicon.png" alt="Groovepede">
+
+        <h2>Never lose a great album recommendation again.</h2>
+        <p>Groovepede is a minimalist listening queue for Spotify albums. Save albums, browse them by genre, and check them off as you listen.</p>
+        <ul class="login-features">
+          <li>Share Spotify albums straight from your phone</li>
+          <li>Auto-tagged with genres from Last.fm</li>
+          <li>Artist bios and similar artists on every card</li>
+          <li>Works offline — install it as an app</li>
+        </ul>
         <button class="auth-btn" data-action="login">
           ${spotifyIcon(16, 16)} Connect with Spotify
         </button>
+        <p class="login-privacy">Local-first. Your queue stays in your browser — nothing is sent anywhere except Spotify and Last.fm for metadata.</p>
       </div>`;
     return;
   }

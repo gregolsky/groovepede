@@ -38,11 +38,15 @@
     .user-name { font-size: 13px; color: #888; }
 
     /* Login screen */
-    .login-screen { text-align: center; padding: 5rem 1rem; }
-    .login-disc { width: 80px; height: 80px; border-radius: 50%; background: #1a1a1a; border: 1px solid #2a2a2a; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; }
-    .login-screen h2 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
-    .login-screen p { font-size: 14px; color: #888; line-height: 1.6; margin-bottom: 28px; }
+    .login-screen { text-align: center; padding: 3.5rem 1rem 4rem; }
+    .login-logo { width: 96px; height: 96px; border-radius: 22px; display: block; margin: 0 auto 24px; box-shadow: 0 6px 24px rgba(29, 185, 84, 0.15); }
+    .login-screen h2 { font-size: 19px; font-weight: 600; margin-bottom: 10px; line-height: 1.35; max-width: 340px; margin-left: auto; margin-right: auto; }
+    .login-screen p { font-size: 14px; color: #888; line-height: 1.6; margin-bottom: 20px; max-width: 340px; margin-left: auto; margin-right: auto; }
+    .login-features { list-style: none; text-align: left; max-width: 320px; margin: 0 auto 28px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+    .login-features li { position: relative; padding-left: 22px; font-size: 13.5px; color: #bbb; line-height: 1.5; }
+    .login-features li::before { content: ''; position: absolute; left: 0; top: 7px; width: 8px; height: 8px; border-radius: 50%; background: #1DB954; }
     .login-screen .auth-btn { margin: 0 auto; width: fit-content; font-size: 14px; height: 42px; padding: 0 24px; }
+    .login-privacy { font-size: 12px; color: #555; margin-top: 24px; margin-bottom: 0; line-height: 1.55; }
 
     /* Stats */
     .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
