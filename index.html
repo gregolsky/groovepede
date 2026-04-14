@@ -3,10 +3,52 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Groovepede</title>
+  <title>Groovepede — Your Spotify album listening inbox</title>
+  <meta name="description" content="A minimalist, local-first PWA for queuing Spotify albums. Save recommendations, browse them by genre from Last.fm, see artist bios, and check them off as you listen.">
+  <meta name="keywords" content="spotify, albums, music queue, listening list, last.fm, pwa, music recommendations">
+  <meta name="author" content="Grzegorz Lachowski">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#1DB954">
+  <link rel="canonical" href="https://gregolsky.github.io/groovepede/">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://gregolsky.github.io/groovepede/">
+  <meta property="og:title" content="Groovepede — Your Spotify album listening inbox">
+  <meta property="og:description" content="Never lose a great album recommendation again. Save Spotify albums, browse them by genre from Last.fm, and check them off as you listen.">
+  <meta property="og:image" content="https://gregolsky.github.io/groovepede/favicon.png">
+  <meta property="og:image:width" content="1024">
+  <meta property="og:image:height" content="1024">
+  <meta property="og:image:alt" content="Groovepede logo">
+  <meta property="og:site_name" content="Groovepede">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:url" content="https://gregolsky.github.io/groovepede/">
+  <meta name="twitter:title" content="Groovepede — Your Spotify album listening inbox">
+  <meta name="twitter:description" content="Never lose a great album recommendation again. Save Spotify albums, browse them by genre from Last.fm, and check them off as you listen.">
+  <meta name="twitter:image" content="https://gregolsky.github.io/groovepede/favicon.png">
+  <meta name="twitter:image:alt" content="Groovepede logo">
+
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="favicon.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Groovepede",
+    "url": "https://gregolsky.github.io/groovepede/",
+    "description": "A minimalist, local-first PWA for queuing Spotify albums. Save recommendations, browse them by genre from Last.fm, see artist bios, and check them off as you listen.",
+    "applicationCategory": "MusicApplication",
+    "operatingSystem": "Any",
+    "browserRequirements": "Requires JavaScript. Requires HTML5.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "author": { "@type": "Person", "name": "Grzegorz Lachowski" }
+  }
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

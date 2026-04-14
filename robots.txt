@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://gregolsky.github.io/groovepede/sitemap.xml
