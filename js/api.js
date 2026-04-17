@@ -1,5 +1,5 @@
 import { LASTFM_KEY } from './config.js';
-import { getToken } from './auth.js';
+import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums } from './storage.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
@@ -9,6 +9,14 @@ const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
 export async function spotifyGet(path) {
   const res = await fetch('https://api.spotify.com/v1' + path,
     { headers: { Authorization: 'Bearer ' + getToken() } });
+  if (res.status === 401) {
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) return null;
+    const retry = await fetch('https://api.spotify.com/v1' + path,
+      { headers: { Authorization: 'Bearer ' + getToken() } });
+    if (!retry.ok) return null;
+    return retry.json();
+  }
   if (!res.ok) return null;
   return res.json();
 }

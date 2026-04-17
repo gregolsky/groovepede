@@ -13,6 +13,7 @@ async function sha256(plain) {
 
 export function getToken()   { return localStorage.getItem(TOKEN_KEY); }
 export function tokenValid() { return !!getToken() && Date.now() < parseInt(localStorage.getItem(EXPIRY_KEY) || '0'); }
+export function hasSession() { return tokenValid() || !!localStorage.getItem(REFRESH_KEY); }
 export function clearToken() { [TOKEN_KEY, EXPIRY_KEY, VERIFIER_KEY, REFRESH_KEY].forEach(k => localStorage.removeItem(k)); }
 
 export async function refreshAccessToken() {
