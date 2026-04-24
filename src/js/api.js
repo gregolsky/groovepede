@@ -126,21 +126,37 @@ async function fetchTagsFromSimilarArtists(artist) {
     .map(([name]) => name);
 }
 
+export async function fetchSpotifyArtist(artistId) {
+  const data = await spotifyGet('/artists/' + artistId);
+  if (!data) return null;
+  return {
+    image:       data.images?.[0]?.url || null,
+    genres:      (data.genres || []).slice(0, 5),
+    spotifyUrl:  data.external_urls?.spotify || null,
+  };
+}
+
 export async function fetchLastfmArtist(artistName) {
-  const [infoData, similarData] = await Promise.all([
+  const [infoData, similarData, tags] = await Promise.all([
     lfmGet({ method: 'artist.getinfo',   artist: artistName, autocorrect: '1' }),
     lfmGet({ method: 'artist.getsimilar', artist: artistName, limit: '6', autocorrect: '1' }),
+    fetchArtistTags(artistName),
   ]);
 
-  // Strip Last.fm "Read more" link, trim to ~420 chars
-  let bio = infoData?.artist?.bio?.summary || '';
-  bio = bio.replace(/<a href="https:\/\/www\.last\.fm[^"]*"[^>]*>.*?<\/a>/gi, '').trim();
-  bio = bio.replace(/<[^>]+>/g, '').trim();
+  // Strip Last.fm "Read more" link
+  let fullBio = infoData?.artist?.bio?.content || infoData?.artist?.bio?.summary || '';
+  fullBio = fullBio.replace(/<a href="https:\/\/www\.last\.fm[^"]*"[^>]*>.*?<\/a>/gi, '').trim();
+  fullBio = fullBio.replace(/<[^>]+>/g, '').trim();
+
+  // Short version for the card panel
+  let bio = fullBio;
   if (bio.length > 420) bio = bio.slice(0, 420).replace(/\s+\S*$/, '') + '…';
 
   const similar = (similarData?.similarartists?.artist || [])
     .slice(0, 6)
     .map(a => ({ name: a.name, url: a.url }));
 
-  return { bio, similar };
+  const lastfmUrl = infoData?.artist?.url || null;
+
+  return { bio, fullBio, similar, tags, lastfmUrl };
 }

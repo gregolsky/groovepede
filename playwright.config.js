@@ -3,11 +3,11 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './tests',
   use: {
-    baseURL: 'http://localhost:8000',
+    baseURL: 'http://localhost:5173',
   },
   webServer: {
-    command: 'python3 -m http.server 8000',
-    url: 'http://localhost:8000',
+    command: 'npm run dev',
+    url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
   },
 });

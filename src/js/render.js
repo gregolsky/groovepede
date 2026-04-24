@@ -51,7 +51,13 @@ export function renderAuthArea(el, userProfile) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, expandedCards, artistCache }) {
+export function renderApp(el, { activeFilter, loadingAdd, expandedCards, artistCache, artistDetailView }) {
+  if (artistDetailView) {
+    const { artistName, albumId, artistId } = artistDetailView;
+    const cached = artistCache[artistName];
+    el.innerHTML = renderArtistDetail(artistName, albumId, artistId, cached);
+    return;
+  }
   if (!hasSession()) {
     el.innerHTML = `
       <div class="login-screen">
@@ -170,6 +176,10 @@ function renderCards(visible, albums, expandedCards, artistCache) {
 }
 
 function renderArtistPanel(album, cachedArtist) {
+  const detailBtn = `<button class="btn btn-artist-detail" data-action="artist-detail"
+    data-album-id="${attr(album.id)}" data-artist="${attr(album.artist)}"
+    data-artist-id="${attr(album.artistId || '')}">Full profile →</button>`;
+
   if (!cachedArtist) {
     return `
       <div class="artist-panel open" id="panel-${album.id}">
@@ -177,16 +187,60 @@ function renderArtistPanel(album, cachedArtist) {
       </div>`;
   }
   const { bio, similar } = cachedArtist;
-  const hasContent = bio || similar.length;
+  const hasContent = bio || (similar && similar.length);
   return `
     <div class="artist-panel open" id="panel-${album.id}">
       <div class="artist-panel-header">About ${album.artist}</div>
       ${bio ? `<div class="artist-bio">${bio}</div>` : ''}
-      ${similar.length ? `
+      ${similar && similar.length ? `
         <div class="similar-label">Similar artists</div>
         <div class="similar-list">
           ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${a.name}</a>`).join('')}
         </div>` : ''}
       ${!hasContent ? `<div class="loading-bio">No artist info available.</div>` : ''}
+      <div class="artist-panel-footer">${detailBtn}</div>
+    </div>`;
+}
+
+function renderArtistDetail(artistName, albumId, artistId, cached) {
+  const loading    = !cached;
+  const image      = cached?.image || null;
+  const fullBio    = cached?.fullBio || '';
+  const similar    = cached?.similar || [];
+  const tags       = cached?.tags || [];
+  const genres     = cached?.genres || [];
+  const spotifyUrl = cached?.spotifyUrl || null;
+  const lastfmUrl  = cached?.lastfmUrl || null;
+
+  const allTags = [...new Set([...genres, ...tags])];
+
+  const links = [
+    spotifyUrl ? `<a class="artist-detail-link" href="${attr(spotifyUrl)}" target="_blank">${spotifyIcon(12, 12)} Spotify</a>` : '',
+    lastfmUrl  ? `<a class="artist-detail-link" href="${attr(lastfmUrl)}"  target="_blank">Last.fm</a>` : '',
+  ].filter(Boolean).join('');
+
+  return `
+    <div class="artist-detail">
+      <button class="artist-detail-back" data-action="close-detail">← Back</button>
+      ${loading ? `<div class="loading-bio" style="margin-top:32px">Loading…</div>` : `
+        <div class="artist-detail-hero">
+          ${image
+            ? `<img class="artist-detail-image" src="${attr(image)}" alt="${attr(artistName)}">`
+            : `<div class="artist-detail-image-placeholder"></div>`}
+          <h2 class="artist-detail-name">${artistName}</h2>
+          ${allTags.length ? `
+            <div class="artist-detail-tags">
+              ${allTags.map(t => `<span class="tag genre">${t}</span>`).join('')}
+            </div>` : ''}
+          ${links ? `<div class="artist-detail-links">${links}</div>` : ''}
+        </div>
+        ${fullBio ? `<div class="artist-detail-bio">${fullBio}</div>` : ''}
+        ${similar.length ? `
+          <div class="artist-detail-section-label">Similar artists</div>
+          <div class="similar-list">
+            ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${a.name}</a>`).join('')}
+          </div>` : ''}
+        ${!fullBio && !similar.length ? `<div class="loading-bio" style="margin-top:32px">No artist info available.</div>` : ''}
+      `}
     </div>`;
 }

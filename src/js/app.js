@@ -1,20 +1,22 @@
+import '../css/style.css';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist } from './api.js';
+import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId } from './storage.js';
 import { renderAuthArea, renderApp } from './render.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let userProfile   = null;
-let activeFilter  = 'all';
-let loadingAdd    = false;
-let expandedCards = new Set();
-let artistCache   = {};
+let userProfile      = null;
+let activeFilter     = 'all';
+let loadingAdd       = false;
+let expandedCards    = new Set();
+let artistCache      = {};
+let artistDetailView = null; // { artistName, albumId, artistId } when open
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
 
 function getState() {
-  return { activeFilter, loadingAdd, expandedCards, artistCache };
+  return { activeFilter, loadingAdd, expandedCards, artistCache, artistDetailView };
 }
 
 function rerender() {
@@ -80,6 +82,29 @@ async function toggleArtist(albumId, artistName) {
   }
 }
 
+async function openArtistDetail(albumId, artistName, artistId) {
+  artistDetailView = { albumId, artistName, artistId };
+  window.history.pushState({ artistDetail: true }, '');
+  rerender();
+
+  const needsLastfm  = !artistCache[artistName];
+  const needsSpotify = artistId && artistCache[artistName]?.image === undefined;
+
+  const fetches = [];
+  if (needsLastfm)  fetches.push(fetchLastfmArtist(artistName).then(d => { artistCache[artistName] = { ...artistCache[artistName], ...d }; }));
+  if (needsSpotify) fetches.push(fetchSpotifyArtist(artistId).then(d => { if (d) artistCache[artistName] = { ...artistCache[artistName], ...d }; }));
+
+  if (fetches.length) {
+    await Promise.all(fetches);
+    if (artistDetailView?.artistName === artistName) rerender();
+  }
+}
+
+function closeArtistDetail() {
+  artistDetailView = null;
+  rerender();
+}
+
 function logout() {
   clearToken();
   userProfile = null;
@@ -92,20 +117,31 @@ document.body.addEventListener('click', e => {
   if (!el) return;
   const { action, tag, albumId, artist, url, index } = el.dataset;
 
+  const { artistId } = el.dataset;
   switch (action) {
-    case 'login':  login();                               break;
-    case 'logout': logout();                              break;
-    case 'filter': setFilter(tag);                        break;
-    case 'add':    handleAdd();                           break;
-    case 'listen': window.open(url, '_blank');            break;
-    case 'expand': toggleArtist(albumId, artist);        break;
-    case 'done':   markDone(parseInt(index, 10));        break;
+    case 'login':         login();                                              break;
+    case 'logout':        logout();                                             break;
+    case 'filter':        setFilter(tag);                                       break;
+    case 'add':           handleAdd();                                          break;
+    case 'listen':        window.open(url, '_blank');                           break;
+    case 'expand':        toggleArtist(albumId, artist);                       break;
+    case 'done':          markDone(parseInt(index, 10));                       break;
+    case 'artist-detail': openArtistDetail(albumId, artist, artistId);        break;
+    case 'close-detail':  closeArtistDetail();                                 break;
   }
 });
 
 // Enter key in the add input (listener survives re-renders since it's on the container)
 appEl.addEventListener('keydown', e => {
   if (e.target.id === 'url-input' && e.key === 'Enter') handleAdd();
+});
+
+// Browser back button closes artist detail view
+window.addEventListener('popstate', () => {
+  if (artistDetailView) {
+    artistDetailView = null;
+    rerender();
+  }
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
