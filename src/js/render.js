@@ -221,6 +221,22 @@ function renderExploreCard(album, cached, tracks, index, total) {
 
       ${loading ? `<div class="explore-loading" style="margin-top:48px;text-align:center">Loading…</div>` : `
 
+      <div class="explore-album">
+        ${album.cover ? `<img class="explore-album-cover" src="${attr(album.cover)}" alt="${attr(album.title || '')}">` : ''}
+        <div class="explore-album-meta">
+          <h3 class="explore-album-title">${album.title || 'Unknown album'}</h3>
+          ${album.year ? `<span class="explore-album-year">${album.year}</span>` : ''}
+        </div>
+        <div class="explore-album-actions">
+          <button class="btn btn-listen" data-action="listen" data-url="${attr(album.url)}">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
+            Listen on Spotify
+          </button>
+          <button class="btn btn-done" data-action="done" data-index="${index}">Done</button>
+        </div>
+        ${tracklistHtml}
+      </div>
+
       <div class="explore-artist">
         <div class="explore-artist-hero">
           ${image
@@ -238,22 +254,6 @@ function renderExploreCard(album, cached, tracks, index, total) {
           <div class="similar-list">
             ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${a.name}</a>`).join('')}
           </div>` : ''}
-      </div>
-
-      <div class="explore-album">
-        ${album.cover ? `<img class="explore-album-cover" src="${attr(album.cover)}" alt="${attr(album.title || '')}">` : ''}
-        <div class="explore-album-meta">
-          <h3 class="explore-album-title">${album.title || 'Unknown album'}</h3>
-          ${album.year ? `<span class="explore-album-year">${album.year}</span>` : ''}
-        </div>
-        <div class="explore-album-actions">
-          <button class="btn btn-listen" data-action="listen" data-url="${attr(album.url)}">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
-            Listen on Spotify
-          </button>
-          <button class="btn btn-done" data-action="done" data-index="${index}">Done</button>
-        </div>
-        ${tracklistHtml}
       </div>
 
       `}
