@@ -208,11 +208,11 @@ body {
 
 /* New card highlight (share target) */
 @keyframes card-highlight {
-  0%   { border-color: #1DB954; box-shadow: 0 0 0 3px #1DB95440; }
-  60%  { border-color: #1DB954; box-shadow: 0 0 0 6px #1DB95415; }
-  100% { border-color: #2a2a2a; box-shadow: none; }
+  0%   { border-color: #1DB954; background: #1DB95425; box-shadow: 0 0 0 3px #1DB95430; }
+  50%  { border-color: #1DB954; background: #1DB95415; box-shadow: 0 0 0 6px #1DB95415; }
+  100% { border-color: #2a2a2a; background: #1a1a1a;   box-shadow: none; }
 }
-.card--highlight { animation: card-highlight 1.8s ease-out forwards; }
+.card--highlight { animation: card-highlight 2s ease-out forwards; }
 
 /* Done flash animation */
 @keyframes done-flash {

@@ -250,13 +250,13 @@ async function boot() {
       window.history.replaceState({}, document.title, window.location.pathname);
       rerender();
       if (highlightId) {
-        requestAnimationFrame(() => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
           const card = document.getElementById('card-' + highlightId);
           if (card) {
             card.scrollIntoView({ behavior: 'smooth', block: 'center' });
             card.classList.add('card--highlight');
           }
-        });
+        }));
       }
     }
   }
