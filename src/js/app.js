@@ -61,10 +61,23 @@ async function handleAdd() {
   if (meta) enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
 }
 
-function markDone(visibleIdx) {
+function markDone(visibleIdx, triggerEl) {
   const visible = visibleAlbums();
   const album   = visible[visibleIdx];
   if (!album) return;
+
+  // Animate the button/card before committing state change
+  const btn = triggerEl || appEl.querySelector(`[data-action="done"][data-index="${visibleIdx}"]`);
+  const card = btn?.closest('.card, .explore-album');
+  if (card) {
+    card.classList.add('done-flash');
+    setTimeout(() => applyDone(visibleIdx, album), 550);
+  } else {
+    applyDone(visibleIdx, album);
+  }
+}
+
+function applyDone(visibleIdx, album) {
   const albums = loadAlbums();
   const idx    = albums.findIndex(a => a.id === album.id);
   if (idx === -1) return;
@@ -143,7 +156,7 @@ document.body.addEventListener('click', e => {
     case 'close-explore': closeExplore();                       break;
     case 'explore-prev':  navigateExplore(-1);                  break;
     case 'explore-next':  navigateExplore(+1);                  break;
-    case 'done':          markDone(parseInt(index, 10));        break;
+    case 'done':          markDone(parseInt(index, 10), el);    break;
   }
 });
 

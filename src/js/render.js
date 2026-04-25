@@ -7,6 +7,15 @@ function spotifyIcon(w, h) {
   return `<svg width="${w}" height="${h}" viewBox="0 0 168 168" fill="currentColor"><path d="${SPOTIFY_ICON}"/></svg>`;
 }
 
+// Last.fm icon — stylised "lfm" scrobble mark
+function lastfmIcon(w, h) {
+  return `<svg width="${w}" height="${h}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M11.07 15.73l-.7-1.9s-1.14 1.27-2.84 1.27c-1.5 0-2.57-1.31-2.57-3.4 0-2.68 1.35-3.64 2.68-3.64 1.92 0 2.52 1.24 3.04 2.84l.7 2.12c.7 2.12 2.02 3.82 5.8 3.82 2.72 0 4.56-1.68 4.56-3.84 0-2.24-1.28-3.4-3.68-3.96l-1.12-.24c-1.24-.28-1.6-.76-1.6-1.56 0-.92.72-1.46 1.88-1.46 1.28 0 1.96.48 2.08 1.64l2.66-.32c-.24-2.32-1.8-3.28-4.6-3.28-2.4 0-4.48 1.12-4.48 3.76 0 1.8.88 2.96 3.08 3.48l1.2.28c1.44.32 2.08.88 2.08 1.88 0 1.12-.96 1.76-2.28 1.76-2.2 0-3.08-1.16-3.6-2.72l-.72-2.12C11.67 8.17 10.23 6.5 7.15 6.5 3.87 6.5 2 8.9 2 11.73c0 2.68 1.44 5.32 5.27 5.32 2.16 0 3.8-1.32 3.8-1.32z"/>
+  </svg>`;
+}
+
+const CHECKMARK_SVG = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>`;
+
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
 function timeAgo(iso) {
@@ -168,7 +177,7 @@ function renderCards(visible, albums) {
               <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
               Listen
             </button>
-            <button class="btn btn-done" data-action="done" data-index="${visibleIdx}">Done</button>
+            <button class="btn btn-done" data-action="done" data-index="${visibleIdx}">${CHECKMARK_SVG} Done</button>
           </div>
         </div>
       </div>`;
@@ -192,8 +201,7 @@ function renderExploreCard(album, cached, tracks, index, total) {
   const mergedTags = [...new Set([...genres, ...tags])];
 
   const links = [
-    spotifyUrl ? `<a class="explore-link" href="${attr(spotifyUrl)}" target="_blank">${spotifyIcon(12, 12)} Spotify</a>` : '',
-    lastfmUrl  ? `<a class="explore-link" href="${attr(lastfmUrl)}"  target="_blank">Last.fm</a>` : '',
+    lastfmUrl  ? `<a class="explore-link" href="${attr(lastfmUrl)}"  target="_blank">${lastfmIcon(12, 12)} Last.fm</a>` : '',
   ].filter(Boolean).join('');
 
   const tracklistHtml = tracks === null
@@ -245,7 +253,10 @@ function renderExploreCard(album, cached, tracks, index, total) {
           <div class="explore-artist-info">
             <h2 class="explore-artist-name">${album.artist}</h2>
             ${mergedTags.length ? `<div class="explore-tags">${mergedTags.map(t => `<span class="tag genre">${t}</span>`).join('')}</div>` : ''}
-            ${links ? `<div class="explore-links">${links}</div>` : ''}
+            <div class="explore-links">
+              ${spotifyUrl ? `<a class="explore-link explore-link--spotify" href="${attr(spotifyUrl)}" target="_blank">${spotifyIcon(12, 12)} Follow on Spotify</a>` : ''}
+              ${links}
+            </div>
           </div>
         </div>
         ${fullBio ? `<p class="explore-bio">${fullBio}</p>` : ''}
