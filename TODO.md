@@ -1,0 +1,2 @@
+- fix README after recent changes around the logo (not visible); also review and update README accordingly
+- init a CLAUDE md; add requirements for unit tests around business rules and e2e tests plus build before push
