@@ -126,6 +126,16 @@ async function fetchTagsFromSimilarArtists(artist) {
     .map(([name]) => name);
 }
 
+export async function fetchAlbumTracks(albumId) {
+  const data = await spotifyGet('/albums/' + albumId);
+  if (!data?.tracks?.items) return [];
+  return data.tracks.items.map(t => ({
+    number:      t.track_number,
+    name:        t.name,
+    duration_ms: t.duration_ms,
+  }));
+}
+
 export async function fetchSpotifyArtist(artistId) {
   const data = await spotifyGet('/artists/' + artistId);
   if (!data) return null;

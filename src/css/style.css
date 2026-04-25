@@ -63,7 +63,7 @@ body {
 
 /* Cards */
 .list { display: flex; flex-direction: column; gap: 10px; }
-.card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 14px; overflow: hidden; transition: border-color 0.15s; }
+.card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 14px; overflow: hidden; transition: border-color 0.15s; cursor: pointer; }
 .card:hover { border-color: #3a3a3a; }
 .card-main { display: flex; align-items: stretch; }
 
@@ -88,41 +88,11 @@ body {
 .btn-listen:hover { background: #1ed760; border-color: #1ed760; }
 .btn-done { color: #555; border-color: #2a2a2a; font-size: 11px; }
 .btn-done:hover { color: #888; }
-.btn-expand { color: #555; border-color: #2a2a2a; font-size: 11px; }
-.btn-expand:hover { color: #888; }
 
-/* Artist panel */
-.artist-panel { border-top: 1px solid #2a2a2a; padding: 14px 16px; display: none; }
-.artist-panel.open { display: block; }
-.artist-panel-header { font-size: 12px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
-.artist-bio { font-size: 13px; color: #999; line-height: 1.65; margin-bottom: 12px; }
-.artist-bio a { color: #1DB954; text-decoration: none; }
-.artist-bio a:hover { text-decoration: underline; }
-.similar-label { font-size: 11px; color: #555; margin-bottom: 6px; }
+/* Shared: similar artists */
 .similar-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .similar-chip { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 1px solid #2a2a2a; color: #aaa; background: #161616; text-decoration: none; transition: all 0.15s; }
 .similar-chip:hover { border-color: #444; color: #fff; background: #222; }
-.loading-bio { font-size: 13px; color: #555; font-style: italic; }
-
-/* Artist panel footer */
-.artist-panel-footer { margin-top: 12px; }
-.btn-artist-detail { color: #1DB954; border-color: #1DB95440; font-size: 11px; }
-.btn-artist-detail:hover { background: #1DB95415; border-color: #1DB954; }
-
-/* Artist detail full-page view */
-.artist-detail { padding: 0 0 48px; }
-.artist-detail-back { background: none; border: none; color: #888; font-size: 13px; font-family: inherit; cursor: pointer; padding: 0; margin-bottom: 24px; display: flex; align-items: center; gap: 4px; }
-.artist-detail-back:hover { color: #fff; }
-.artist-detail-hero { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 24px; }
-.artist-detail-image { width: 140px; height: 140px; border-radius: 50%; object-fit: cover; margin-bottom: 16px; border: 2px solid #2a2a2a; }
-.artist-detail-image-placeholder { width: 140px; height: 140px; border-radius: 50%; background: #1a1a1a; border: 2px solid #2a2a2a; margin-bottom: 16px; }
-.artist-detail-name { font-size: 22px; font-weight: 700; margin-bottom: 12px; }
-.artist-detail-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
-.artist-detail-bio { font-size: 14px; color: #aaa; line-height: 1.75; margin-bottom: 24px; }
-.artist-detail-section-label { font-size: 11px; color: #555; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
-.artist-detail-links { display: flex; gap: 10px; justify-content: center; margin-top: 14px; }
-.artist-detail-link { font-size: 12px; padding: 5px 12px; border-radius: 20px; border: 1px solid #2a2a2a; color: #aaa; background: #161616; text-decoration: none; transition: all 0.15s; display: flex; align-items: center; gap: 5px; }
-.artist-detail-link:hover { border-color: #444; color: #fff; background: #222; }
 
 /* Empty state */
 .empty { text-align: center; padding: 3rem 1rem; }
@@ -133,6 +103,92 @@ body {
 /* Spinner */
 .spinner { width: 14px; height: 14px; border: 2px solid rgba(0,0,0,0.3); border-top-color: #000; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Explore mode ──────────────────────────────────────────────────────────── */
+
+.explore { padding-bottom: 64px; }
+
+/* Nav bar */
+.explore-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 28px;
+}
+.explore-back {
+  background: none; border: none; color: #888; font-size: 13px;
+  font-family: inherit; cursor: pointer; padding: 0;
+}
+.explore-back:hover { color: #fff; }
+.explore-counter { font-size: 12px; color: #555; }
+.explore-arrows { display: flex; gap: 4px; }
+.explore-arrow {
+  width: 36px; height: 36px; border-radius: 50%; border: 1px solid #2a2a2a;
+  background: transparent; color: #aaa; font-size: 20px; line-height: 1;
+  font-family: inherit; cursor: pointer; display: flex; align-items: center;
+  justify-content: center; transition: all 0.15s;
+}
+.explore-arrow:hover:not(:disabled) { border-color: #555; color: #fff; background: #1a1a1a; }
+.explore-arrow:disabled { opacity: 0.2; cursor: default; }
+
+/* Artist section */
+.explore-artist { margin-bottom: 32px; }
+.explore-artist-hero {
+  display: flex; align-items: center; gap: 20px; margin-bottom: 20px;
+}
+.explore-artist-image {
+  width: 96px; height: 96px; border-radius: 50%; object-fit: cover;
+  flex-shrink: 0; border: 2px solid #2a2a2a;
+}
+.explore-artist-image--placeholder {
+  background: #1a1a1a;
+}
+.explore-artist-info { min-width: 0; }
+.explore-artist-name { font-size: 20px; font-weight: 700; margin-bottom: 8px; line-height: 1.2; }
+.explore-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.explore-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.explore-link {
+  font-size: 11px; padding: 4px 10px; border-radius: 20px; border: 1px solid #2a2a2a;
+  color: #aaa; background: #161616; text-decoration: none; transition: all 0.15s;
+  display: flex; align-items: center; gap: 4px;
+}
+.explore-link:hover { border-color: #444; color: #fff; background: #222; }
+.explore-bio { font-size: 14px; color: #999; line-height: 1.75; margin-bottom: 20px; }
+.explore-section-label {
+  font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+/* Album section */
+.explore-album { margin-top: 8px; }
+.explore-album-cover {
+  width: 100%; max-width: 320px; aspect-ratio: 1;
+  border-radius: 12px; object-fit: cover; display: block;
+  margin: 0 auto 20px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.explore-album-meta { text-align: center; margin-bottom: 16px; }
+.explore-album-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.explore-album-year { font-size: 13px; color: #888; }
+.explore-album-actions { display: flex; justify-content: center; gap: 10px; margin-bottom: 24px; }
+
+/* Tracklist */
+.explore-tracklist {
+  list-style: none; border-top: 1px solid #1f1f1f;
+}
+.explore-track {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 4px; border-bottom: 1px solid #1a1a1a;
+}
+.explore-track:last-child { border-bottom: none; }
+.explore-track::before {
+  content: counter(list-item);
+  counter-increment: list-item;
+  font-size: 11px; color: #555; min-width: 18px; text-align: right; flex-shrink: 0;
+}
+.explore-tracklist { counter-reset: list-item; }
+.explore-track-name { flex: 1; font-size: 13px; color: #ccc; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explore-track-dur { font-size: 12px; color: #555; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+.explore-loading { font-size: 13px; color: #555; font-style: italic; }
 
 /* Footer */
 .footer { text-align: center; font-size: 11px; color: #333; margin-top: 40px; padding-bottom: 8px; }

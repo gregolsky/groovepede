@@ -19,6 +19,11 @@ function timeAgo(iso) {
   return Math.floor(h / 24) + 'd ago';
 }
 
+function fmtDuration(ms) {
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 function allTags(albums) {
   const s = new Set();
   albums.forEach(a => (a.tags || []).forEach(t => s.add(t)));
@@ -51,24 +56,28 @@ export function renderAuthArea(el, userProfile) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, expandedCards, artistCache, artistDetailView }) {
-  if (artistDetailView) {
-    const { artistName, albumId, artistId } = artistDetailView;
-    const cached = artistCache[artistName];
-    el.innerHTML = renderArtistDetail(artistName, albumId, artistId, cached);
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex }) {
+  const albums  = loadAlbums();
+  const visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+
+  if (exploreIndex !== null) {
+    const album  = visible[exploreIndex];
+    const cached = album ? artistCache[album.artist] : null;
+    const tracks = album ? (trackCache[album.id] || null) : null;
+    el.innerHTML = renderExploreCard(album, cached, tracks, exploreIndex, visible.length);
     return;
   }
+
   if (!hasSession()) {
     el.innerHTML = `
       <div class="login-screen">
         <img class="login-logo" src="favicon.png" alt="Groovepede">
-
         <h2>Never lose a great album recommendation again.</h2>
         <p>Groovepede is a minimalist listening queue for Spotify albums. Save albums, browse them by genre, and check them off as you listen.</p>
         <ul class="login-features">
           <li>Share Spotify albums straight from your phone</li>
           <li>Auto-tagged with genres from Last.fm</li>
-          <li>Artist bios and similar artists on every card</li>
+          <li>Deep artist info and track listings on every album</li>
           <li>Works offline — install it as an app</li>
         </ul>
         <button class="auth-btn" data-action="login">
@@ -79,9 +88,7 @@ export function renderApp(el, { activeFilter, loadingAdd, expandedCards, artistC
     return;
   }
 
-  const albums     = loadAlbums();
   const tags       = allTags(albums);
-  const visible    = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
   const addedToday = albums.filter(a => (a.addedAt || '').slice(0, 10) === todayStr()).length;
 
   let html = `
@@ -107,7 +114,7 @@ export function renderApp(el, { activeFilter, loadingAdd, expandedCards, artistC
   }
 
   html += '<div class="list">';
-  html += visible.length ? renderCards(visible, albums, expandedCards, artistCache) : renderEmpty(activeFilter);
+  html += visible.length ? renderCards(visible, albums) : renderEmpty(activeFilter);
   html += '</div>';
 
   el.innerHTML = html;
@@ -128,11 +135,9 @@ function renderEmpty(activeFilter) {
     </div>`;
 }
 
-function renderCards(visible, albums, expandedCards, artistCache) {
-  return visible.map(album => {
-    const realIndex    = albums.indexOf(album);
-    const isExpanded   = expandedCards.has(album.id);
-    const cachedArtist = artistCache[album.artist];
+function renderCards(visible, albums) {
+  return visible.map((album, visibleIdx) => {
+    const realIndex = albums.indexOf(album);
 
     const tagHtml = [
       album.year ? `<span class="tag year">${album.year}</span>` : '',
@@ -140,7 +145,7 @@ function renderCards(visible, albums, expandedCards, artistCache) {
     ].filter(Boolean).join('');
 
     return `
-      <div class="card" id="card-${album.id}">
+      <div class="card" id="card-${album.id}" data-action="explore" data-index="${visibleIdx}" role="button" tabindex="0">
         <div class="card-main">
           <div class="card-cover">
             ${album.cover
@@ -163,84 +168,94 @@ function renderCards(visible, albums, expandedCards, artistCache) {
               <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
               Listen
             </button>
-            <button class="btn btn-expand" data-action="expand"
-              data-album-id="${attr(album.id)}" data-artist="${attr(album.artist)}" title="Artist info">
-              ${isExpanded ? '▲ Less' : '▼ Artist'}
-            </button>
-            <button class="btn btn-done" data-action="done" data-index="${realIndex}">Done</button>
+            <button class="btn btn-done" data-action="done" data-index="${visibleIdx}">Done</button>
           </div>
         </div>
-        ${isExpanded ? renderArtistPanel(album, cachedArtist) : ''}
       </div>`;
   }).join('');
 }
 
-function renderArtistPanel(album, cachedArtist) {
-  const detailBtn = `<button class="btn btn-artist-detail" data-action="artist-detail"
-    data-album-id="${attr(album.id)}" data-artist="${attr(album.artist)}"
-    data-artist-id="${attr(album.artistId || '')}">Full profile →</button>`;
+// ── Explore card ──────────────────────────────────────────────────────────────
 
-  if (!cachedArtist) {
-    return `
-      <div class="artist-panel open" id="panel-${album.id}">
-        <div class="loading-bio">Loading artist info…</div>
-      </div>`;
-  }
-  const { bio, similar } = cachedArtist;
-  const hasContent = bio || (similar && similar.length);
-  return `
-    <div class="artist-panel open" id="panel-${album.id}">
-      <div class="artist-panel-header">About ${album.artist}</div>
-      ${bio ? `<div class="artist-bio">${bio}</div>` : ''}
-      ${similar && similar.length ? `
-        <div class="similar-label">Similar artists</div>
-        <div class="similar-list">
-          ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${a.name}</a>`).join('')}
-        </div>` : ''}
-      ${!hasContent ? `<div class="loading-bio">No artist info available.</div>` : ''}
-      <div class="artist-panel-footer">${detailBtn}</div>
-    </div>`;
-}
+function renderExploreCard(album, cached, tracks, index, total) {
+  const hasPrev = index > 0;
+  const hasNext = index < total - 1;
+  const loading = !cached;
 
-function renderArtistDetail(artistName, albumId, artistId, cached) {
-  const loading    = !cached;
-  const image      = cached?.image || null;
-  const fullBio    = cached?.fullBio || '';
-  const similar    = cached?.similar || [];
-  const tags       = cached?.tags || [];
-  const genres     = cached?.genres || [];
+  const image      = cached?.image     || null;
+  const fullBio    = cached?.fullBio   || '';
+  const similar    = cached?.similar   || [];
+  const tags       = cached?.tags      || [];
+  const genres     = cached?.genres    || [];
   const spotifyUrl = cached?.spotifyUrl || null;
-  const lastfmUrl  = cached?.lastfmUrl || null;
-
-  const allTags = [...new Set([...genres, ...tags])];
+  const lastfmUrl  = cached?.lastfmUrl  || null;
+  const mergedTags = [...new Set([...genres, ...tags])];
 
   const links = [
-    spotifyUrl ? `<a class="artist-detail-link" href="${attr(spotifyUrl)}" target="_blank">${spotifyIcon(12, 12)} Spotify</a>` : '',
-    lastfmUrl  ? `<a class="artist-detail-link" href="${attr(lastfmUrl)}"  target="_blank">Last.fm</a>` : '',
+    spotifyUrl ? `<a class="explore-link" href="${attr(spotifyUrl)}" target="_blank">${spotifyIcon(12, 12)} Spotify</a>` : '',
+    lastfmUrl  ? `<a class="explore-link" href="${attr(lastfmUrl)}"  target="_blank">Last.fm</a>` : '',
   ].filter(Boolean).join('');
 
+  const tracklistHtml = tracks === null
+    ? `<div class="explore-loading">Loading tracks…</div>`
+    : tracks.length
+      ? `<ol class="explore-tracklist">
+          ${tracks.map(t => `
+            <li class="explore-track">
+              <span class="explore-track-name">${t.name}</span>
+              <span class="explore-track-dur">${fmtDuration(t.duration_ms)}</span>
+            </li>`).join('')}
+        </ol>`
+      : '';
+
   return `
-    <div class="artist-detail">
-      <button class="artist-detail-back" data-action="close-detail">← Back</button>
-      ${loading ? `<div class="loading-bio" style="margin-top:32px">Loading…</div>` : `
-        <div class="artist-detail-hero">
-          ${image
-            ? `<img class="artist-detail-image" src="${attr(image)}" alt="${attr(artistName)}">`
-            : `<div class="artist-detail-image-placeholder"></div>`}
-          <h2 class="artist-detail-name">${artistName}</h2>
-          ${allTags.length ? `
-            <div class="artist-detail-tags">
-              ${allTags.map(t => `<span class="tag genre">${t}</span>`).join('')}
-            </div>` : ''}
-          ${links ? `<div class="artist-detail-links">${links}</div>` : ''}
+    <div class="explore">
+      <div class="explore-nav">
+        <button class="explore-back" data-action="close-explore">← Back</button>
+        <span class="explore-counter">${index + 1} / ${total}</span>
+        <div class="explore-arrows">
+          <button class="explore-arrow" data-action="explore-prev" ${hasPrev ? '' : 'disabled'} aria-label="Previous">‹</button>
+          <button class="explore-arrow" data-action="explore-next" ${hasNext ? '' : 'disabled'} aria-label="Next">›</button>
         </div>
-        ${fullBio ? `<div class="artist-detail-bio">${fullBio}</div>` : ''}
+      </div>
+
+      ${loading ? `<div class="explore-loading" style="margin-top:48px;text-align:center">Loading…</div>` : `
+
+      <div class="explore-artist">
+        <div class="explore-artist-hero">
+          ${image
+            ? `<img class="explore-artist-image" src="${attr(image)}" alt="${attr(album.artist)}">`
+            : `<div class="explore-artist-image explore-artist-image--placeholder"></div>`}
+          <div class="explore-artist-info">
+            <h2 class="explore-artist-name">${album.artist}</h2>
+            ${mergedTags.length ? `<div class="explore-tags">${mergedTags.map(t => `<span class="tag genre">${t}</span>`).join('')}</div>` : ''}
+            ${links ? `<div class="explore-links">${links}</div>` : ''}
+          </div>
+        </div>
+        ${fullBio ? `<p class="explore-bio">${fullBio}</p>` : ''}
         ${similar.length ? `
-          <div class="artist-detail-section-label">Similar artists</div>
+          <div class="explore-section-label">Similar artists</div>
           <div class="similar-list">
             ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${a.name}</a>`).join('')}
           </div>` : ''}
-        ${!fullBio && !similar.length ? `<div class="loading-bio" style="margin-top:32px">No artist info available.</div>` : ''}
+      </div>
+
+      <div class="explore-album">
+        ${album.cover ? `<img class="explore-album-cover" src="${attr(album.cover)}" alt="${attr(album.title || '')}">` : ''}
+        <div class="explore-album-meta">
+          <h3 class="explore-album-title">${album.title || 'Unknown album'}</h3>
+          ${album.year ? `<span class="explore-album-year">${album.year}</span>` : ''}
+        </div>
+        <div class="explore-album-actions">
+          <button class="btn btn-listen" data-action="listen" data-url="${attr(album.url)}">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
+            Listen on Spotify
+          </button>
+          <button class="btn btn-done" data-action="done" data-index="${index}">Done</button>
+        </div>
+        ${tracklistHtml}
+      </div>
+
       `}
     </div>`;
 }

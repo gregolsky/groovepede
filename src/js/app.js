@@ -1,22 +1,27 @@
 import '../css/style.css';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist } from './api.js';
+import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId } from './storage.js';
 import { renderAuthArea, renderApp } from './render.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let userProfile      = null;
-let activeFilter     = 'all';
-let loadingAdd       = false;
-let expandedCards    = new Set();
-let artistCache      = {};
-let artistDetailView = null; // { artistName, albumId, artistId } when open
+let userProfile  = null;
+let activeFilter = 'all';
+let loadingAdd   = false;
+let artistCache  = {};
+let trackCache   = {};
+let exploreIndex = null; // integer index into visible album list, or null
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
 
+function visibleAlbums() {
+  const albums = loadAlbums();
+  return activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+}
+
 function getState() {
-  return { activeFilter, loadingAdd, expandedCards, artistCache, artistDetailView };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex };
 }
 
 function rerender() {
@@ -53,56 +58,67 @@ async function handleAdd() {
 
   const inp = appEl.querySelector('#url-input');
   if (inp) inp.value = '';
-  if (meta) enrichWithLastfm(meta.id, meta.artist, meta.title, rerender); // fire-and-forget
+  if (meta) enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
 }
 
-function markDone(index) {
+function markDone(visibleIdx) {
+  const visible = visibleAlbums();
+  const album   = visible[visibleIdx];
+  if (!album) return;
   const albums = loadAlbums();
-  const album  = albums[index];
-  if (album) expandedCards.delete(album.id);
-  albums.splice(index, 1);
+  const idx    = albums.findIndex(a => a.id === album.id);
+  if (idx === -1) return;
+  albums.splice(idx, 1);
   saveAlbums(albums);
   saveDone(loadDone() + 1);
+  // Stay in explore mode but move to next, or close if list now empty
+  const newVisible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+  if (newVisible.length === 0) {
+    exploreIndex = null;
+  } else {
+    exploreIndex = Math.min(visibleIdx, newVisible.length - 1);
+    prefetchExplore(newVisible[exploreIndex]);
+  }
   rerender();
 }
 
-async function toggleArtist(albumId, artistName) {
-  if (expandedCards.has(albumId)) {
-    expandedCards.delete(albumId);
-    rerender();
-    return;
-  }
-  expandedCards.add(albumId);
+async function openExplore(index) {
+  exploreIndex = index;
+  window.history.pushState({ explore: true }, '');
   rerender();
-
-  if (!artistCache[artistName]) {
-    const data = await fetchLastfmArtist(artistName);
-    artistCache[artistName] = data;
-    if (expandedCards.has(albumId)) rerender();
-  }
+  const album = visibleAlbums()[index];
+  if (album) prefetchExplore(album);
 }
 
-async function openArtistDetail(albumId, artistName, artistId) {
-  artistDetailView = { albumId, artistName, artistId };
-  window.history.pushState({ artistDetail: true }, '');
-  rerender();
-
-  const needsLastfm  = !artistCache[artistName];
-  const needsSpotify = artistId && artistCache[artistName]?.image === undefined;
+async function prefetchExplore(album) {
+  const { artist, artistId, id } = album;
+  const needsLastfm  = !artistCache[artist];
+  const needsSpotify = artistId && artistCache[artist]?.image === undefined;
+  const needsTracks  = !trackCache[id];
 
   const fetches = [];
-  if (needsLastfm)  fetches.push(fetchLastfmArtist(artistName).then(d => { artistCache[artistName] = { ...artistCache[artistName], ...d }; }));
-  if (needsSpotify) fetches.push(fetchSpotifyArtist(artistId).then(d => { if (d) artistCache[artistName] = { ...artistCache[artistName], ...d }; }));
+  if (needsLastfm)  fetches.push(fetchLastfmArtist(artist).then(d => { artistCache[artist] = { ...artistCache[artist], ...d }; }));
+  if (needsSpotify) fetches.push(fetchSpotifyArtist(artistId).then(d => { if (d) artistCache[artist] = { ...artistCache[artist], ...d }; }));
+  if (needsTracks)  fetches.push(fetchAlbumTracks(id).then(t => { trackCache[id] = t; }));
 
   if (fetches.length) {
     await Promise.all(fetches);
-    if (artistDetailView?.artistName === artistName) rerender();
+    if (exploreIndex !== null && visibleAlbums()[exploreIndex]?.id === id) rerender();
   }
 }
 
-function closeArtistDetail() {
-  artistDetailView = null;
+function closeExplore() {
+  exploreIndex = null;
   rerender();
+}
+
+function navigateExplore(dir) {
+  const list = visibleAlbums();
+  const next = exploreIndex + dir;
+  if (next < 0 || next >= list.length) return;
+  exploreIndex = next;
+  rerender();
+  prefetchExplore(list[next]);
 }
 
 function logout() {
@@ -115,31 +131,48 @@ function logout() {
 document.body.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   if (!el) return;
-  const { action, tag, albumId, artist, url, index } = el.dataset;
+  const { action, tag, url, index } = el.dataset;
 
-  const { artistId } = el.dataset;
   switch (action) {
-    case 'login':         login();                                              break;
-    case 'logout':        logout();                                             break;
-    case 'filter':        setFilter(tag);                                       break;
-    case 'add':           handleAdd();                                          break;
-    case 'listen':        window.open(url, '_blank');                           break;
-    case 'expand':        toggleArtist(albumId, artist);                       break;
-    case 'done':          markDone(parseInt(index, 10));                       break;
-    case 'artist-detail': openArtistDetail(albumId, artist, artistId);        break;
-    case 'close-detail':  closeArtistDetail();                                 break;
+    case 'login':         login();                              break;
+    case 'logout':        logout();                             break;
+    case 'filter':        setFilter(tag);                       break;
+    case 'add':           handleAdd();                          break;
+    case 'listen':        window.open(url, '_blank');           break;
+    case 'explore':       openExplore(parseInt(index, 10));     break;
+    case 'close-explore': closeExplore();                       break;
+    case 'explore-prev':  navigateExplore(-1);                  break;
+    case 'explore-next':  navigateExplore(+1);                  break;
+    case 'done':          markDone(parseInt(index, 10));        break;
   }
 });
 
-// Enter key in the add input (listener survives re-renders since it's on the container)
+// Enter key in the add input
 appEl.addEventListener('keydown', e => {
   if (e.target.id === 'url-input' && e.key === 'Enter') handleAdd();
 });
 
-// Browser back button closes artist detail view
+// Keyboard arrow navigation in explore mode
+window.addEventListener('keydown', e => {
+  if (exploreIndex === null) return;
+  if (e.key === 'ArrowLeft')  navigateExplore(-1);
+  if (e.key === 'ArrowRight') navigateExplore(+1);
+  if (e.key === 'Escape')     closeExplore();
+});
+
+// Touch swipe in explore mode
+let touchStartX = 0;
+document.body.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
+document.body.addEventListener('touchend', e => {
+  if (exploreIndex === null) return;
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  if (Math.abs(dx) > 50) navigateExplore(dx < 0 ? +1 : -1);
+}, { passive: true });
+
+// Browser back button
 window.addEventListener('popstate', () => {
-  if (artistDetailView) {
-    artistDetailView = null;
+  if (exploreIndex !== null) {
+    exploreIndex = null;
     rerender();
   }
 });
@@ -155,7 +188,6 @@ async function boot() {
     await exchangeCode(code);
   }
 
-  // Silently refresh expired token if we have a refresh token
   if (!tokenValid()) {
     await refreshAccessToken();
   }
@@ -176,7 +208,7 @@ async function boot() {
         if (meta) {
           albums.push(meta);
           saveAlbums(albums);
-          enrichWithLastfm(meta.id, meta.artist, meta.title, rerender); // fire-and-forget
+          enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
         }
       }
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -184,7 +216,6 @@ async function boot() {
     }
   }
 
-  // Enrich any albums missing meaningful Last.fm tags
   const albums = loadAlbums();
   const yearOnly = /^\d{4}s?$/;
   for (const album of albums) {
