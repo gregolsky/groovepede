@@ -201,7 +201,7 @@ function renderExploreCard(album, cached, tracks, index, total) {
   const mergedTags = [...new Set([...genres, ...tags])];
 
   const links = [
-    lastfmUrl  ? `<a class="explore-link" href="${attr(lastfmUrl)}"  target="_blank">${lastfmIcon(12, 12)} Last.fm</a>` : '',
+    lastfmUrl  ? `<a class="explore-link explore-link--lastfm" href="${attr(lastfmUrl)}" target="_blank">${lastfmIcon(12, 12)} Last.fm</a>` : '',
   ].filter(Boolean).join('');
 
   const tracklistHtml = tracks === null

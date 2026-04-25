@@ -153,6 +153,8 @@ body {
 .explore-link:hover { border-color: #444; color: #fff; background: #222; }
 .explore-link--spotify { background: #1DB95420; border-color: #1DB95460; color: #1DB954; }
 .explore-link--spotify:hover { background: #1DB95440; border-color: #1DB954; color: #1DB954; }
+.explore-link--lastfm { background: #d5190020; border-color: #d5190060; color: #d51900; }
+.explore-link--lastfm:hover { background: #d5190040; border-color: #d51900; color: #d51900; }
 .explore-bio { font-size: 14px; color: #999; line-height: 1.75; margin-bottom: 20px; }
 .explore-section-label {
   font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 0.06em;
