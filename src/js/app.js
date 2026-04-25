@@ -11,6 +11,7 @@ let loadingAdd   = false;
 let artistCache  = {};
 let trackCache   = {};
 let exploreIndex = null; // integer index into visible album list, or null
+let animating    = false;
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
@@ -126,12 +127,30 @@ function closeExplore() {
 }
 
 function navigateExplore(dir) {
+  if (animating) return;
   const list = visibleAlbums();
   const next = exploreIndex + dir;
   if (next < 0 || next >= list.length) return;
-  exploreIndex = next;
-  rerender();
-  prefetchExplore(list[next]);
+
+  animating = true;
+  const outClass = dir > 0 ? 'explore--slide-out-left' : 'explore--slide-out-right';
+  const inClass  = dir > 0 ? 'explore--slide-in-right' : 'explore--slide-in-left';
+
+  const outEl = appEl.querySelector('.explore');
+  if (outEl) outEl.classList.add(outClass);
+
+  setTimeout(() => {
+    exploreIndex = next;
+    rerender();
+    prefetchExplore(list[next]);
+    const inEl = appEl.querySelector('.explore');
+    if (inEl) {
+      inEl.classList.add(inClass);
+      setTimeout(() => { inEl.classList.remove(inClass); animating = false; }, 200);
+    } else {
+      animating = false;
+    }
+  }, 150);
 }
 
 function logout() {
@@ -170,14 +189,14 @@ window.addEventListener('keydown', e => {
   if (exploreIndex === null) return;
   if (e.key === 'ArrowLeft')  navigateExplore(-1);
   if (e.key === 'ArrowRight') navigateExplore(+1);
-  if (e.key === 'Escape')     closeExplore();
+  if (e.key === 'Escape' && !animating) closeExplore();
 });
 
 // Touch swipe in explore mode
 let touchStartX = 0;
 document.body.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
 document.body.addEventListener('touchend', e => {
-  if (exploreIndex === null) return;
+  if (exploreIndex === null || animating) return;
   const dx = e.changedTouches[0].clientX - touchStartX;
   if (Math.abs(dx) > 50) navigateExplore(dx < 0 ? +1 : -1);
 }, { passive: true });
