@@ -235,16 +235,29 @@ async function boot() {
     const id = extractAlbumId(shared);
     if (id) {
       const albums = loadAlbums();
+      let highlightId = null;
       if (!albums.find(a => a.id === id)) {
         const meta = await fetchAlbumMeta(id);
         if (meta) {
           albums.push(meta);
           saveAlbums(albums);
+          highlightId = meta.id;
           enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
         }
+      } else {
+        highlightId = id;
       }
       window.history.replaceState({}, document.title, window.location.pathname);
       rerender();
+      if (highlightId) {
+        requestAnimationFrame(() => {
+          const card = document.getElementById('card-' + highlightId);
+          if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('card--highlight');
+          }
+        });
+      }
     }
   }
 
