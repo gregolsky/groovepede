@@ -65,7 +65,7 @@ export function renderAuthArea(el, userProfile) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex }) {
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError }) {
   const albums  = loadAlbums();
   const visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
 
@@ -111,7 +111,8 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
       <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
         ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
       </button>
-    </div>`;
+    </div>
+    ${addError ? `<div class="add-error">${addError}</div>` : ''}`;
 
   if (tags.length) {
     html += `

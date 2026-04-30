@@ -1,7 +1,7 @@
 import '../css/style.css';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId } from './storage.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput } from './storage.js';
 import { renderAuthArea, renderApp } from './render.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -12,6 +12,7 @@ let artistCache  = {};
 let trackCache   = {};
 let exploreIndex = null; // integer index into visible album list, or null
 let animating    = false;
+let addError     = null;
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
@@ -22,7 +23,7 @@ function visibleAlbums() {
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError };
 }
 
 function rerender() {
@@ -39,12 +40,16 @@ function setFilter(tag) {
 async function handleAdd() {
   const input = appEl.querySelector('#url-input');
   if (!input) return;
-  const id = extractAlbumId(input.value.trim());
+  const { id, error } = validateAlbumInput(input.value.trim());
   if (!id) {
+    addError = error;
     input.classList.add('error');
-    setTimeout(() => input.classList.remove('error'), 1200);
+    rerender();
     return;
   }
+  addError = null;
+  input.classList.remove('error');
+
   const albums = loadAlbums();
   if (albums.find(a => a.id === id)) { input.value = ''; return; }
 
@@ -184,6 +189,16 @@ appEl.addEventListener('keydown', e => {
   if (e.target.id === 'url-input' && e.key === 'Enter') handleAdd();
 });
 
+// Clear add error when user edits the input
+appEl.addEventListener('input', e => {
+  if (e.target.id === 'url-input' && addError) {
+    addError = null;
+    e.target.classList.remove('error');
+    const errEl = appEl.querySelector('.add-error');
+    if (errEl) errEl.remove();
+  }
+});
+
 // Keyboard arrow navigation in explore mode
 window.addEventListener('keydown', e => {
   if (exploreIndex === null) return;
@@ -232,7 +247,12 @@ async function boot() {
   renderAuthArea(authEl, userProfile);
 
   if (shared) {
-    const id = extractAlbumId(shared);
+    const { id, error } = validateAlbumInput(shared);
+    if (!id && error) {
+      addError = error;
+      window.history.replaceState({}, document.title, window.location.pathname);
+      rerender();
+    }
     if (id) {
       const albums = loadAlbums();
       let highlightId = null;

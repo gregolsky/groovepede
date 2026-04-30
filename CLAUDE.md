@@ -33,7 +33,9 @@ Groovepede is a local-first PWA for managing a Spotify album listening queue. Bu
 npm run dev        # Vite dev server at localhost:5173
 npm run build      # Production build to dist/
 npm run preview    # Preview production build locally
-npm test           # Run Playwright tests
+npm run test:unit  # Run Vitest unit tests
+npm run test:e2e   # Run Playwright E2E tests
+npm test           # Run all tests (unit + E2E)
 ```
 
 For local dev, update `REDIRECT` in `src/js/config.js` to `http://localhost:5173/` and add that URI to your Spotify Developer app.
@@ -46,3 +48,18 @@ For local dev, update `REDIRECT` in `src/js/config.js` to `http://localhost:5173
 - External API calls go through `api.js`; all return `null` on failure (no thrown errors)
 - Static assets (sw.js, manifest.json, favicon) go in `public/` — copied to `dist/` as-is
 - CSS is in `src/css/style.css`, imported from `app.js` so Vite processes it
+
+## Testing
+
+- **Unit tests** use Vitest (`npm run test:unit`). Test files are co-located as `src/js/*.test.js`.
+  - Target pure/business-logic functions: `extractAlbumId`, `validateAlbumInput`, `cleanTags`, `timeAgo`, `fmtDuration`, `attr`, `allTags`
+  - All new pure functions with business logic must have unit tests
+- **E2E tests** use Playwright (`npm run test:e2e`). Test files live in `tests/`.
+  - Use `context.route()` to stub Spotify/Last.fm API responses
+  - Cover auth flows and key user interactions
+
+## Pre-push checklist
+
+Always run before pushing:
+1. `npm run build` — verify production build succeeds
+2. `npm test` — verify all unit and E2E tests pass

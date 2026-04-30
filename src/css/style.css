@@ -52,6 +52,7 @@ body {
 .add-input::placeholder { color: #555; }
 .add-input:focus { border-color: #1DB954; }
 .add-input.error { border-color: #e5534b; }
+.add-error { font-size: 12px; color: #e5534b; margin: -8px 0 12px 2px; line-height: 1.4; }
 .add-btn { height: 40px; padding: 0 18px; background: #1DB954; border: none; border-radius: 8px; color: #000; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; display: flex; align-items: center; gap: 6px; }
 .add-btn:hover { background: #1ed760; }
 .add-btn:disabled { opacity: 0.5; cursor: not-allowed; }
