@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy — Groovepede</title>
+  <meta name="robots" content="noindex">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #121212; color: #ccc; padding: 40px 20px 80px; line-height: 1.7; }
+    .wrap { max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+    .updated { font-size: 12px; color: #555; margin-bottom: 40px; }
+    h2 { font-size: 14px; font-weight: 600; color: #fff; margin: 32px 0 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+    p, li { font-size: 14px; color: #888; }
+    ul { padding-left: 18px; margin-top: 6px; }
+    li { margin-bottom: 6px; }
+    a { color: #1DB954; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .back { display: inline-block; font-size: 13px; color: #555; margin-bottom: 32px; }
+    .back:hover { color: #ccc; }
+    code { font-size: 13px; background: #1a1a1a; padding: 1px 6px; border-radius: 4px; color: #bbb; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← Back to Groovepede</a>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: May 2026</p>
+
+  <h2>What Groovepede is</h2>
+  <p>Groovepede is a local-first progressive web app (PWA) for queuing Spotify albums. It has no backend server, no database, and no user accounts. All data stays on your device.</p>
+
+  <h2>Data we collect</h2>
+  <p>We collect no personal data. Groovepede stores the following <strong>only in your browser's <code>localStorage</code></strong>:</p>
+  <ul>
+    <li>Album metadata you add (title, artist, cover image URL, release year, Last.fm genre tags)</li>
+    <li>Your listen count</li>
+    <li>Your Spotify OAuth tokens (access token, refresh token) — used solely to keep you logged in</li>
+  </ul>
+  <p>This data never leaves your device. Clearing your browser storage or uninstalling the app removes it entirely.</p>
+
+  <h2>Spotify</h2>
+  <p>Groovepede uses the <a href="https://developer.spotify.com/documentation/web-api" target="_blank" rel="noopener">Spotify Web API</a> with the <code>user-read-private</code> scope only. This allows us to display your display name and profile picture. We never read your listening history, playlists, saved albums, or any other Spotify data.</p>
+  <p>Authentication uses the <a href="https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow" target="_blank" rel="noopener">PKCE flow</a> — no client secret is stored or transmitted.</p>
+
+  <h2>Last.fm</h2>
+  <p>Groovepede calls the <a href="https://www.last.fm/api" target="_blank" rel="noopener">Last.fm API</a> anonymously (no user account required) to fetch genre tags, artist bios, and similar artist suggestions. These requests include only artist and album names — no personal identifiers.</p>
+
+  <h2>Analytics</h2>
+  <p>Groovepede does not use Google Analytics or any tracking cookies. If privacy-friendly analytics (e.g. Plausible or Umami) are added in future, this policy will be updated to disclose what events are collected.</p>
+
+  <h2>Third-party links</h2>
+  <p>Explore mode includes links to Spotify and Last.fm artist pages. Clicking those links takes you to those services, which have their own privacy policies.</p>
+
+  <h2>Children</h2>
+  <p>Groovepede is not directed at children under 13. If you are under 13, please do not use this app.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes in a material way, we'll update the date at the top. Continued use of the app after changes constitutes acceptance.</p>
+
+  <h2>Contact</h2>
+  <p>Questions? Open an issue on <a href="https://github.com/gregolsky/groovepede" target="_blank" rel="noopener">GitHub</a>.</p>
+</div>
+</body>
+</html>

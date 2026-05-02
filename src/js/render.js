@@ -79,20 +79,83 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
 
   if (!hasSession()) {
     el.innerHTML = `
-      <div class="login-screen">
-        <img class="login-logo" src="favicon.png" alt="Groovepede">
-        <h2>Never lose a great album recommendation again.</h2>
-        <p>Groovepede is a minimalist listening queue for Spotify albums. Save albums, browse them by genre, and check them off as you listen.</p>
-        <ul class="login-features">
-          <li>Share Spotify albums straight from your phone</li>
-          <li>Auto-tagged with genres from Last.fm</li>
-          <li>Deep artist info and track listings on every album</li>
-          <li>Works offline — install it as an app</li>
-        </ul>
-        <button class="auth-btn" data-action="login">
-          ${spotifyIcon(16, 16)} Connect with Spotify
-        </button>
-        <p class="login-privacy">Local-first. Your queue stays in your browser — nothing is sent anywhere except Spotify and Last.fm for metadata.</p>
+      <div class="landing">
+        <div class="landing-hero">
+          <img class="landing-logo" src="favicon.png" alt="Groovepede">
+          <h2 class="landing-headline">Never lose a great album<br>recommendation again.</h2>
+          <p class="landing-sub">A lightweight listening inbox for Spotify albums. Save picks from your phone's share sheet, explore them by genre, and check them off as you listen.</p>
+          <button class="auth-btn landing-cta" data-action="login">
+            ${spotifyIcon(16, 16)} Connect with Spotify
+          </button>
+          <p class="landing-note">Free &middot; No account &middot; Your queue stays in your browser</p>
+        </div>
+
+        <div class="landing-features">
+          <div class="landing-feature">
+            <div class="landing-feature-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                <polyline points="16 6 12 2 8 6"/>
+                <line x1="12" y1="2" x2="12" y2="15"/>
+              </svg>
+            </div>
+            <h3>Share from Spotify</h3>
+            <p>Tap Share &rarr; Groovepede from the Spotify app. Albums appear instantly with cover art and genre tags.</p>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                <line x1="7" y1="7" x2="7.01" y2="7"/>
+              </svg>
+            </div>
+            <h3>Auto-tagged genres</h3>
+            <p>Every album is enriched with genre tags from Last.fm. Filter your queue by mood or style at a glance.</p>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </div>
+            <h3>Fully local</h3>
+            <p>Your queue lives in your browser's storage. Nothing is sent to our servers &mdash; because there are none.</p>
+          </div>
+        </div>
+
+        <div class="landing-steps">
+          <h3 class="landing-section-title">How it works</h3>
+          <ol class="landing-step-list">
+            <li><strong>Open &amp; install</strong> &mdash; Connect with Spotify and add Groovepede to your home screen.</li>
+            <li><strong>Share albums</strong> &mdash; In the Spotify app, tap Share on any album and choose Groovepede.</li>
+            <li><strong>Listen &amp; done</strong> &mdash; When you're ready, tap Listen. Tap Done when finished to track your progress.</li>
+          </ol>
+        </div>
+
+        <div class="landing-faq">
+          <h3 class="landing-section-title">FAQ</h3>
+          <details class="faq-item">
+            <summary>Is it free?</summary>
+            <p>Yes, completely. No subscription, no ads, no upsell.</p>
+          </details>
+          <details class="faq-item">
+            <summary>What Spotify data does it access?</summary>
+            <p>Only your display name and profile picture (<code>user-read-private</code> scope) so we can show your avatar. We never read your listening history, playlists, or library.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Where is my queue stored?</summary>
+            <p>Entirely in your browser's <code>localStorage</code>. Nothing leaves your device.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Does it work on iPhone?</summary>
+            <p>Yes &mdash; the app works in Safari on iOS. The Android share-sheet integration isn't available on iPhone (Apple limits PWA share targets), but you can paste any Spotify album link directly into the add bar.</p>
+          </details>
+          <details class="faq-item">
+            <summary>Can I use it on desktop?</summary>
+            <p>Yes. Install it as a PWA from Chrome or Edge, or just use it in any browser tab. Paste Spotify album links into the add bar to queue them.</p>
+          </details>
+        </div>
       </div>`;
     return;
   }
