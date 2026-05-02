@@ -1,4 +1,4 @@
-# ![Groovepede](public/favicon.png) Groovepede
+# ![Groovepede](public/favicon.png)
 
 **Never lose a great album recommendation again.**
 
