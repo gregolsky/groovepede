@@ -22,8 +22,8 @@ function withExpiredToken(refreshToken = null) {
 
 test('shows login screen when no token at all', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.login-screen')).toBeVisible();
-  await expect(page.locator('.login-screen [data-action="login"]')).toBeVisible();
+  await expect(page.locator('.landing')).toBeVisible();
+  await expect(page.locator('.landing [data-action="login"]')).toBeVisible();
 });
 
 test('shows login screen when token expired and no refresh token', async ({ page, context }) => {
@@ -33,7 +33,7 @@ test('shows login screen when token expired and no refresh token', async ({ page
   }, { keys: STORAGE_KEYS });
 
   await page.goto('/');
-  await expect(page.locator('.login-screen')).toBeVisible();
+  await expect(page.locator('.landing')).toBeVisible();
 });
 
 test('does NOT show login screen when token expired but refresh token exists', async ({ page, context }) => {
@@ -65,7 +65,7 @@ test('does NOT show login screen when token expired but refresh token exists', a
   }, { keys: STORAGE_KEYS });
 
   await page.goto('/');
-  await expect(page.locator('.login-screen')).not.toBeVisible();
+  await expect(page.locator('.landing')).not.toBeVisible();
   await expect(page.locator('.stats')).toBeVisible();
 });
 
@@ -162,7 +162,7 @@ test('exchanges OAuth code from URL and shows app', async ({ page, context }) =>
   await expect(page).toHaveURL('/');
 
   // App should show the queue, not login screen
-  await expect(page.locator('.login-screen')).not.toBeVisible();
+  await expect(page.locator('.landing')).not.toBeVisible();
   await expect(page.locator('.stats')).toBeVisible();
 });
 
@@ -187,5 +187,5 @@ test('logout clears session and shows login screen', async ({ page, context }) =
   await expect(page.locator('.stats')).toBeVisible();
 
   await page.click('[data-action="logout"]');
-  await expect(page.locator('.login-screen')).toBeVisible();
+  await expect(page.locator('.landing')).toBeVisible();
 });
