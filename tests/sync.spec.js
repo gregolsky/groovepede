@@ -242,3 +242,74 @@ test('restore is cancelled when user dismisses the confirm dialog', async ({ pag
     await expect(page.locator('.card-title')).toHaveText('Keep Me');
   });
 });
+
+// ── 403 re-auth path ──────────────────────────────────────────────────────────
+
+test('enabling sync with 403 sets pending flag and redirects to Spotify auth', async ({ page, context }) => {
+  await seedLoggedIn()({ context }, async () => {
+    await stubSpotify(context);
+
+    // Override playlist creation to return 403 (insufficient scope)
+    await context.route('https://api.spotify.com/v1/users/' + USER_ID + '/playlists', async route => {
+      await route.fulfill({ status: 403, contentType: 'application/json',
+        body: JSON.stringify({ error: { status: 403, message: 'Insufficient client scope' } }) });
+    });
+
+    await page.goto('/');
+    await expect(page.locator('.stats')).toBeVisible();
+
+    let authUrl = null;
+    const authRedirected = new Promise(resolve => {
+      context.route('https://accounts.spotify.com/authorize**', async route => {
+        authUrl = route.request().url();
+        resolve(authUrl);
+        await route.abort(); // prevent actual navigation away
+      });
+    });
+
+    await page.click('[data-action="open-profile"]');
+    await page.click('[data-action="toggle-sync"]');
+
+    await authRedirected;
+    expect(authUrl).toContain('accounts.spotify.com/authorize');
+    expect(authUrl).toContain('playlist-modify-private');
+  });
+});
+
+// ── 404 playlist-deleted path ─────────────────────────────────────────────────
+
+test('push with 404 disables sync and clears playlist id', async ({ page, context }) => {
+  const album = { id: 'alb404', title: 'Gone Album', artist: 'Test',
+    url: 'https://open.spotify.com/album/alb404', cover: null, year: '2023',
+    tags: [], addedAt: new Date().toISOString(), firstTrackUri: 'spotify:track:gone1' };
+
+  await seedLoggedIn({
+    [KEYS.SYNC_ON]: '1',
+    [KEYS.SYNC_PL]: PLAYLIST_ID,
+    [KEYS.ALBUMS]:  JSON.stringify([album]),
+  })({ context }, async () => {
+    await stubSpotify(context);
+
+    // Override PUT tracks to return 404 (playlist was deleted from Spotify)
+    await context.route('https://api.spotify.com/v1/playlists/' + PLAYLIST_ID + '/tracks', async route => {
+      if (route.request().method() !== 'PUT') { await route.continue(); return; }
+      await route.fulfill({ status: 404, contentType: 'application/json',
+        body: JSON.stringify({ error: { status: 404, message: 'Not found' } }) });
+    });
+
+    await page.goto('/');
+    await expect(page.locator('.stats')).toBeVisible();
+
+    // Mark album done — triggers schedulePush after state change
+    await page.click('[data-action="done"][data-index="0"]');
+
+    // Wait for debounce (2s) + push to complete
+    await page.waitForFunction(
+      () => localStorage.getItem('gp_sync_enabled') === null,
+      { timeout: 8000 }
+    );
+
+    const playlistId = await page.evaluate(() => localStorage.getItem('gp_sync_playlist_id'));
+    expect(playlistId).toBeNull();
+  });
+});
