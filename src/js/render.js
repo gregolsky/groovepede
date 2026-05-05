@@ -223,7 +223,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
           </details>
           <details class="faq-item">
             <summary>What Spotify data does it access?</summary>
-            <p>Only your display name and profile picture (<code>user-read-private</code> scope) so we can show your avatar. We never read your listening history, playlists, or library.</p>
+            <p>By default, only your display name and profile picture (<code>user-read-private</code> scope) so we can show your avatar. If you enable cross-device sync, we also request <code>playlist-modify-private</code> to create and update a private playlist called "Groovepede Queue" on your account. We never read your listening history or library.</p>
           </details>
           <details class="faq-item">
             <summary>Where is my queue stored?</summary>
