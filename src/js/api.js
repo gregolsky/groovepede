@@ -21,20 +21,45 @@ export async function spotifyGet(path) {
   return res.json();
 }
 
+async function spotifyMutate(method, path, body) {
+  const makeReq = () => fetch('https://api.spotify.com/v1' + path, {
+    method,
+    headers: { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let res = await makeReq();
+  if (res.status === 401) {
+    if (!await refreshAccessToken()) return null;
+    res = await makeReq();
+  }
+  if (!res.ok) return { _error: res.status };
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
+}
+
+export async function spotifyPost(path, body) { return spotifyMutate('POST', path, body); }
+export async function spotifyPut(path, body)  { return spotifyMutate('PUT',  path, body); }
+
+export async function fetchAlbumFirstTrack(albumId) {
+  const data = await spotifyGet('/albums/' + albumId + '/tracks?limit=1');
+  return data?.items?.[0]?.uri || null;
+}
+
 export async function fetchAlbumMeta(id) {
   const data = await spotifyGet('/albums/' + id);
   if (!data) return null;
   const artists = data.artists || [];
   return {
     id,
-    url:      data.external_urls.spotify,
-    title:    data.name,
-    artist:   artists.map(a => a.name).join(', '),
-    artistId: artists[0]?.id || null,
-    cover:    data.images?.[0]?.url || null,
-    year:     (data.release_date || '').slice(0, 4) || null,
-    tags:     [],
-    addedAt:  new Date().toISOString(),
+    url:           data.external_urls.spotify,
+    title:         data.name,
+    artist:        artists.map(a => a.name).join(', '),
+    artistId:      artists[0]?.id || null,
+    cover:         data.images?.[0]?.url || null,
+    year:          (data.release_date || '').slice(0, 4) || null,
+    tags:          [],
+    addedAt:       new Date().toISOString(),
+    firstTrackUri: data.tracks?.items?.[0]?.uri || null,
   };
 }
 

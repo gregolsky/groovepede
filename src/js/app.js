@@ -3,6 +3,7 @@ import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from 
 import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput, serializeBackup, parseBackup } from './storage.js';
 import { renderAuthArea, renderApp } from './render.js';
+import * as sync from './sync.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let userProfile  = null;
@@ -58,7 +59,7 @@ async function handleAdd() {
   rerender();
 
   const meta = await fetchAlbumMeta(id);
-  if (meta) { albums.push(meta); saveAlbums(albums); }
+  if (meta) { albums.push(meta); saveAlbums(albums); sync.schedulePush(); }
 
   loadingAdd = false;
   rerender();
@@ -91,6 +92,7 @@ function applyDone(visibleIdx, album) {
   albums.splice(idx, 1);
   saveAlbums(albums);
   saveDone(loadDone() + 1);
+  sync.schedulePush();
   // Stay in explore mode but move to next, or close if list now empty
   const newVisible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
   if (newVisible.length === 0) {
@@ -226,6 +228,8 @@ document.body.addEventListener('click', e => {
     case 'close-profile': closeProfile();                       break;
     case 'export-data':   exportData();                         break;
     case 'import-data':   document.getElementById('profile-import-input')?.click(); break;
+    case 'toggle-sync':   sync.isSyncEnabled() ? sync.disableSync() : sync.enableSync(userProfile); rerender(); break;
+    case 'restore-sync':  sync.pullNow(rerender);               break;
   }
 });
 
@@ -281,6 +285,8 @@ window.addEventListener('popstate', () => {
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
+sync.setStatusListener(rerender);
+
 async function boot() {
   const params = new URLSearchParams(window.location.search);
   const code   = params.get('code');
@@ -303,6 +309,12 @@ async function boot() {
 
   userProfile = await spotifyGet('/me');
   renderAuthArea(authEl, userProfile);
+
+  // Complete pending sync enable that required a re-auth
+  if (sync.hasPendingEnable()) {
+    await sync.finishEnableAfterAuth(userProfile);
+    rerender();
+  }
 
   if (shared) {
     const { id, error } = validateAlbumInput(shared);

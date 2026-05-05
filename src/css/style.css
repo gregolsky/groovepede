@@ -281,6 +281,28 @@ body::after {
 .faq-item p { font-size: 13px; color: #777; line-height: 1.7; padding-bottom: 16px; }
 .faq-item code { font-size: 12px; background: #1f1f1f; padding: 1px 5px; border-radius: 4px; color: #bbb; }
 
+/* Sync section */
+.profile-sync { width: 100%; margin-bottom: 16px; }
+.profile-sync-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; border-top: 1px solid #1f1f1f; border-bottom: 1px solid #1f1f1f; }
+.profile-sync-label { display: flex; flex-direction: column; gap: 4px; }
+.profile-sync-title { font-size: 14px; font-weight: 500; color: #ddd; }
+.sync-status { font-size: 12px; color: #555; }
+.sync-status--active { color: #1DB954; }
+.sync-status--error { color: #e05252; }
+
+.sync-toggle { position: relative; width: 40px; height: 22px; background: #333; border: none; border-radius: 11px; cursor: pointer; flex-shrink: 0; transition: background 0.2s; padding: 0; }
+.sync-toggle--on { background: #1DB954; }
+.sync-toggle-knob { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: transform 0.2s; display: block; }
+.sync-toggle--on .sync-toggle-knob { transform: translateX(18px); }
+
+.profile-advanced { width: 100%; margin-top: 8px; }
+.profile-advanced-summary { font-size: 12px; color: #555; cursor: pointer; list-style: none; padding: 10px 0; user-select: none; }
+.profile-advanced-summary::-webkit-details-marker { display: none; }
+.profile-advanced-summary::after { content: ' ›'; }
+.profile-advanced[open] .profile-advanced-summary::after { content: ' ↑'; }
+.profile-advanced-body { display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; }
+.profile-advanced-desc { font-size: 12px; color: #555; line-height: 1.6; }
+
 /* User avatar button */
 .user-avatar-btn { background: none; border: none; padding: 0; cursor: pointer; display: flex; align-items: center; border-radius: 50%; transition: opacity 0.15s; }
 .user-avatar-btn:hover { opacity: 0.8; }

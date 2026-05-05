@@ -1,5 +1,6 @@
 import { tokenValid, hasSession } from './auth.js';
 import { loadAlbums, loadDone } from './storage.js';
+import { isSyncEnabled, getSyncStatus, getPlaylistId } from './sync.js';
 
 const SPOTIFY_ICON = 'M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.8 3.3-7.3 1.7-20-12.2-45.2-15-74.9-8.2-2.9.7-5.7-1.1-6.4-4-.7-2.9 1.1-5.7 4-6.4 32.5-7.4 60.4-4.2 82.9 9.5 2.5 1.6 3.3 4.9 1.7 7.4zm10.3-22.8c-2 3.1-6.1 4.1-9.2 2.1-22.9-14.1-57.8-18.1-84.9-9.9-3.4 1-7.1-.9-8.2-4.3-1-3.4.9-7.1 4.3-8.2 31-9.4 69.5-4.9 95.8 11.2 3.1 2 4.1 6.1 2.2 9.1zm.9-23.7C108.4 59 63.5 57.6 37.8 65.5c-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.7-9 79.1-7.3 110.3 11 3.7 2.2 4.9 6.9 2.7 10.5-2.1 3.7-6.9 4.9-10.5 2.7z';
 
@@ -66,6 +67,39 @@ export function renderAuthArea(el, userProfile) {
 
 // ── Profile overlay ───────────────────────────────────────────────────────────
 
+function renderSyncSection() {
+  const enabled = isSyncEnabled();
+  const { status, lastSyncedAt, lastError } = getSyncStatus();
+
+  let statusLine = '';
+  if (enabled) {
+    if (status === 'syncing') {
+      statusLine = '<span class="sync-status sync-status--active">Syncing…</span>';
+    } else if (status === 'error') {
+      statusLine = `<span class="sync-status sync-status--error">${lastError || 'Sync failed'}</span>`;
+    } else if (lastSyncedAt) {
+      const secs = Math.round((Date.now() - lastSyncedAt) / 1000);
+      const ago  = secs < 60 ? 'just now' : secs < 3600 ? Math.floor(secs / 60) + 'm ago' : Math.floor(secs / 3600) + 'h ago';
+      statusLine = `<span class="sync-status">Synced ${ago}</span>`;
+    } else {
+      statusLine = '<span class="sync-status">Not synced yet</span>';
+    }
+  }
+
+  return `
+    <div class="profile-sync">
+      <div class="profile-sync-row">
+        <div class="profile-sync-label">
+          <span class="profile-sync-title">Sync to Spotify playlist</span>
+          ${enabled ? statusLine : '<span class="sync-status">Keeps your queue safe across devices</span>'}
+        </div>
+        <button class="sync-toggle ${enabled ? 'sync-toggle--on' : ''}" data-action="toggle-sync" aria-pressed="${enabled}">
+          <span class="sync-toggle-knob"></span>
+        </button>
+      </div>
+    </div>`;
+}
+
 function renderProfile(userProfile) {
   const img    = userProfile?.images?.[0]?.url;
   const name   = userProfile?.display_name || '';
@@ -86,11 +120,19 @@ function renderProfile(userProfile) {
           <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
           <div class="stat"><div class="stat-num">${tags.length}</div><div class="stat-label">tags</div></div>
         </div>
+        ${renderSyncSection()}
         <div class="profile-actions">
           <button class="profile-action-btn" data-action="export-data">Export queue</button>
           <button class="profile-action-btn" data-action="import-data">Import queue</button>
           <input type="file" id="profile-import-input" accept="application/json" style="display:none">
         </div>
+        <details class="profile-advanced">
+          <summary class="profile-advanced-summary">Advanced</summary>
+          <div class="profile-advanced-body">
+            <p class="profile-advanced-desc">Restore replaces your current queue with the contents of your Spotify playlist. This cannot be undone.</p>
+            <button class="profile-action-btn" data-action="restore-sync" ${!isSyncEnabled() || !getPlaylistId() ? 'disabled' : ''}>Restore from Spotify playlist</button>
+          </div>
+        </details>
         <div class="profile-actions profile-actions--bottom">
           <button class="auth-btn secondary" data-action="logout">Log out of Spotify</button>
         </div>
