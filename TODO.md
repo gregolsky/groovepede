@@ -1,3 +1,4 @@
 - fix README after recent changes around the logo (not visible); also review and update README accordingly
 - init a CLAUDE md; add requirements for unit tests around business rules and e2e tests plus build before push
 - no error message for link validation e.g. artist shared insyaed of album - validation message?
+- sync queue with a Spotify playlist as a cross-device backup (use playlist-modify-private scope; dedicated playlist `Groovepede Queue`, two-way sync on launch, conflict resolution = local-wins for now)

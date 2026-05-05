@@ -281,6 +281,27 @@ body::after {
 .faq-item p { font-size: 13px; color: #777; line-height: 1.7; padding-bottom: 16px; }
 .faq-item code { font-size: 12px; background: #1f1f1f; padding: 1px 5px; border-radius: 4px; color: #bbb; }
 
+/* User avatar button */
+.user-avatar-btn { background: none; border: none; padding: 0; cursor: pointer; display: flex; align-items: center; border-radius: 50%; transition: opacity 0.15s; }
+.user-avatar-btn:hover { opacity: 0.8; }
+.user-avatar-btn svg { width: 30px; height: 30px; color: #888; }
+
+/* Profile overlay */
+.profile { padding-bottom: 64px; }
+.profile-nav { display: flex; align-items: center; margin-bottom: 32px; }
+.profile-back { background: none; border: none; color: #888; font-size: 14px; font-family: inherit; cursor: pointer; padding: 0; }
+.profile-back:hover { color: #fff; }
+.profile-body { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.profile-avatar { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
+.profile-name { font-size: 18px; font-weight: 700; }
+.profile-id { font-size: 13px; color: #555; margin-bottom: 12px; }
+.profile-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; margin-bottom: 24px; }
+.profile-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.profile-actions--bottom { margin-top: 16px; }
+.profile-action-btn { width: 100%; height: 40px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; color: #ccc; font-size: 14px; font-family: inherit; cursor: pointer; }
+.profile-action-btn:hover { border-color: #444; color: #fff; background: #222; }
+.profile-actions--bottom .auth-btn { width: 100%; justify-content: center; }
+
 /* Footer */
 .footer { text-align: center; font-size: 11px; color: #333; margin-top: 40px; padding-bottom: 8px; }
 .footer a { color: #444; text-decoration: none; }

@@ -186,6 +186,8 @@ test('logout clears session and shows login screen', async ({ page, context }) =
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
 
+  await page.click('[data-action="open-profile"]');
+  await expect(page.locator('.profile')).toBeVisible();
   await page.click('[data-action="logout"]');
   await expect(page.locator('.landing')).toBeVisible();
 });

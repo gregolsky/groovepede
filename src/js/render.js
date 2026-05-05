@@ -57,17 +57,57 @@ export function renderAuthArea(el, userProfile) {
   const name = userProfile?.display_name || '';
   el.innerHTML = `
     <div class="user-pill">
-      ${img  ? `<img class="user-avatar" src="${attr(img)}" alt="">` : ''}
+      <button class="user-avatar-btn" data-action="open-profile" aria-label="Your profile">
+        ${img ? `<img class="user-avatar" src="${attr(img)}" alt="">` : spotifyIcon(20, 20)}
+      </button>
       ${name ? `<span class="user-name">${name}</span>` : ''}
-      <button class="auth-btn secondary" data-action="logout">Log out</button>
+    </div>`;
+}
+
+// ── Profile overlay ───────────────────────────────────────────────────────────
+
+function renderProfile(userProfile) {
+  const img    = userProfile?.images?.[0]?.url;
+  const name   = userProfile?.display_name || '';
+  const id     = userProfile?.id || '';
+  const albums = loadAlbums();
+  const tags   = allTags(albums);
+  return `
+    <div class="profile">
+      <div class="profile-nav">
+        <button class="profile-back" data-action="close-profile">← Back</button>
+      </div>
+      <div class="profile-body">
+        ${img ? `<img class="profile-avatar" src="${attr(img)}" alt="">` : ''}
+        ${name ? `<div class="profile-name">${name}</div>` : ''}
+        ${id   ? `<div class="profile-id">@${attr(id)}</div>` : ''}
+        <div class="profile-stats">
+          <div class="stat"><div class="stat-num">${albums.length}</div><div class="stat-label">queued</div></div>
+          <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
+          <div class="stat"><div class="stat-num">${tags.length}</div><div class="stat-label">tags</div></div>
+        </div>
+        <div class="profile-actions">
+          <button class="profile-action-btn" data-action="export-data">Export queue</button>
+          <button class="profile-action-btn" data-action="import-data">Import queue</button>
+          <input type="file" id="profile-import-input" accept="application/json" style="display:none">
+        </div>
+        <div class="profile-actions profile-actions--bottom">
+          <button class="auth-btn secondary" data-action="logout">Log out of Spotify</button>
+        </div>
+      </div>
     </div>`;
 }
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError }) {
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile }) {
   const albums  = loadAlbums();
   const visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+
+  if (profileOpen) {
+    el.innerHTML = renderProfile(userProfile);
+    return;
+  }
 
   if (exploreIndex !== null) {
     const album  = visible[exploreIndex];

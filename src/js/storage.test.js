@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractAlbumId, validateAlbumInput } from './storage.js';
+import { extractAlbumId, validateAlbumInput, serializeBackup, parseBackup } from './storage.js';
 
 describe('extractAlbumId', () => {
   it('extracts id from full Spotify URL', () => {
@@ -84,5 +84,38 @@ describe('validateAlbumInput', () => {
     const r = validateAlbumInput('blah blah blah');
     expect(r.id).toBeNull();
     expect(r.error).toBeTruthy();
+  });
+});
+
+describe('serializeBackup / parseBackup', () => {
+  const albums = [{ id: 'abc', title: 'Test', artist: 'Artist' }];
+
+  it('round-trips albums and done count', () => {
+    const text = serializeBackup(albums, 5);
+    const result = parseBackup(text);
+    expect(result.albums).toEqual(albums);
+    expect(result.done).toBe(5);
+  });
+
+  it('serialized output includes version and exportedAt', () => {
+    const data = JSON.parse(serializeBackup([], 0));
+    expect(data.version).toBe(1);
+    expect(typeof data.exportedAt).toBe('string');
+  });
+
+  it('throws on malformed JSON', () => {
+    expect(() => parseBackup('not json')).toThrow();
+  });
+
+  it('throws when albums is not an array', () => {
+    expect(() => parseBackup(JSON.stringify({ version: 1, albums: 'bad', done: 0 }))).toThrow();
+  });
+
+  it('throws when done is not a number', () => {
+    expect(() => parseBackup(JSON.stringify({ version: 1, albums: [], done: 'bad' }))).toThrow();
+  });
+
+  it('throws on wrong version', () => {
+    expect(() => parseBackup(JSON.stringify({ version: 2, albums: [], done: 0 }))).toThrow();
   });
 });

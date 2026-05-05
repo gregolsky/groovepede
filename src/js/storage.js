@@ -17,6 +17,18 @@ export function extractAlbumId(url) {
   return null;
 }
 
+export function serializeBackup(albums, done) {
+  return JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), albums, done });
+}
+
+export function parseBackup(text) {
+  const data = JSON.parse(text);
+  if (!data || data.version !== 1 || !Array.isArray(data.albums) || typeof data.done !== 'number') {
+    throw new Error('Invalid backup format');
+  }
+  return { albums: data.albums, done: data.done };
+}
+
 export function validateAlbumInput(raw) {
   const s = (raw || '').trim();
   if (!s) return { id: null, error: null };

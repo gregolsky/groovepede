@@ -1,7 +1,7 @@
 import '../css/style.css';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput } from './storage.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput, serializeBackup, parseBackup } from './storage.js';
 import { renderAuthArea, renderApp } from './render.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -13,6 +13,7 @@ let trackCache   = {};
 let exploreIndex = null; // integer index into visible album list, or null
 let animating    = false;
 let addError     = null;
+let profileOpen  = false;
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
@@ -23,7 +24,7 @@ function visibleAlbums() {
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile };
 }
 
 function rerender() {
@@ -161,6 +162,46 @@ function navigateExplore(dir) {
 function logout() {
   clearToken();
   userProfile = null;
+  profileOpen = false;
+  rerender();
+}
+
+function openProfile() {
+  profileOpen = true;
+  window.history.pushState({ profile: true }, '');
+  rerender();
+}
+
+function closeProfile() {
+  profileOpen = false;
+  rerender();
+}
+
+function exportData() {
+  const text = serializeBackup(loadAlbums(), loadDone());
+  const blob = new Blob([text], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `groovepede-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importData(text) {
+  let parsed;
+  try {
+    parsed = parseBackup(text);
+  } catch {
+    alert('Invalid backup file — make sure it was exported from Groovepede.');
+    return;
+  }
+  const current = loadAlbums();
+  if (current.length > 0 && !confirm(`Replace your ${current.length} album${current.length !== 1 ? 's' : ''} with ${parsed.albums.length} from the file?`)) {
+    return;
+  }
+  saveAlbums(parsed.albums);
+  saveDone(parsed.done);
   rerender();
 }
 
@@ -181,6 +222,10 @@ document.body.addEventListener('click', e => {
     case 'explore-prev':  navigateExplore(-1);                  break;
     case 'explore-next':  navigateExplore(+1);                  break;
     case 'done':          markDone(parseInt(index, 10), el);    break;
+    case 'open-profile':  openProfile();                        break;
+    case 'close-profile': closeProfile();                       break;
+    case 'export-data':   exportData();                         break;
+    case 'import-data':   document.getElementById('profile-import-input')?.click(); break;
   }
 });
 
@@ -199,12 +244,25 @@ appEl.addEventListener('input', e => {
   }
 });
 
-// Keyboard arrow navigation in explore mode
+// File picker for queue import
+appEl.addEventListener('change', e => {
+  if (e.target.id !== 'profile-import-input') return;
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = evt => importData(evt.target.result);
+  reader.readAsText(file);
+});
+
+// Keyboard navigation
 window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !animating) {
+    if (exploreIndex !== null) closeExplore();
+    else if (profileOpen) closeProfile();
+  }
   if (exploreIndex === null) return;
   if (e.key === 'ArrowLeft')  navigateExplore(-1);
   if (e.key === 'ArrowRight') navigateExplore(+1);
-  if (e.key === 'Escape' && !animating) closeExplore();
 });
 
 // Touch swipe in explore mode
@@ -218,10 +276,8 @@ document.body.addEventListener('touchend', e => {
 
 // Browser back button
 window.addEventListener('popstate', () => {
-  if (exploreIndex !== null) {
-    exploreIndex = null;
-    rerender();
-  }
+  if (exploreIndex !== null) { exploreIndex = null; rerender(); }
+  else if (profileOpen)      { profileOpen  = false; rerender(); }
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -242,6 +298,8 @@ async function boot() {
   rerender();
 
   if (!tokenValid()) return;
+
+  if (navigator.storage?.persist) navigator.storage.persist();
 
   userProfile = await spotifyGet('/me');
   renderAuthArea(authEl, userProfile);
