@@ -130,16 +130,15 @@ export async function pushNow() {
 
   notify('syncing');
 
-  // Lazy backfill firstTrackUri for pre-sync albums
-  const albums = loadAlbums();
-  let changed = false;
-  for (const album of albums) {
-    if (!album.firstTrackUri) {
-      const uri = await fetchAlbumFirstTrack(album.id);
-      if (uri) { album.firstTrackUri = uri; changed = true; }
-    }
+  // Lazy backfill firstTrackUri for pre-sync albums (parallel)
+  const albums  = loadAlbums();
+  const missing = albums.filter(a => !a.firstTrackUri);
+  if (missing.length) {
+    const uris = await Promise.all(missing.map(a => fetchAlbumFirstTrack(a.id)));
+    let changed = false;
+    missing.forEach((album, i) => { if (uris[i]) { album.firstTrackUri = uris[i]; changed = true; } });
+    if (changed) saveAlbums(albums);
   }
-  if (changed) saveAlbums(albums);
 
   const uris    = albumsToTrackUris(albums);
   const chunks  = chunk(uris, 100);
