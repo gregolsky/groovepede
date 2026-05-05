@@ -76,7 +76,7 @@ function renderSyncSection() {
     if (status === 'syncing') {
       statusLine = '<span class="sync-status sync-status--active">Syncing…</span>';
     } else if (status === 'error') {
-      statusLine = `<span class="sync-status sync-status--error">${lastError || 'Sync failed'}</span>`;
+      statusLine = `<span class="sync-status sync-status--error">${attr(lastError || 'Sync failed')}</span>`;
     } else if (lastSyncedAt) {
       const secs = Math.round((Date.now() - lastSyncedAt) / 1000);
       const ago  = secs < 60 ? 'just now' : secs < 3600 ? Math.floor(secs / 60) + 'm ago' : Math.floor(secs / 3600) + 'h ago';
