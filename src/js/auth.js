@@ -40,13 +40,13 @@ export async function refreshAccessToken() {
   return false;
 }
 
-export async function login() {
+export async function login(scopes = SCOPES) {
   const verifier  = randomStr(64);
   const challenge = await sha256(verifier);
   localStorage.setItem(VERIFIER_KEY, verifier);
   const p = new URLSearchParams({
     client_id: CLIENT_ID, response_type: 'code',
-    redirect_uri: REDIRECT, scope: SCOPES,
+    redirect_uri: REDIRECT, scope: scopes,
     code_challenge_method: 'S256', code_challenge: challenge,
   });
   window.location = 'https://accounts.spotify.com/authorize?' + p;

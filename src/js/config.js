@@ -1,6 +1,7 @@
 export const CLIENT_ID    = 'f92bb3efa7834769a202cd583d3ddf5f';
 export const REDIRECT     = 'https://gregolsky.pl/groovepede/';
-export const SCOPES       = 'user-read-private playlist-modify-private';
+export const SCOPES       = 'user-read-private';
+export const SYNC_SCOPES  = 'user-read-private playlist-modify-private';
 export const LASTFM_KEY   = '85219c8fc56c9e7cde4a4b9cb8a303d1';
 export const STORAGE_KEY  = 'gp_albums';
 export const DONE_KEY     = 'gp_done';

@@ -1,4 +1,4 @@
-import { SYNC_ENABLED_KEY, SYNC_PLAYLIST_KEY, SYNC_LAST_KEY, SYNC_PENDING_KEY } from './config.js';
+import { SYNC_ENABLED_KEY, SYNC_PLAYLIST_KEY, SYNC_LAST_KEY, SYNC_PENDING_KEY, SYNC_SCOPES } from './config.js';
 import { loadAlbums, saveAlbums } from './storage.js';
 import { spotifyGet, spotifyPost, spotifyPut, fetchAlbumFirstTrack, enrichWithLastfm } from './api.js';
 import { login } from './auth.js';
@@ -89,7 +89,7 @@ export async function enableSync(userProfile) {
     if (!playlist) { notify('error', 'Auth failed'); return; }
     if (playlist._error === 403) {
       localStorage.setItem(SYNC_PENDING_KEY, '1');
-      login();
+      login(SYNC_SCOPES);
       return;
     }
     if (playlist._error) { notify('error', 'Could not create playlist (Spotify error ' + playlist._error + ')'); return; }
