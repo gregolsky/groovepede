@@ -228,7 +228,10 @@ document.body.addEventListener('click', e => {
     case 'close-profile': closeProfile();                       break;
     case 'export-data':   exportData();                         break;
     case 'import-data':   document.getElementById('profile-import-input')?.click(); break;
-    case 'toggle-sync':   sync.isSyncEnabled() ? sync.disableSync() : sync.enableSync(userProfile); rerender(); break;
+    case 'toggle-sync':
+      if (sync.isSyncEnabled()) { sync.disableSync(); rerender(); }
+      else { sync.enableSync(userProfile); } // notify() inside rerenders via _onChange
+      break;
     case 'restore-sync':  sync.pullNow(rerender);               break;
   }
 });
