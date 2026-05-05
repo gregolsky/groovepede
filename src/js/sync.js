@@ -175,9 +175,7 @@ export async function pullNow(rerenderFn) {
   const playlistId = getPlaylistId();
   if (!playlistId) return;
 
-  notify('syncing');
-
-  // Paginate through all playlist tracks
+  // Fetch silently — show confirm dialog before announcing "Syncing…"
   const items = [];
   let next = '/playlists/' + playlistId +
     '/tracks?limit=100&fields=next,items(track(uri,album(id,name,release_date,external_urls,images,artists)))';
@@ -194,8 +192,10 @@ export async function pullNow(rerenderFn) {
 
   if (local.length > 0) {
     const ok = confirm(`Replace your ${local.length} album${local.length !== 1 ? 's' : ''} with ${fromPlaylist.length} from your Spotify playlist?`);
-    if (!ok) { notify('idle'); return; }
+    if (!ok) return;
   }
+
+  notify('syncing');
 
   // Preserve local metadata for albums already in the queue
   const localMap = Object.fromEntries(local.map(a => [a.id, a]));
