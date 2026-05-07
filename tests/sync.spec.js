@@ -234,6 +234,8 @@ test('restore is cancelled when user dismisses the confirm dialog', async ({ pag
     page.on('dialog', dialog => dialog.dismiss());
 
     await page.goto('/');
+    await expect(page.locator('.stats')).toBeVisible();
+
     await page.click('[data-action="open-profile"]');
     await page.locator('.profile-advanced').evaluate(el => el.open = true);
     await page.click('[data-action="restore-sync"]');
