@@ -287,6 +287,37 @@ window.addEventListener('popstate', () => {
   else if (profileOpen)      { profileOpen  = false; rerender(); }
 });
 
+function showShareConfirmAndClose(meta, highlightId) {
+  const el = document.createElement('div');
+  el.id = 'share-confirm';
+  el.innerHTML = `
+    <img src="${meta.cover}" alt="">
+    <svg class="share-check" viewBox="0 0 52 52" aria-hidden="true">
+      <circle cx="26" cy="26" r="26"/>
+      <path d="M14 27l8 8 16-16"/>
+    </svg>
+    <div class="share-confirm__text">
+      <p class="share-confirm__title">${meta.title}</p>
+      <p class="share-confirm__artist">${meta.artist}</p>
+      <p class="share-confirm__label">Added to queue</p>
+    </div>
+  `;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('share-confirm--in'));
+
+  setTimeout(() => window.close(), 900);
+  setTimeout(() => {
+    if (document.body.contains(el)) {
+      el.remove();
+      const card = document.getElementById('card-' + highlightId);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('card--highlight');
+      }
+    }
+  }, 1050);
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 sync.setStatusListener(rerender);
 
@@ -320,6 +351,7 @@ async function boot() {
   }
 
   if (shared) {
+    const isShareLaunch = window.matchMedia('(display-mode: standalone)').matches;
     const { id, error } = validateAlbumInput(shared);
     if (!id && error) {
       addError = error;
@@ -329,27 +361,34 @@ async function boot() {
     if (id) {
       const albums = loadAlbums();
       let highlightId = null;
+      let addedMeta = null;
       if (!albums.find(a => a.id === id)) {
         const meta = await fetchAlbumMeta(id);
         if (meta) {
           albums.push(meta);
           saveAlbums(albums);
           highlightId = meta.id;
+          addedMeta = meta;
           enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
         }
       } else {
         highlightId = id;
+        addedMeta = albums.find(a => a.id === id);
       }
       window.history.replaceState({}, document.title, window.location.pathname);
       rerender();
       if (highlightId) {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          const card = document.getElementById('card-' + highlightId);
-          if (card) {
-            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            card.classList.add('card--highlight');
-          }
-        }));
+        if (isShareLaunch && addedMeta) {
+          showShareConfirmAndClose(addedMeta, highlightId);
+        } else {
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const card = document.getElementById('card-' + highlightId);
+            if (card) {
+              card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              card.classList.add('card--highlight');
+            }
+          }));
+        }
       }
     }
   }

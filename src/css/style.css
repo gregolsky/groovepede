@@ -227,6 +227,80 @@ body::after {
 }
 .card--highlight { animation: card-highlight 2s ease-out forwards; }
 
+/* Share confirmation overlay */
+@keyframes share-confirm-in {
+  from { opacity: 0; transform: scale(0.88); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes share-check-draw {
+  from { stroke-dashoffset: 60; }
+  to   { stroke-dashoffset: 0; }
+}
+#share-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(0,0,0,0.82);
+  pointer-events: none;
+}
+#share-confirm.share-confirm--in {
+  animation: share-confirm-in 250ms ease-out forwards;
+}
+#share-confirm img {
+  width: 140px;
+  height: 140px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+}
+#share-confirm .share-confirm__text {
+  text-align: center;
+}
+#share-confirm .share-confirm__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 2px;
+}
+#share-confirm .share-confirm__artist {
+  font-size: 0.85rem;
+  color: #aaa;
+  margin: 0 0 10px;
+}
+#share-confirm .share-confirm__label {
+  font-size: 0.8rem;
+  color: #1DB954;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+#share-confirm svg.share-check {
+  width: 52px;
+  height: 52px;
+}
+#share-confirm svg.share-check circle {
+  fill: #1DB954;
+}
+#share-confirm svg.share-check path {
+  stroke: #fff;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  stroke-dasharray: 60;
+  stroke-dashoffset: 60;
+  animation: share-check-draw 350ms ease-out 200ms forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  #share-confirm.share-confirm--in { animation: none; opacity: 1; }
+  #share-confirm svg.share-check path { animation: none; stroke-dashoffset: 0; }
+}
+
 /* Done flash animation */
 @keyframes done-flash {
   0%   { background: transparent; }
