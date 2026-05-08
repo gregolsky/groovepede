@@ -14,10 +14,10 @@ export async function spotifyGet(path) {
     if (!refreshed) return null;
     const retry = await fetch('https://api.spotify.com/v1' + path,
       { headers: { Authorization: 'Bearer ' + getToken() } });
-    if (!retry.ok) return null;
+    if (!retry.ok) return { _error: retry.status };
     return retry.json();
   }
-  if (!res.ok) return null;
+  if (!res.ok) return { _error: res.status };
   return res.json();
 }
 
@@ -47,7 +47,7 @@ export async function fetchAlbumFirstTrack(albumId) {
 
 export async function fetchAlbumMeta(id) {
   const data = await spotifyGet('/albums/' + id);
-  if (!data) return null;
+  if (!data || data._error) return data ?? null;
   const artists = data.artists || [];
   return {
     id,

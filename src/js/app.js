@@ -59,14 +59,20 @@ async function handleAdd() {
   rerender();
 
   const meta = await fetchAlbumMeta(id);
-  if (meta) { albums.push(meta); saveAlbums(albums); sync.schedulePush(); }
+  if (meta?._error === 403) {
+    addError = 'Spotify access denied — this app is in development mode and your account is not on the allowlist.';
+  } else if (meta?._error) {
+    addError = 'Could not fetch album from Spotify (error ' + meta._error + ').';
+  } else if (meta) {
+    albums.push(meta); saveAlbums(albums); sync.schedulePush();
+  }
 
   loadingAdd = false;
   rerender();
 
   const inp = appEl.querySelector('#url-input');
   if (inp) inp.value = '';
-  if (meta) enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
+  if (meta && !meta._error) enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
 }
 
 function markDone(visibleIdx, triggerEl) {
