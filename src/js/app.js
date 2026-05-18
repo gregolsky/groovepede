@@ -410,7 +410,10 @@ async function boot() {
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js');
-    navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController) window.location.reload();
+    });
   }
 }
 
