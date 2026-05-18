@@ -166,7 +166,9 @@ function renderProfile(userProfile) {
 
 export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen }) {
   const albums  = loadAlbums();
-  const visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+  let visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+  const q = searchQuery?.trim().toLowerCase();
+  if (q) visible = visible.filter(a => (a.title || '').toLowerCase().includes(q) || (a.artist || '').toLowerCase().includes(q));
 
   if (profileOpen) {
     el.innerHTML = renderProfile(userProfile);
