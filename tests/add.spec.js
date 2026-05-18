@@ -25,6 +25,11 @@ async function stubMe(context) {
   );
 }
 
+async function openAddReveal(page) {
+  await page.click('[data-action="toggle-add"]');
+  await expect(page.locator('#url-input')).toBeVisible();
+}
+
 // ── Album add errors ───────────────────────────────────────────────────────────
 
 test('403 on album fetch shows development-mode error and does not add card', async ({ page, context }) => {
@@ -38,6 +43,7 @@ test('403 on album fetch shows development-mode error and does not add card', as
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
 
+  await openAddReveal(page);
   await page.fill('#url-input', ALBUM_ID);
   await page.click('[data-action="add"]');
 
@@ -59,6 +65,7 @@ test('404 on album fetch shows generic error with status code and does not add c
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
 
+  await openAddReveal(page);
   await page.fill('#url-input', ALBUM_ID);
   await page.click('[data-action="add"]');
 
@@ -79,6 +86,7 @@ test('500 on album fetch shows generic error with status code and does not add c
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
 
+  await openAddReveal(page);
   await page.fill('#url-input', ALBUM_ID);
   await page.click('[data-action="add"]');
 

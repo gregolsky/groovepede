@@ -15,22 +15,41 @@ let exploreIndex = null; // integer index into visible album list, or null
 let animating    = false;
 let addError     = null;
 let profileOpen  = false;
+let searchQuery  = '';
+let tagsExpanded = false;
+let addOpen      = false;
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
 
 function visibleAlbums() {
   const albums = loadAlbums();
-  return activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+  let list = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+  const q = searchQuery.trim().toLowerCase();
+  if (q) list = list.filter(a => (a.title || '').toLowerCase().includes(q) || (a.artist || '').toLowerCase().includes(q));
+  return list;
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen };
 }
 
 function rerender() {
+  const focused = document.activeElement;
+  const focusId = focused?.id;
+  const selStart = focused?.selectionStart;
+  const selEnd   = focused?.selectionEnd;
+
   renderAuthArea(authEl, userProfile);
   renderApp(appEl, getState());
+
+  if (focusId === 'search-input' || focusId === 'url-input') {
+    const el = document.getElementById(focusId);
+    if (el) {
+      el.focus();
+      try { el.setSelectionRange(selStart, selEnd); } catch {}
+    }
+  }
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -68,6 +87,7 @@ async function handleAdd() {
   }
 
   loadingAdd = false;
+  if (meta && !meta._error) addOpen = false;
   rerender();
 
   const inp = appEl.querySelector('#url-input');
@@ -100,7 +120,7 @@ function applyDone(visibleIdx, album) {
   saveDone(loadDone() + 1);
   sync.schedulePush();
   // Stay in explore mode but move to next, or close if list now empty
-  const newVisible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+  const newVisible = visibleAlbums();
   if (newVisible.length === 0) {
     exploreIndex = null;
   } else {
@@ -224,6 +244,21 @@ document.body.addEventListener('click', e => {
     case 'logout':        logout();                             break;
     case 'filter':        setFilter(tag);                       break;
     case 'add':           handleAdd();                          break;
+    case 'toggle-add':
+      addOpen = !addOpen;
+      if (!addOpen) addError = null;
+      rerender();
+      if (addOpen) requestAnimationFrame(() => document.getElementById('url-input')?.focus());
+      break;
+    case 'clear-search':
+      searchQuery = '';
+      rerender();
+      requestAnimationFrame(() => document.getElementById('search-input')?.focus());
+      break;
+    case 'toggle-tags':
+      tagsExpanded = !tagsExpanded;
+      rerender();
+      break;
     case 'listen':        window.open(url, '_blank');           break;
     case 'explore':       openExplore(parseInt(index, 10));     break;
     case 'close-explore': closeExplore();                       break;
@@ -247,8 +282,13 @@ appEl.addEventListener('keydown', e => {
   if (e.target.id === 'url-input' && e.key === 'Enter') handleAdd();
 });
 
-// Clear add error when user edits the input
+// Search input and add error clearing
 appEl.addEventListener('input', e => {
+  if (e.target.id === 'search-input') {
+    searchQuery = e.target.value;
+    rerender();
+    return;
+  }
   if (e.target.id === 'url-input' && addError) {
     addError = null;
     e.target.classList.remove('error');
@@ -270,7 +310,8 @@ appEl.addEventListener('change', e => {
 // Keyboard navigation
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !animating) {
-    if (exploreIndex !== null) closeExplore();
+    if (addOpen) { addOpen = false; addError = null; rerender(); }
+    else if (exploreIndex !== null) closeExplore();
     else if (profileOpen) closeProfile();
   }
   if (exploreIndex === null) return;
@@ -361,6 +402,7 @@ async function boot() {
     const { id, error } = validateAlbumInput(shared);
     if (!id && error) {
       addError = error;
+      addOpen = true;
       window.history.replaceState({}, document.title, window.location.pathname);
       rerender();
     }

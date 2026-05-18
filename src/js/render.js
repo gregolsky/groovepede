@@ -40,6 +40,31 @@ function allTags(albums) {
   return [...s].sort();
 }
 
+export function tagsByFrequency(albums) {
+  const counts = {};
+  for (const album of albums) {
+    for (const tag of (album.tags || [])) counts[tag] = (counts[tag] || 0) + 1;
+  }
+  return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+}
+
+export function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+export function highlightMatch(text, query) {
+  if (!query) return escapeHtml(text);
+  const q = query.trim().toLowerCase();
+  if (!q) return escapeHtml(text);
+  const idx = text.toLowerCase().indexOf(q);
+  if (idx === -1) return escapeHtml(text);
+  return escapeHtml(text.slice(0, idx))
+    + '<mark class="hl">' + escapeHtml(text.slice(idx, idx + q.length)) + '</mark>'
+    + escapeHtml(text.slice(idx + q.length));
+}
+
 function attr(value) {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
@@ -139,7 +164,7 @@ function renderProfile(userProfile) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile }) {
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen }) {
   const albums  = loadAlbums();
   const visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
 
@@ -239,7 +264,6 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     return;
   }
 
-  const tags       = allTags(albums);
   const addedToday = albums.filter(a => (a.addedAt || '').slice(0, 10) === todayStr()).length;
 
   let html = `
@@ -248,49 +272,69 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
       <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
       <div class="stat"><div class="stat-num">${addedToday}</div><div class="stat-label">added today</div></div>
     </div>
-    <div class="add-bar">
+    <div class="top-toolbar">
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input class="search-input" id="search-input" placeholder="Search albums or artists…" value="${attr(searchQuery || '')}" autocomplete="off">
+        ${searchQuery ? `<button class="search-clear" data-action="clear-search" aria-label="Clear search">&times;</button>` : ''}
+      </div>
+      <button class="add-toggle${addOpen ? ' active' : ''}" data-action="toggle-add" aria-expanded="${addOpen}">+ Add</button>
+    </div>
+    ${addOpen ? `
+    <div class="add-reveal">
       <input class="add-input" id="url-input" placeholder="Paste a Spotify album link or ID…">
       <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
         ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
       </button>
     </div>
-    ${addError ? `<div class="add-error">${addError}</div>` : ''}`;
+    ${addError ? `<div class="add-error">${addError}</div>` : ''}` : ''}`;
 
-  if (tags.length) {
+  const tagFreqList = tagsByFrequency(albums);
+  if (tagFreqList.length) {
+    const TOP_N = 6;
+    const showMore = tagFreqList.length > 7;
+    let displayTags;
+    if (showMore && !tagsExpanded) {
+      let topN = tagFreqList.slice(0, TOP_N);
+      if (activeFilter !== 'all' && !topN.includes(activeFilter)) topN[TOP_N - 1] = activeFilter;
+      displayTags = topN;
+    } else {
+      displayTags = tagFreqList;
+    }
     html += `
       <div class="filter-bar">
         <button class="filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-action="filter" data-tag="all">All</button>
-        ${tags.map(t => `
+        ${displayTags.map(t => `
         <button class="filter-chip ${activeFilter === t ? 'active' : ''}" data-action="filter" data-tag="${attr(t)}">${t}</button>`).join('')}
+        ${showMore ? `<button class="tag-more" data-action="toggle-tags">${tagsExpanded ? 'Less ▴' : 'More ▾'}</button>` : ''}
       </div>`;
   }
 
   html += '<div class="list">';
-  html += visible.length ? renderCards(visible, albums) : renderEmpty(activeFilter);
+  html += visible.length ? renderCards(visible, albums, searchQuery) : renderEmpty(activeFilter, searchQuery);
   html += '</div>';
 
   el.innerHTML = html;
 }
 
-function renderEmpty(activeFilter) {
+function renderEmpty(activeFilter, searchQuery) {
+  const icon = `<div class="empty-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="1.2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.5" fill="#444" stroke="none"/></svg></div>`;
+  if (searchQuery?.trim()) {
+    return `<div class="empty">${icon}<div class="empty-title">No matches for &ldquo;${escapeHtml(searchQuery.trim())}&rdquo;</div><div class="empty-body"><button class="empty-clear" data-action="clear-search">Clear search</button></div></div>`;
+  }
   const noTag = activeFilter !== 'all';
   return `
     <div class="empty">
-      <div class="empty-icon">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="1.2">
-          <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>
-          <circle cx="12" cy="12" r="1.5" fill="#444" stroke="none"/>
-        </svg>
-      </div>
+      ${icon}
       <div class="empty-title">${noTag ? 'No albums with this tag' : 'Nothing queued yet'}</div>
-      <div class="empty-body">${noTag ? 'Try a different filter.' : 'Share a Spotify album link to this app,<br>or paste one in the bar above.'}</div>
+      <div class="empty-body">${noTag ? 'Try a different filter.' : 'Tap <strong>+ Add</strong> above to save your first album.'}</div>
     </div>`;
 }
 
-function renderCards(visible, albums) {
+function renderCards(visible, albums, searchQuery) {
   return visible.map((album, visibleIdx) => {
-    const realIndex = albums.indexOf(album);
-
     const tagHtml = [
       album.year ? `<span class="tag year">${album.year}</span>` : '',
       ...(album.tags || []).map(t => `<span class="tag genre" data-action="filter" data-tag="${attr(t)}">${t}</span>`),
@@ -310,8 +354,8 @@ function renderCards(visible, albums) {
                  </div>`}
           </div>
           <div class="card-body">
-            <div class="card-title">${album.title || 'Unknown album'}</div>
-            <div class="card-artist">${album.artist || ''}</div>
+            <div class="card-title">${highlightMatch(album.title || 'Unknown album', searchQuery)}</div>
+            <div class="card-artist">${highlightMatch(album.artist || '', searchQuery)}</div>
             ${tagHtml ? `<div class="card-tags">${tagHtml}</div>` : ''}
             <div class="card-meta">Added ${timeAgo(album.addedAt)}</div>
           </div>

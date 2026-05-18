@@ -119,7 +119,8 @@ test('retries Spotify API call after 401 by refreshing token', async ({ page, co
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
 
-  // Paste a valid 22-char album ID to trigger fetchAlbumMeta
+  // Open add reveal, paste a valid 22-char album ID to trigger fetchAlbumMeta
+  await page.click('[data-action="toggle-add"]');
   await page.fill('#url-input', 'abc123def456ghi789jklm');
   await page.click('[data-action="add"]');
 

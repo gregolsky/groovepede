@@ -146,6 +146,7 @@ test('adding an album with sync on triggers a push', async ({ page, context }) =
       { timeout: 8000 }
     );
 
+    await page.click('[data-action="toggle-add"]');
     const input = page.locator('#url-input');
     await input.fill('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     await input.press('Enter');

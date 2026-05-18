@@ -58,6 +58,26 @@ body::after {
 .stat-num.green { color: #0FD287; }
 .stat-label { font-size: 12px; color: #888; margin-top: 2px; }
 
+/* Top toolbar */
+.top-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+.search-wrap { position: relative; flex: 1; }
+.search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: #555; pointer-events: none; }
+.search-input { width: 100%; height: 40px; padding: 0 32px 0 32px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; color: #fff; font-size: 13px; font-family: inherit; outline: none; transition: border-color .15s; }
+.search-input::placeholder { color: #555; }
+.search-input:focus { border-color: #0FD287; }
+.search-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: transparent; border: 0; color: #666; font-size: 20px; line-height: 1; padding: 2px 6px; cursor: pointer; }
+.search-clear:hover { color: #fff; }
+.add-toggle { height: 40px; padding: 0 14px; background: transparent; border: 1px solid #2a2a2a; border-radius: 8px; color: #ccc; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; flex-shrink: 0; transition: border-color .15s, background .15s, color .15s; white-space: nowrap; }
+.add-toggle:hover { border-color: #444; }
+.add-toggle.active { background: #0FD287; border-color: #0FD287; color: #000; }
+
+/* Add reveal */
+.add-reveal { display: flex; gap: 8px; margin-bottom: 12px; animation: reveal-in .15s ease-out; }
+@keyframes reveal-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* Search highlight */
+.hl { color: #0FD287; text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; background: transparent; font-style: normal; }
+
 /* Add bar */
 .add-bar { display: flex; gap: 8px; margin-bottom: 16px; }
 .add-input { flex: 1; height: 40px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; color: #fff; padding: 0 14px; font-size: 13px; font-family: inherit; outline: none; transition: border-color 0.15s; }
@@ -74,6 +94,12 @@ body::after {
 .filter-chip { height: 28px; padding: 0 12px; border-radius: 20px; border: 1px solid #2a2a2a; background: transparent; color: #888; font-size: 12px; font-family: inherit; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
 .filter-chip:hover { border-color: #444; color: #ccc; }
 .filter-chip.active { background: #0FD287; border-color: #0FD287; color: #000; font-weight: 600; }
+.tag-more { height: 28px; padding: 0 12px; border-radius: 20px; border: 1px dashed #333; background: transparent; color: #666; font-size: 12px; font-family: inherit; cursor: pointer; white-space: nowrap; transition: color .15s, border-color .15s; }
+.tag-more:hover { color: #ccc; border-color: #555; }
+
+/* Empty clear button */
+.empty-clear { background: transparent; border: 1px solid #333; border-radius: 6px; color: #888; font-size: 12px; font-family: inherit; padding: 5px 14px; cursor: pointer; margin-top: 4px; }
+.empty-clear:hover { border-color: #555; color: #ccc; }
 
 /* Cards */
 .list { display: flex; flex-direction: column; gap: 10px; }
