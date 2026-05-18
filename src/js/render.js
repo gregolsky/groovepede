@@ -48,10 +48,7 @@ function attr(value) {
 
 export function renderAuthArea(el, userProfile) {
   if (!hasSession()) {
-    el.innerHTML = `
-      <button class="auth-btn" data-action="login">
-        ${spotifyIcon(14, 14)} Connect Spotify
-      </button>`;
+    el.innerHTML = '';
     return;
   }
   const img  = userProfile?.images?.[0]?.url;
@@ -175,7 +172,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
         <div class="landing-features">
           <div class="landing-feature">
             <div class="landing-feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
                 <polyline points="16 6 12 2 8 6"/>
                 <line x1="12" y1="2" x2="12" y2="15"/>
@@ -186,7 +183,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
           </div>
           <div class="landing-feature">
             <div class="landing-feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
                 <line x1="7" y1="7" x2="7.01" y2="7"/>
               </svg>
@@ -196,7 +193,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
           </div>
           <div class="landing-feature">
             <div class="landing-feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                 <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
               </svg>
