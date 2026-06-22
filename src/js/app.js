@@ -96,22 +96,19 @@ async function handleAdd() {
 }
 
 function markDone(visibleIdx, triggerEl) {
-  const visible = visibleAlbums();
-  const album   = visible[visibleIdx];
+  const album = visibleAlbums()[visibleIdx];
   if (!album) return;
-
-  // Animate the button/card before committing state change
-  const btn = triggerEl || appEl.querySelector(`[data-action="done"][data-index="${visibleIdx}"]`);
-  const card = btn?.closest('.card, .explore-album');
+  const btn  = triggerEl || appEl.querySelector(`[data-action="done"][data-index="${visibleIdx}"]`);
+  const card = btn?.closest('.card');
   if (card) {
     card.classList.add('done-flash');
-    setTimeout(() => applyDone(visibleIdx, album), 550);
+    setTimeout(() => applyDone(album), 550);
   } else {
-    applyDone(visibleIdx, album);
+    applyDone(album);
   }
 }
 
-function applyDone(visibleIdx, album) {
+function applyDone(album) {
   const albums = loadAlbums();
   const idx    = albums.findIndex(a => a.id === album.id);
   if (idx === -1) return;
@@ -119,7 +116,30 @@ function applyDone(visibleIdx, album) {
   saveAlbums(albums);
   saveDone(loadDone() + 1);
   sync.schedulePush();
-  // Stay in explore mode but move to next, or close if list now empty
+  rerender();
+}
+
+function markExploreDone(visibleIdx, triggerEl) {
+  const album = visibleAlbums()[visibleIdx];
+  if (!album) return;
+  const btn  = triggerEl || appEl.querySelector(`[data-action="explore-done"][data-index="${visibleIdx}"]`);
+  const card = btn?.closest('.explore-album');
+  if (card) {
+    card.classList.add('done-flash');
+    setTimeout(() => applyExploreDone(visibleIdx, album), 550);
+  } else {
+    applyExploreDone(visibleIdx, album);
+  }
+}
+
+function applyExploreDone(visibleIdx, album) {
+  const albums = loadAlbums();
+  const idx    = albums.findIndex(a => a.id === album.id);
+  if (idx === -1) return;
+  albums.splice(idx, 1);
+  saveAlbums(albums);
+  saveDone(loadDone() + 1);
+  sync.schedulePush();
   const newVisible = visibleAlbums();
   if (newVisible.length === 0) {
     exploreIndex = null;
@@ -264,7 +284,8 @@ document.body.addEventListener('click', e => {
     case 'close-explore': closeExplore();                       break;
     case 'explore-prev':  navigateExplore(-1);                  break;
     case 'explore-next':  navigateExplore(+1);                  break;
-    case 'done':          markDone(parseInt(index, 10), el);    break;
+    case 'done':          markDone(parseInt(index, 10), el);         break;
+    case 'explore-done':  markExploreDone(parseInt(index, 10), el);  break;
     case 'open-profile':  openProfile();                        break;
     case 'close-profile': closeProfile();                       break;
     case 'export-data':   exportData();                         break;

@@ -429,7 +429,7 @@ function renderExploreCard(album, cached, tracks, index, total) {
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
             Listen on Spotify
           </button>
-          <button class="btn btn-done" data-action="done" data-index="${index}">Done</button>
+          <button class="btn btn-done" data-action="explore-done" data-index="${index}">Done</button>
         </div>
         ${tracklistHtml}
       </div>
