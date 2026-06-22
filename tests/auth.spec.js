@@ -167,6 +167,84 @@ test('exchanges OAuth code from URL and shows app', async ({ page, context }) =>
   await expect(page.locator('.stats')).toBeVisible();
 });
 
+// ── invalid_grant: expired refresh token ─────────────────────────────────────
+
+test('clears session and shows login screen when refresh token returns invalid_grant at boot', async ({ page, context }) => {
+  await context.route('https://accounts.spotify.com/api/token', async route => {
+    await route.fulfill({
+      status: 400,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'invalid_grant', error_description: 'Refresh token expired' }),
+    });
+  });
+
+  await context.addInitScript(({ keys }) => {
+    localStorage.setItem(keys.TOKEN,   'expired_token');
+    localStorage.setItem(keys.EXPIRY,  String(Date.now() - 1000));
+    localStorage.setItem(keys.REFRESH, 'expired_refresh_token');
+  }, { keys: STORAGE_KEYS });
+
+  await page.goto('/');
+  await expect(page.locator('.landing')).toBeVisible();
+  await expect(page.locator('.stats')).not.toBeVisible();
+
+  const stored = await page.evaluate(keys => ({
+    token:   localStorage.getItem(keys.TOKEN),
+    expiry:  localStorage.getItem(keys.EXPIRY),
+    refresh: localStorage.getItem(keys.REFRESH),
+  }), STORAGE_KEYS);
+  expect(stored.token).toBeNull();
+  expect(stored.expiry).toBeNull();
+  expect(stored.refresh).toBeNull();
+});
+
+test('clears session and shows login screen when mid-session 401 refresh returns invalid_grant', async ({ page, context }) => {
+  await context.route('https://api.spotify.com/v1/me', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ display_name: 'Test User', images: [] }),
+    });
+  });
+
+  await context.route('https://api.spotify.com/v1/albums/abc123def456ghi789jklm', async route => {
+    await route.fulfill({ status: 401, body: '{}' });
+  });
+
+  await context.route('https://accounts.spotify.com/api/token', async route => {
+    await route.fulfill({
+      status: 400,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'invalid_grant', error_description: 'Refresh token expired' }),
+    });
+  });
+
+  await context.addInitScript(({ keys }) => {
+    localStorage.setItem(keys.TOKEN,   'valid_token');
+    localStorage.setItem(keys.EXPIRY,  String(Date.now() + 999999));
+    localStorage.setItem(keys.REFRESH, 'expired_refresh_token');
+  }, { keys: STORAGE_KEYS });
+
+  await page.goto('/');
+  await expect(page.locator('.stats')).toBeVisible();
+
+  await page.click('[data-action="toggle-add"]');
+  await page.fill('#url-input', 'abc123def456ghi789jklm');
+  await page.click('[data-action="add"]');
+
+  await expect(page.locator('.landing')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('.card')).not.toBeVisible();
+
+  const stored = await page.evaluate(keys => ({
+    token:   localStorage.getItem(keys.TOKEN),
+    expiry:  localStorage.getItem(keys.EXPIRY),
+    refresh: localStorage.getItem(keys.REFRESH),
+  }), STORAGE_KEYS);
+  expect(stored.token).toBeNull();
+  expect(stored.expiry).toBeNull();
+  expect(stored.refresh).toBeNull();
+});
+
 // ── Logout ────────────────────────────────────────────────────────────────────
 
 test('logout clears session and shows login screen', async ({ page, context }) => {

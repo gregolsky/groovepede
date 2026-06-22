@@ -29,6 +29,7 @@ export async function refreshAccessToken() {
         client_id: CLIENT_ID,
       }),
     });
+    if (!res.ok) { clearToken(); return false; }
     const data = await res.json();
     if (data.access_token) {
       localStorage.setItem(TOKEN_KEY, data.access_token);
