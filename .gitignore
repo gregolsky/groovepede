@@ -2,3 +2,10 @@ node_modules/
 dist/
 test-results/
 playwright-report/
+
+# Claude Code: user-local settings and scratch worktrees
+.claude/settings.local.json
+.claude/worktrees/
+
+# Personal palette reference (not for the build)
+public/pallette.txt

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm audit)",
+      "Bash(npm outdated)",
+      "Bash(identify *)",
+      "Bash(dig *)"
+    ]
+  }
+}
