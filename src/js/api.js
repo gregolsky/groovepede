@@ -1,8 +1,62 @@
-import { LASTFM_KEY } from './config.js';
+import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY } from './config.js';
 import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums } from './storage.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
+
+// ── Odesli (universal resolver) ───────────────────────────────────────────────
+
+// Odesli linksByPlatform key → our internal slug
+const ODESLI_KEY_MAP = {
+  spotify:      'spotify',
+  appleMusic:   'apple',
+  youtube:      'youtube',
+  youtubeMusic: 'youtube',
+  deezer:       'deezer',
+  tidal:        'tidal',
+  amazonMusic:  'amazon',
+  pandora:      'pandora',
+  soundcloud:   'soundcloud',
+};
+
+export async function resolveAlbum(inputUrl) {
+  try {
+    const params = new URLSearchParams({ url: inputUrl, userCountry: 'US' });
+    if (ODESLI_API_KEY) params.set('key', ODESLI_API_KEY);
+    const res = await fetch(`${ODESLI_BASE}/links?${params}`);
+    if (!res.ok) return { _error: res.status };
+    const data = await res.json();
+
+    const primary = data.entitiesByUniqueId?.[data.entityUniqueId] || {};
+
+    // Build normalized links map
+    const links = {};
+    for (const [oKey, entry] of Object.entries(data.linksByPlatform || {})) {
+      const slug = ODESLI_KEY_MAP[oKey];
+      if (!slug) continue;
+      if (links[slug]) continue; // youtube wins over youtubeMusic
+      links[slug] = {
+        url: entry.url,
+        nativeUri: entry.nativeAppUriMobile || entry.nativeAppUriDesktop || null,
+      };
+    }
+
+    return {
+      id:            data.entityUniqueId,
+      sourceUrl:     inputUrl,
+      title:         primary.title || null,
+      artist:        primary.artistName || null,
+      cover:         primary.thumbnailUrl || null,
+      year:          null, // Odesli doesn't return release year; enriched separately
+      tags:          [],
+      addedAt:       new Date().toISOString(),
+      links,
+      firstTrackUri: links.spotify ? null : null, // resolved later by sync.js if needed
+    };
+  } catch {
+    return { _error: 'network' };
+  }
+}
 
 // ── Spotify ───────────────────────────────────────────────────────────────────
 

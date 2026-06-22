@@ -13,3 +13,6 @@ export const SYNC_ENABLED_KEY  = 'gp_sync_enabled';
 export const SYNC_PLAYLIST_KEY = 'gp_sync_playlist_id';
 export const SYNC_LAST_KEY     = 'gp_sync_last';
 export const SYNC_PENDING_KEY  = 'gp_sync_pending';
+export const PREF_SERVICE_KEY  = 'gp_pref_service';
+export const ODESLI_BASE       = 'https://api.song.link/v1-alpha.1';
+export const ODESLI_API_KEY    = '';
