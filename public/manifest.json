@@ -1,8 +1,8 @@
 {
   "name": "Groovepede",
   "short_name": "Groovepede",
-  "start_url": "/groovepede/",
-  "scope": "/groovepede/",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#121212",
   "theme_color": "#1DB954",
@@ -21,7 +21,7 @@
     }
   ],
   "share_target": {
-    "action": "/groovepede/",
+    "action": "/",
     "method": "GET",
     "params": {
       "title": "title",

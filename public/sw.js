@@ -1,9 +1,9 @@
-const CACHE = 'groovepede-v12';
+const CACHE = 'groovepede-v13';
 const ASSETS = [
-  '/groovepede/',
-  '/groovepede/index.html',
-  '/groovepede/manifest.json',
-  '/groovepede/favicon.png',
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/favicon.png',
 ];
 
 self.addEventListener('install', e => {

@@ -1,10 +1,10 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
-export default defineConfig(({ command }) => ({
+export default defineConfig(() => ({
   root: 'src',
   publicDir: resolve(import.meta.dirname, 'public'),
-  base: command === 'build' ? '/groovepede/' : '/',
+  base: '/',
   build: {
     outDir: resolve(import.meta.dirname, 'dist'),
     emptyOutDir: true,

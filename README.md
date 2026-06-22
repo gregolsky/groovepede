@@ -4,7 +4,7 @@
 
 Groovepede is a minimalist, local-first PWA inbox for Spotify albums. Save albums from your phone's share sheet, browse them with covers and genre tags, and check them off as you listen.
 
-**[Open the app →](https://gregolsky.github.io/groovepede/)**
+**[Open the app →](https://groovepede.gregolsky.pl/)**
 
 ---
 
@@ -21,7 +21,7 @@ Groovepede is a minimalist, local-first PWA inbox for Spotify albums. Save album
 
 ## How to use
 
-1. Open [groovepede](https://gregolsky.github.io/groovepede/) and connect your Spotify account
+1. Open [groovepede](https://groovepede.gregolsky.pl/) and connect your Spotify account
 2. Install it as an app (tap "Add to Home Screen" on mobile, or the install icon in your browser's address bar)
 3. In the Spotify app, find an album you want to listen to, tap **Share → Groovepede**
 4. When you're ready to listen, tap **Listen** to open it directly in Spotify

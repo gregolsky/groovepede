@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://gregolsky.github.io/groovepede/sitemap.xml
+Sitemap: https://groovepede.gregolsky.pl/sitemap.xml
