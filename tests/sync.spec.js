@@ -280,6 +280,7 @@ test('restore replaces local queue on confirm', async ({ page, context }) => {
     [KEYS.ALBUMS]:  JSON.stringify([localAlbum]),
   })({ context }, async () => {
     await stubSpotify(context);
+    await stubLastfm(context);
 
     page.on('dialog', dialog => dialog.accept());
 
@@ -307,6 +308,7 @@ test('restore is cancelled when user dismisses the confirm dialog', async ({ pag
     [KEYS.ALBUMS]:  JSON.stringify([localAlbum]),
   })({ context }, async () => {
     await stubSpotify(context);
+    await stubLastfm(context);
 
     page.on('dialog', dialog => dialog.dismiss());
 
