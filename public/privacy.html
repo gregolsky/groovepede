@@ -26,22 +26,26 @@
 <div class="wrap">
   <a class="back" href="/">← Back to Groovepede</a>
   <h1>Privacy Policy</h1>
-  <p class="updated">Last updated: May 2026</p>
+  <p class="updated">Last updated: June 2026</p>
 
   <h2>What Groovepede is</h2>
-  <p>Groovepede is a local-first progressive web app (PWA) for queuing Spotify albums. It has no backend server, no database, and no user accounts. All data stays on your device.</p>
+  <p>Groovepede is a local-first progressive web app (PWA) for queuing albums from any streaming service. It has no backend server, no database, and no user accounts. All data stays on your device. Spotify is an optional connected service for users who want to sync their queue to a Spotify playlist.</p>
 
   <h2>Data we collect</h2>
   <p>We collect no personal data. Groovepede stores the following <strong>only in your browser's <code>localStorage</code></strong>:</p>
   <ul>
-    <li>Album metadata you add (title, artist, cover image URL, release year, Last.fm genre tags)</li>
+    <li>Album metadata you add (title, artist, cover image URL, release year, Last.fm genre tags, streaming service links)</li>
     <li>Your listen count</li>
-    <li>Your Spotify OAuth tokens (access token, refresh token) — used solely to keep you logged in</li>
+    <li>Your preferred listening service setting</li>
+    <li>Your Spotify OAuth tokens (access token, refresh token) — only stored if you choose to connect Spotify; used solely to sync your queue to a Spotify playlist</li>
   </ul>
   <p>This data never leaves your device. Clearing your browser storage or uninstalling the app removes it entirely.</p>
 
-  <h2>Spotify</h2>
-  <p>Groovepede uses the <a href="https://developer.spotify.com/documentation/web-api" target="_blank" rel="noopener">Spotify Web API</a> with the <code>user-read-private</code> scope only. This allows us to display your display name and profile picture. We never read your listening history, playlists, saved albums, or any other Spotify data.</p>
+  <h2>Odesli (Songlink)</h2>
+  <p>When you paste an album link, Groovepede sends the URL to the <a href="https://odesli.co" target="_blank" rel="noopener">Odesli / Songlink API</a> to resolve cross-service links (e.g. turn a Spotify link into equivalent Apple Music and YouTube Music links). Odesli receives only the album URL — no personal identifiers. See <a href="https://odesli.co/privacy" target="_blank" rel="noopener">Odesli's privacy policy</a> for details.</p>
+
+  <h2>Spotify (optional)</h2>
+  <p>Connecting Spotify is entirely optional. If you choose to connect, Groovepede uses the <a href="https://developer.spotify.com/documentation/web-api" target="_blank" rel="noopener">Spotify Web API</a> with the <code>user-read-private</code> and <code>playlist-modify-private</code> scopes. This lets us display your name and profile picture, and sync your album queue to a private Spotify playlist. We never read your listening history, saved albums, or any other Spotify data.</p>
   <p>Authentication uses the <a href="https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow" target="_blank" rel="noopener">PKCE flow</a> — no client secret is stored or transmitted.</p>
 
   <h2>Last.fm</h2>
@@ -51,7 +55,7 @@
   <p>Groovepede does not use Google Analytics or any tracking cookies. If privacy-friendly analytics (e.g. Plausible or Umami) are added in future, this policy will be updated to disclose what events are collected.</p>
 
   <h2>Third-party links</h2>
-  <p>Explore mode includes links to Spotify and Last.fm artist pages. Clicking those links takes you to those services, which have their own privacy policies.</p>
+  <p>Explore mode includes links to Spotify, Apple Music, YouTube, and Last.fm artist pages. Clicking those links takes you to those services, which have their own privacy policies.</p>
 
   <h2>Children</h2>
   <p>Groovepede is not directed at children under 13. If you are under 13, please do not use this app.</p>

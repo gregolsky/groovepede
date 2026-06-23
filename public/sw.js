@@ -1,4 +1,4 @@
-const CACHE = 'groovepede-v13';
+const CACHE = 'groovepede-v14';
 const ASSETS = [
   '/',
   '/index.html',
