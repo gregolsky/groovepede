@@ -198,3 +198,57 @@ test('importing a JSON backup from the hero populates the queue', async ({ page,
   await expect(page.locator('.card-title')).toContainText('Imported Album', { timeout: 5000 });
   await expect(page.locator('.landing')).not.toBeAttached();
 });
+
+test('importing falls back to MusicBrainz when Odesli is unavailable', async ({ page, context }) => {
+  await stubLastfm(context);
+
+  // Odesli returns 503 (server error) — non-retryable, triggers immediate MB fallback.
+  // 429 retry/backoff timing is covered by unit tests; E2E just validates the MB path.
+  await context.route('https://api.song.link/**', route =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"code":503}' })
+  );
+
+  // MusicBrainz url-lookup returns release data
+  await context.route('https://musicbrainz.org/**', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        resource: 'https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd',
+        id: 'url-uuid',
+        relations: [{
+          'target-type': 'release',
+          release: {
+            id: 'ce4d1a76-7727-45d7-b61a-21a6e841e21c',
+            title: 'MB Fallback Album',
+            date: '2017-01-01',
+            'artist-credit': [{ name: 'MB Artist' }],
+          },
+        }],
+      }),
+    })
+  );
+
+  const backup = {
+    version: 3,
+    exportedAt: new Date().toISOString(),
+    albums: [{ sourceUrl: 'https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', service: 'spotify', addedAt: new Date().toISOString() }],
+    done: 0,
+  };
+
+  await page.goto('/');
+  await page.click('[data-action="open-profile"]');
+  await expect(page.locator('[data-action="import-data"]')).toBeVisible();
+
+  const [fileChooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.click('[data-action="import-data"]'),
+  ]);
+  await fileChooser.setFiles({
+    name: 'backup.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(backup)),
+  });
+
+  // Card title populated via MusicBrainz fallback
+  await expect(page.locator('.card-title')).toContainText('MB Fallback Album', { timeout: 10000 });
+});

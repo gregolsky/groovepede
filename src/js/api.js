@@ -1,6 +1,6 @@
-import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY } from './config.js';
+import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY, MUSICBRAINZ_BASE, COVERART_BASE } from './config.js';
 import { getToken, refreshAccessToken } from './auth.js';
-import { loadAlbums, saveAlbums } from './storage.js';
+import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
 import { ODESLI_KEY_MAP } from './services.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
@@ -12,7 +12,14 @@ export async function resolveAlbum(inputUrl) {
     const params = new URLSearchParams({ url: inputUrl, userCountry: 'US' });
     if (ODESLI_API_KEY) params.set('key', ODESLI_API_KEY);
     const res = await fetch(`${ODESLI_BASE}/links?${params}`);
-    if (!res.ok) return { _error: res.status };
+    if (!res.ok) {
+      if (res.status === 429) {
+        const raw = res.headers?.get?.('retry-after');
+        const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
+        return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
+      }
+      return { _error: res.status };
+    }
     const data = await res.json();
 
     const primary = data.entitiesByUniqueId?.[data.entityUniqueId] || {};
@@ -44,6 +51,96 @@ export async function resolveAlbum(inputUrl) {
   } catch {
     return { _error: 'network' };
   }
+}
+
+// ── Resilient resolver (Odesli + MusicBrainz fallback) ───────────────────────
+
+/**
+ * Backoff delay for Odesli 429s.
+ * Uses Retry-After header when present, otherwise capped exponential.
+ * @param {number|null} retryAfter - seconds from Retry-After header, or null
+ * @param {number} attempt - 0-based attempt index (first retry = 0)
+ * @returns {number} milliseconds to wait
+ */
+export function backoffMs(retryAfter, attempt) {
+  if (retryAfter != null && retryAfter > 0) return retryAfter * 1000;
+  return Math.min(7000 * (attempt + 1), 30000);
+}
+
+/**
+ * Map a MusicBrainz url-lookup response to an album record.
+ * Returns null when no release relation is present.
+ */
+export function parseMbRelease(data, sourceUrl, service) {
+  const rel = (data?.relations || []).find(r => r['target-type'] === 'release' && r.release);
+  if (!rel) return null;
+  const release = rel.release;
+  const mbid    = release.id;
+  const title   = release.title || null;
+  const year    = (release.date || '').slice(0, 4) || null;
+  const credits = release['artist-credit'] || [];
+  const artist  = credits.map(c => typeof c === 'string' ? c : (c.name || c.artist?.name || '')).join('').trim() || null;
+
+  const cover = mbid ? `${COVERART_BASE}/release/${mbid}/front-500` : null;
+
+  // Reconstruct service link from sourceUrl
+  const links = {};
+  if (service) {
+    const nativeUri = service === 'spotify'
+      ? (extractAlbumId(sourceUrl) ? `spotify:album:${extractAlbumId(sourceUrl)}` : null)
+      : null;
+    links[service] = { url: sourceUrl, nativeUri };
+  }
+
+  return {
+    id:            'mb:' + mbid,
+    sourceUrl,
+    title,
+    artist,
+    cover,
+    year,
+    tags:          [],
+    addedAt:       new Date().toISOString(),
+    links,
+    firstTrackUri: null,
+  };
+}
+
+/** Resolve a single URL via MusicBrainz. Returns album record or { _error }. */
+export async function resolveAlbumMusicBrainz(sourceUrl, service) {
+  try {
+    const params = new URLSearchParams({ resource: sourceUrl, inc: 'release-rels+artist-credits', fmt: 'json' });
+    const res = await fetch(`${MUSICBRAINZ_BASE}/url?${params}`);
+    if (!res.ok) return { _error: res.status };
+    const data = await res.json();
+    const rec  = parseMbRelease(data, sourceUrl, service);
+    return rec || { _error: 'not-found' };
+  } catch {
+    return { _error: 'network' };
+  }
+}
+
+/**
+ * Resolve with Odesli, retrying on 429 up to maxRetries times,
+ * then falling back to MusicBrainz on persistent failure.
+ * Injectable sleep for unit tests.
+ */
+export async function resolveAlbumResilient(
+  sourceUrl,
+  { service, sleep = (ms) => new Promise(r => setTimeout(r, ms)), maxRetries = 2 } = {}
+) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const rec = await resolveAlbum(sourceUrl);
+    if (!rec._error) return rec;
+    lastErr = rec;
+    if (rec._error !== 429) break;           // non-retryable Odesli error
+    if (attempt < maxRetries) await sleep(backoffMs(rec._retryAfter ?? null, attempt));
+  }
+  // MusicBrainz fallback
+  const mbRec = await resolveAlbumMusicBrainz(sourceUrl, service);
+  if (!mbRec._error) return mbRec;
+  return lastErr;                             // both failed — caller leaves stub pending
 }
 
 // ── Spotify ───────────────────────────────────────────────────────────────────

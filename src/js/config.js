@@ -15,4 +15,9 @@ export const SYNC_LAST_KEY     = 'gp_sync_last';
 export const SYNC_PENDING_KEY  = 'gp_sync_pending';
 export const PREF_SERVICE_KEY  = 'gp_pref_service';
 export const ODESLI_BASE       = 'https://api.song.link/v1-alpha.1';
+// No key → 10 req/min; email developers@song.link to request a key → 60 req/min
 export const ODESLI_API_KEY    = '';
+export const ODESLI_PACE_MS    = ODESLI_API_KEY ? 1100 : 6500;
+
+export const MUSICBRAINZ_BASE  = 'https://musicbrainz.org/ws/2';
+export const COVERART_BASE     = 'https://coverartarchive.org';

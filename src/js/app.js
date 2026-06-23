@@ -2,8 +2,9 @@ import '../css/style.css';
 import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
+import { ODESLI_PACE_MS } from './config.js';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
+import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
 import { renderAuthArea, renderApp, escapeHtml } from './render.js';
 import * as sync from './sync.js';
@@ -471,7 +472,7 @@ async function resolvePending() {
   rerender();
 
   for (const stub of pending) {
-    const rec = await resolveAlbum(stub.sourceUrl);
+    const rec = await resolveAlbumResilient(stub.sourceUrl, { service: stub.service });
     if (!rec._error) {
       await attachFirstTrackUri(rec);
 
@@ -488,9 +489,9 @@ async function resolvePending() {
     importProgress = { done: importProgress.done + 1, total: importProgress.total };
     rerender();
 
-    // Pace to stay within Odesli's free-tier limit (~10 req/min = 1 per 6 s)
+    // Pace to stay within Odesli's free-tier limit (~10 req/min = 1 per 6.5 s)
     if (importProgress.done < importProgress.total) {
-      await sleep(6500);
+      await sleep(ODESLI_PACE_MS);
     }
   }
   } while (_resolvePendingAgain);
