@@ -15,9 +15,23 @@ export const SYNC_LAST_KEY     = 'gp_sync_last';
 export const SYNC_PENDING_KEY  = 'gp_sync_pending';
 export const PREF_SERVICE_KEY  = 'gp_pref_service';
 export const ODESLI_BASE       = 'https://api.song.link/v1-alpha.1';
-// No key → 10 req/min; email developers@song.link to request a key → 60 req/min
+// Odesli: 60 req/min per IP (source: Odesli support). A registered API key
+// raises the per-key ceiling but does not change the IP-level limit.
+// Request a key: developers@song.link
 export const ODESLI_API_KEY    = '';
-export const ODESLI_PACE_MS    = ODESLI_API_KEY ? 1100 : 6500;
 
 export const MUSICBRAINZ_BASE  = 'https://musicbrainz.org/ws/2';
 export const COVERART_BASE     = 'https://coverartarchive.org';
+
+// Per-service throttle policy. minIntervalMs = 60_000 / rpm (with headroom).
+// isRateLimited / retryAfterOf are wired in api.js per-service.
+export const THROTTLE = {
+  // Odesli: 60/min per IP; 1 100 ms ≈ 54/min — comfortably under the limit.
+  odesli:      { minIntervalMs: 1_100,  cooldownMs: 60_000, maxCooldownMs: 300_000 },
+  // MusicBrainz: ~1 req/s guideline; 1 200 ms is safe.
+  musicbrainz: { minIntervalMs: 1_200,  cooldownMs: 60_000, maxCooldownMs: 300_000 },
+  // Last.fm: generous ceiling (~300/min); pace at 200 ms (5/s) to avoid bursts.
+  lastfm:      { minIntervalMs:   200,  cooldownMs: 30_000, maxCooldownMs:  60_000 },
+  // Spotify Web API: ~180/min sustained; Retry-After header honoured by throttler.
+  spotify:     { minIntervalMs:   334,  cooldownMs: 30_000, maxCooldownMs: 300_000 },
+};

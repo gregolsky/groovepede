@@ -1,9 +1,32 @@
-import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY, MUSICBRAINZ_BASE, COVERART_BASE } from './config.js';
+import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY, MUSICBRAINZ_BASE, COVERART_BASE, THROTTLE } from './config.js';
 import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
 import { ODESLI_KEY_MAP } from './services.js';
+import { createThrottle } from './throttle.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
+
+// ── Per-service throttlers ────────────────────────────────────────────────────
+// One throttler per rate-limited endpoint — owns global pacing + 429 cooldown.
+// Raw API functions are "just calls"; throttling is applied at the choke points
+// below so all call sites automatically respect rate limits.
+
+const is429        = r => r?._error === 429;
+const retryAfterMs = r => r?._retryAfter != null ? r._retryAfter * 1000 : null;
+
+function makeThrottles() {
+  return {
+    odesli:      createThrottle({ ...THROTTLE.odesli,      isRateLimited: is429, retryAfterOf: retryAfterMs }),
+    musicbrainz: createThrottle({ ...THROTTLE.musicbrainz, isRateLimited: is429, retryAfterOf: retryAfterMs }),
+    lastfm:      createThrottle({ ...THROTTLE.lastfm }),  // rarely rate-limits; pace only
+    spotify:     createThrottle({ ...THROTTLE.spotify,    isRateLimited: is429, retryAfterOf: retryAfterMs }),
+  };
+}
+
+let throttles = makeThrottles();
+
+/** Override throttles (tests only) — inject no-op / fake-clock instances. */
+export function _setThrottles(t) { throttles = { ...throttles, ...t }; }
 
 // ── Odesli (universal resolver) ───────────────────────────────────────────────
 
@@ -54,18 +77,6 @@ export async function resolveAlbum(inputUrl) {
 }
 
 // ── Resilient resolver (Odesli + MusicBrainz fallback) ───────────────────────
-
-/**
- * Backoff delay for Odesli 429s.
- * Uses Retry-After header when present, otherwise capped exponential.
- * @param {number|null} retryAfter - seconds from Retry-After header, or null
- * @param {number} attempt - 0-based attempt index (first retry = 0)
- * @returns {number} milliseconds to wait
- */
-export function backoffMs(retryAfter, attempt) {
-  if (retryAfter != null && retryAfter > 0) return retryAfter * 1000;
-  return Math.min(7000 * (attempt + 1), 30000);
-}
 
 /**
  * Map a MusicBrainz url-lookup response to an album record.
@@ -121,31 +132,27 @@ export async function resolveAlbumMusicBrainz(sourceUrl, service) {
 }
 
 /**
- * Resolve with Odesli, retrying on 429 up to maxRetries times,
- * then falling back to MusicBrainz on persistent failure.
- * Injectable sleep for unit tests.
+ * Resolve via Odesli (throttled), falling back to MusicBrainz (throttled).
+ * Skips Odesli entirely when its throttler is in cooldown.
+ * Returns a resolved record or the last error (stub stays pending for next pass).
  */
-export async function resolveAlbumResilient(
-  sourceUrl,
-  { service, sleep = (ms) => new Promise(r => setTimeout(r, ms)), maxRetries = 2 } = {}
-) {
-  let lastErr;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const rec = await resolveAlbum(sourceUrl);
-    if (!rec._error) return rec;
-    lastErr = rec;
-    if (rec._error !== 429) break;           // non-retryable Odesli error
-    if (attempt < maxRetries) await sleep(backoffMs(rec._retryAfter ?? null, attempt));
+export async function resolveAlbumResilient(sourceUrl, { service } = {}) {
+  let lastOdesliErr;
+  if (!throttles.odesli.coolingDown()) {
+    lastOdesliErr = await throttles.odesli.run(() => resolveAlbum(sourceUrl));
+    if (!lastOdesliErr._error) return lastOdesliErr;
+  } else {
+    lastOdesliErr = { _error: 429 }; // cooldown active = effectively rate-limited
   }
-  // MusicBrainz fallback
-  const mbRec = await resolveAlbumMusicBrainz(sourceUrl, service);
+  // MusicBrainz fallback (throttled independently)
+  const mbRec = await throttles.musicbrainz.run(() => resolveAlbumMusicBrainz(sourceUrl, service));
   if (!mbRec._error) return mbRec;
-  return lastErr;                             // both failed — caller leaves stub pending
+  return lastOdesliErr; // both failed — caller leaves stub pending
 }
 
 // ── Spotify ───────────────────────────────────────────────────────────────────
 
-export async function spotifyGet(path) {
+async function _spotifyGet(path) {
   const res = await fetch('https://api.spotify.com/v1' + path,
     { headers: { Authorization: 'Bearer ' + getToken() } });
   if (res.status === 401) {
@@ -156,11 +163,20 @@ export async function spotifyGet(path) {
     if (!retry.ok) return { _error: retry.status };
     return retry.json();
   }
+  if (res.status === 429) {
+    const raw = res.headers?.get?.('retry-after');
+    const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
+    return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
+  }
   if (!res.ok) return { _error: res.status };
   return res.json();
 }
 
-async function spotifyMutate(method, path, body) {
+export async function spotifyGet(path) {
+  return throttles.spotify.run(() => _spotifyGet(path));
+}
+
+async function _spotifyMutate(method, path, body) {
   const makeReq = () => fetch('https://api.spotify.com/v1' + path, {
     method,
     headers: { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/json' },
@@ -171,9 +187,18 @@ async function spotifyMutate(method, path, body) {
     if (!await refreshAccessToken()) return null;
     res = await makeReq();
   }
+  if (res.status === 429) {
+    const raw = res.headers?.get?.('retry-after');
+    const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
+    return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
+  }
   if (!res.ok) return { _error: res.status };
   const text = await res.text();
   return text ? JSON.parse(text) : {};
+}
+
+async function spotifyMutate(method, path, body) {
+  return throttles.spotify.run(() => _spotifyMutate(method, path, body));
 }
 
 export async function spotifyPost(path, body) { return spotifyMutate('POST', path, body); }
@@ -235,7 +260,7 @@ export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate
 
 // ── Last.fm ───────────────────────────────────────────────────────────────────
 
-async function lfmGet(params) {
+async function _lfmGet(params) {
   const p = new URLSearchParams({ ...params, api_key: LASTFM_KEY, format: 'json' });
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);
@@ -245,6 +270,10 @@ async function lfmGet(params) {
     if (!res.ok) return null;
     return res.json();
   } catch { clearTimeout(timer); return null; }
+}
+
+function lfmGet(params) {
+  return throttles.lastfm.run(() => _lfmGet(params));
 }
 
 export async function fetchLastfmAlbum(artist, album) {
@@ -313,7 +342,7 @@ export async function fetchSpotifyArtist(artistId) {
 
 export async function fetchLastfmArtist(artistName) {
   const [infoData, similarData, tags] = await Promise.all([
-    lfmGet({ method: 'artist.getinfo',   artist: artistName, autocorrect: '1' }),
+    lfmGet({ method: 'artist.getinfo',    artist: artistName, autocorrect: '1' }),
     lfmGet({ method: 'artist.getsimilar', artist: artistName, limit: '6', autocorrect: '1' }),
     fetchArtistTags(artistName),
   ]);

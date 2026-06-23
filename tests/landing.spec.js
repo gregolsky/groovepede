@@ -252,3 +252,52 @@ test('importing falls back to MusicBrainz when Odesli is unavailable', async ({ 
   // Card title populated via MusicBrainz fallback
   await expect(page.locator('.card-title')).toContainText('MB Fallback Album', { timeout: 10000 });
 });
+
+test('resolution resumes when user returns to tab (visibilitychange)', async ({ page, context }) => {
+  await stubLastfm(context);
+
+  // Odesli is unavailable; MB resolves on the second request (simulating resumed resolution)
+  let mbCallCount = 0;
+  await context.route('https://api.song.link/**', route =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"code":503}' })
+  );
+  await context.route('https://musicbrainz.org/**', route => {
+    mbCallCount++;
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        resource: 'https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd',
+        id: 'url-uuid',
+        relations: [{ 'target-type': 'release', release: {
+          id: 'ce4d1a76-7727-45d7-b61a-21a6e841e21c',
+          title: 'Resumed Album',
+          date: '2020-01-01',
+          'artist-credit': [{ name: 'Resume Artist' }],
+        }}],
+      }),
+    });
+  });
+
+  // Pre-seed localStorage with a pending stub (bypasses import flow; tests the resume path)
+  await context.addInitScript(({ keys }) => {
+    localStorage.setItem(keys.ALBUMS, JSON.stringify([{
+      id: 'pending:https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd',
+      sourceUrl: 'https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd',
+      service: 'spotify', title: null, artist: null, cover: null, year: null,
+      tags: [], addedAt: new Date().toISOString(), links: {}, _pending: true,
+    }]));
+  }, { keys: KEYS });
+
+  await page.goto('/');
+  // Card is present but pending (resolution may have started at boot)
+  await expect(page.locator('.card-title')).toBeVisible({ timeout: 3000 });
+
+  // Simulate returning from background: dispatch visibilitychange visible
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+
+  // Resolution completes via MB fallback
+  await expect(page.locator('.card-title')).toContainText('Resumed Album', { timeout: 8000 });
+});

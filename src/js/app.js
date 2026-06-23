@@ -2,7 +2,6 @@ import '../css/style.css';
 import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
-import { ODESLI_PACE_MS } from './config.js';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
@@ -23,8 +22,6 @@ let searchQuery    = '';
 let tagsExpanded   = false;
 let addOpen        = false;
 let importProgress = null; // { done, total } while resolving, or null
-
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
@@ -488,11 +485,6 @@ async function resolvePending() {
 
     importProgress = { done: importProgress.done + 1, total: importProgress.total };
     rerender();
-
-    // Pace to stay within Odesli's free-tier limit (~10 req/min = 1 per 6.5 s)
-    if (importProgress.done < importProgress.total) {
-      await sleep(ODESLI_PACE_MS);
-    }
   }
   } while (_resolvePendingAgain);
 
@@ -500,6 +492,17 @@ async function resolvePending() {
   _resolvingPending = false;
   rerender();
 }
+
+// ── Resume-on-return ──────────────────────────────────────────────────────────
+// Mobile browsers suspend JS timers when the app is backgrounded. Resume any
+// in-progress import when the user returns, so cards keep populating.
+function resumePendingIfAny() {
+  if (loadAlbums().some(a => a._pending)) resolvePending();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') resumePendingIfAny();
+});
+window.addEventListener('focus', resumePendingIfAny);
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 sync.setStatusListener(rerender);

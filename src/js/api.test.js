@@ -1,5 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resolveAlbum, backoffMs, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient } from './api.js';
+import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles } from './api.js';
+
+// ── throttle helpers ──────────────────────────────────────────────────────────
+
+/** A no-op throttle: fires immediately, never cools down. */
+const noopThrottle = () => ({ run: fn => fn(), coolingDown: () => false });
+/** A cooling throttle: always reports coolingDown, but still executes run(fn). */
+const coolingThrottle = () => ({ run: fn => fn(), coolingDown: () => true });
+
+/** Reset throttles to no-op before each test so pacing doesn't bleed between tests. */
+function resetThrottles() {
+  _setThrottles({
+    odesli:      noopThrottle(),
+    musicbrainz: noopThrottle(),
+    lastfm:      noopThrottle(),
+    spotify:     noopThrottle(),
+  });
+}
+
+// ── fixtures ──────────────────────────────────────────────────────────────────
 
 const ODESLI_RESPONSE = {
   entityUniqueId: 'SPOTIFY_ALBUM::4aawyAB9vmqN3uQ7FjRGTy',
@@ -41,9 +60,26 @@ const ODESLI_RESPONSE = {
   },
 };
 
+const MB_RESPONSE = {
+  resource: 'https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd',
+  id: 'url-uuid',
+  relations: [{
+    'target-type': 'release',
+    release: {
+      id: 'ce4d1a76-7727-45d7-b61a-21a6e841e21c',
+      title: 'Devil Is Fine',
+      date: '2016-04-15',
+      'artist-credit': [{ name: 'Zeal & Ardor' }],
+    },
+  }],
+};
+
+// ── resolveAlbum ──────────────────────────────────────────────────────────────
+
 describe('resolveAlbum', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    resetThrottles();
   });
 
   it('returns album record with title, artist, cover from primary entity', async () => {
@@ -138,38 +174,7 @@ describe('resolveAlbum', () => {
   });
 });
 
-// ── backoffMs ─────────────────────────────────────────────────────────────────
-
-describe('backoffMs', () => {
-  it('uses Retry-After header value when present', () => {
-    expect(backoffMs(20, 0)).toBe(20000);
-    expect(backoffMs(60, 1)).toBe(60000);
-  });
-  it('falls back to capped exponential when no Retry-After', () => {
-    expect(backoffMs(null, 0)).toBe(7000);
-    expect(backoffMs(null, 1)).toBe(14000);
-    expect(backoffMs(null, 10)).toBe(30000);  // capped at 30 s
-  });
-  it('treats 0 retryAfter as absent', () => {
-    expect(backoffMs(0, 0)).toBe(7000);
-  });
-});
-
 // ── parseMbRelease ────────────────────────────────────────────────────────────
-
-const MB_RESPONSE = {
-  resource: 'https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd',
-  id: 'url-uuid',
-  relations: [{
-    'target-type': 'release',
-    release: {
-      id: 'ce4d1a76-7727-45d7-b61a-21a6e841e21c',
-      title: 'Devil Is Fine',
-      date: '2016-04-15',
-      'artist-credit': [{ name: 'Zeal & Ardor' }],
-    },
-  }],
-};
 
 describe('parseMbRelease', () => {
   it('maps title, artist, year from MB response', () => {
@@ -211,7 +216,7 @@ describe('parseMbRelease', () => {
 // ── resolveAlbumMusicBrainz ───────────────────────────────────────────────────
 
 describe('resolveAlbumMusicBrainz', () => {
-  beforeEach(() => { vi.restoreAllMocks(); });
+  beforeEach(() => { vi.restoreAllMocks(); resetThrottles(); });
 
   it('returns album record on success', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
@@ -246,52 +251,63 @@ describe('resolveAlbumMusicBrainz', () => {
 // ── resolveAlbumResilient ─────────────────────────────────────────────────────
 
 describe('resolveAlbumResilient', () => {
-  beforeEach(() => { vi.restoreAllMocks(); });
-  const noSleep = async () => {};
+  beforeEach(() => { vi.restoreAllMocks(); resetThrottles(); });
 
-  it('returns Odesli result immediately when successful', async () => {
+  it('returns Odesli result immediately when Odesli succeeds', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true, json: async () => ODESLI_RESPONSE,
     });
-    const rec = await resolveAlbumResilient('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', { sleep: noSleep });
+    const rec = await resolveAlbumResilient('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(rec.title).toBe('OK Computer');
     expect(rec._error).toBeUndefined();
   });
 
-  it('retries on 429 and returns result on subsequent success', async () => {
+  it('MusicBrainz is not called when Odesli succeeds', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });  // first attempt: 429
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ODESLI_RESPONSE });  // retry: 200
-    const rec = await resolveAlbumResilient('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', { sleep: noSleep, maxRetries: 1 });
-    expect(rec.title).toBe('OK Computer');
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ODESLI_RESPONSE });
+    await resolveAlbumResilient('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to MusicBrainz after exhausting Odesli retries', async () => {
+  it('falls back to MusicBrainz when Odesli returns any error', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    // All Odesli attempts 429, then MB succeeds
-    fetchMock.mockResolvedValue({ ok: false, status: 429 });
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE });
-    const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify', sleep: noSleep, maxRetries: 1 });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // Odesli error
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // MB success
+    const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
     expect(rec.title).toBe('Devil Is Fine');
     expect(rec.id).toMatch(/^mb:/);
   });
 
-  it('returns last Odesli error when both Odesli and MusicBrainz fail', async () => {
+  it('falls back to MusicBrainz when Odesli 429s', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });  // Odesli 429 (only attempt)
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });  // MB fails
-    const rec = await resolveAlbumResilient('https://url', { sleep: noSleep, maxRetries: 0 });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 }); // Odesli 429
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // MB success
+    const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
+    expect(rec.title).toBe('Devil Is Fine');
+  });
+
+  it('skips Odesli and goes straight to MusicBrainz when Odesli is cooling down', async () => {
+    _setThrottles({ odesli: coolingThrottle() });
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // only MB is called
+    const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
+    expect(rec.title).toBe('Devil Is Fine');
+    expect(fetchMock).toHaveBeenCalledTimes(1); // Odesli fetch never called
+  });
+
+  it('returns Odesli error when both Odesli and MusicBrainz fail', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 }); // Odesli 429
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // MB fails
+    const rec = await resolveAlbumResilient('https://url');
     expect(rec._error).toBe(429);
   });
 
-  it('does not retry on non-429 Odesli errors', async () => {
+  it('returns synthetic 429 error when Odesli is cooling and MB also fails', async () => {
+    _setThrottles({ odesli: coolingThrottle() });
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });  // Odesli 404 — not retryable
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });  // MB also fails
-    const rec = await resolveAlbumResilient('https://url', { sleep: noSleep, maxRetries: 2 });
-    expect(rec._error).toBe(404);  // returns Odesli error, only 2 fetch calls total
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // MB fails
+    const rec = await resolveAlbumResilient('https://url');
+    expect(rec._error).toBe(429); // cooling = effectively 429
   });
 });
