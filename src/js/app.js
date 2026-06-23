@@ -1,7 +1,7 @@
 import '../css/style.css';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput, serializeBackup, parseBackup } from './storage.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput, serializeBackup, parseBackup, getPreferredService, setPreferredService } from './storage.js';
 import { renderAuthArea, renderApp } from './render.js';
 import * as sync from './sync.js';
 
@@ -31,7 +31,7 @@ function visibleAlbums() {
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService() };
 }
 
 function rerender() {
@@ -295,6 +295,10 @@ document.body.addEventListener('click', e => {
       else { sync.enableSync(userProfile); } // notify() inside rerenders via _onChange
       break;
     case 'restore-sync':  sync.pullNow(rerender);               break;
+    case 'set-pref-service':
+      setPreferredService(el.value);
+      rerender();
+      break;
   }
 });
 

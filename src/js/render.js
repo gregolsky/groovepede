@@ -1,5 +1,5 @@
 import { tokenValid, hasSession } from './auth.js';
-import { loadAlbums, loadDone } from './storage.js';
+import { loadAlbums, loadDone, getPreferredService } from './storage.js';
 import { isSyncEnabled, getSyncStatus, getPlaylistId } from './sync.js';
 
 const SPOTIFY_ICON = 'M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.8 3.3-7.3 1.7-20-12.2-45.2-15-74.9-8.2-2.9.7-5.7-1.1-6.4-4-.7-2.9 1.1-5.7 4-6.4 32.5-7.4 60.4-4.2 82.9 9.5 2.5 1.6 3.3 4.9 1.7 7.4zm10.3-22.8c-2 3.1-6.1 4.1-9.2 2.1-22.9-14.1-57.8-18.1-84.9-9.9-3.4 1-7.1-.9-8.2-4.3-1-3.4.9-7.1 4.3-8.2 31-9.4 69.5-4.9 95.8 11.2 3.1 2 4.1 6.1 2.2 9.1zm.9-23.7C108.4 59 63.5 57.6 37.8 65.5c-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.7-9 79.1-7.3 110.3 11 3.7 2.2 4.9 6.9 2.7 10.5-2.1 3.7-6.9 4.9-10.5 2.7z';
@@ -69,6 +69,44 @@ function attr(value) {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
+// ── Service helpers ───────────────────────────────────────────────────────────
+
+const SERVICE_LABELS = {
+  spotify:    'Spotify',
+  apple:      'Apple Music',
+  youtube:    'YouTube Music',
+  deezer:     'Deezer',
+  tidal:      'Tidal',
+  amazon:     'Amazon Music',
+  pandora:    'Pandora',
+  soundcloud: 'SoundCloud',
+};
+
+export function serviceLabel(slug) {
+  return SERVICE_LABELS[slug] || '';
+}
+
+export function pickListenUrl(album, prefService) {
+  const links = album.links || {};
+
+  // 1. preferred service nativeUri
+  if (links[prefService]?.nativeUri) return links[prefService].nativeUri;
+  // 2. preferred service web url
+  if (links[prefService]?.url) return links[prefService].url;
+
+  // 3. first available nativeUri from any service
+  for (const entry of Object.values(links)) {
+    if (entry?.nativeUri) return entry.nativeUri;
+  }
+  // 4. first available url from any service
+  for (const entry of Object.values(links)) {
+    if (entry?.url) return entry.url;
+  }
+
+  // 5. last resort
+  return album.sourceUrl || null;
+}
+
 // ── Auth area ─────────────────────────────────────────────────────────────────
 
 export function renderAuthArea(el, userProfile) {
@@ -122,7 +160,30 @@ function renderSyncSection() {
     </div>`;
 }
 
-function renderProfile(userProfile) {
+const PREF_SERVICE_OPTIONS = [
+  { slug: 'spotify',    label: 'Spotify' },
+  { slug: 'apple',      label: 'Apple Music' },
+  { slug: 'youtube',    label: 'YouTube Music' },
+  { slug: 'deezer',     label: 'Deezer' },
+  { slug: 'tidal',      label: 'Tidal' },
+  { slug: 'amazon',     label: 'Amazon Music' },
+];
+
+function renderPrefServiceSection(prefService) {
+  return `
+    <div class="profile-pref-service">
+      <div class="profile-pref-service-label">Listen on</div>
+      <div class="profile-pref-service-options">
+        ${PREF_SERVICE_OPTIONS.map(({ slug, label }) => `
+        <label class="pref-service-option${prefService === slug ? ' active' : ''}">
+          <input type="radio" name="pref-service" value="${slug}" data-action="set-pref-service" ${prefService === slug ? 'checked' : ''}>
+          ${label}
+        </label>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderProfile(userProfile, prefService) {
   const img    = userProfile?.images?.[0]?.url;
   const name   = userProfile?.display_name || '';
   const id     = userProfile?.id || '';
@@ -142,6 +203,7 @@ function renderProfile(userProfile) {
           <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
           <div class="stat"><div class="stat-num">${tags.length}</div><div class="stat-label">tags</div></div>
         </div>
+        ${renderPrefServiceSection(prefService)}
         ${renderSyncSection()}
         <div class="profile-actions">
           <button class="profile-action-btn" data-action="export-data">Export queue</button>
@@ -164,14 +226,14 @@ function renderProfile(userProfile) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen }) {
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService }) {
   const albums  = loadAlbums();
   let visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
   const q = searchQuery?.trim().toLowerCase();
   if (q) visible = visible.filter(a => (a.title || '').toLowerCase().includes(q) || (a.artist || '').toLowerCase().includes(q));
 
   if (profileOpen) {
-    el.innerHTML = renderProfile(userProfile);
+    el.innerHTML = renderProfile(userProfile, prefService);
     return;
   }
 
@@ -179,7 +241,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     const album  = visible[exploreIndex];
     const cached = album ? artistCache[album.artist] : null;
     const tracks = album ? (trackCache[album.id] || null) : null;
-    el.innerHTML = renderExploreCard(album, cached, tracks, exploreIndex, visible.length);
+    el.innerHTML = renderExploreCard(album, cached, tracks, exploreIndex, visible.length, prefService);
     return;
   }
 
@@ -315,7 +377,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
   }
 
   html += '<div class="list">';
-  html += visible.length ? renderCards(visible, albums, searchQuery) : renderEmpty(activeFilter, searchQuery);
+  html += visible.length ? renderCards(visible, albums, searchQuery, prefService) : renderEmpty(activeFilter, searchQuery);
   html += '</div>';
 
   el.innerHTML = html;
@@ -335,7 +397,7 @@ function renderEmpty(activeFilter, searchQuery) {
     </div>`;
 }
 
-function renderCards(visible, albums, searchQuery) {
+function renderCards(visible, albums, searchQuery, prefService) {
   return visible.map((album, visibleIdx) => {
     const tagHtml = [
       album.year ? `<span class="tag year">${album.year}</span>` : '',
@@ -362,7 +424,7 @@ function renderCards(visible, albums, searchQuery) {
             <div class="card-meta">Added ${timeAgo(album.addedAt)}</div>
           </div>
           <div class="card-actions">
-            <button class="btn btn-listen" data-action="listen" data-url="${attr(album.url)}">
+            <button class="btn btn-listen" data-action="listen" data-url="${attr(pickListenUrl(album, prefService))}">
               <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
               Listen
             </button>
@@ -375,7 +437,7 @@ function renderCards(visible, albums, searchQuery) {
 
 // ── Explore card ──────────────────────────────────────────────────────────────
 
-function renderExploreCard(album, cached, tracks, index, total) {
+function renderExploreCard(album, cached, tracks, index, total, prefService) {
   const hasPrev = index > 0;
   const hasNext = index < total - 1;
   const loading = !cached;
@@ -425,9 +487,9 @@ function renderExploreCard(album, cached, tracks, index, total) {
           ${album.year ? `<span class="explore-album-year">${album.year}</span>` : ''}
         </div>
         <div class="explore-album-actions">
-          <button class="btn btn-listen" data-action="listen" data-url="${attr(album.url)}">
+          <button class="btn btn-listen" data-action="listen" data-url="${attr(pickListenUrl(album, prefService))}">
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
-            Listen on Spotify
+            Listen on ${serviceLabel(prefService) || 'Spotify'}
           </button>
           <button class="btn btn-done" data-action="explore-done" data-index="${index}">Done</button>
         </div>

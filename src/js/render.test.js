@@ -1,5 +1,87 @@
 import { describe, it, expect } from 'vitest';
-import { tagsByFrequency, escapeHtml, highlightMatch } from './render.js';
+import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, serviceLabel } from './render.js';
+
+// ── serviceLabel ──────────────────────────────────────────────────────────────
+
+describe('serviceLabel', () => {
+  it('returns Spotify for spotify', () => expect(serviceLabel('spotify')).toBe('Spotify'));
+  it('returns Apple Music for apple', () => expect(serviceLabel('apple')).toBe('Apple Music'));
+  it('returns YouTube Music for youtube', () => expect(serviceLabel('youtube')).toBe('YouTube Music'));
+  it('returns Deezer for deezer', () => expect(serviceLabel('deezer')).toBe('Deezer'));
+  it('returns Tidal for tidal', () => expect(serviceLabel('tidal')).toBe('Tidal'));
+  it('returns Amazon Music for amazon', () => expect(serviceLabel('amazon')).toBe('Amazon Music'));
+  it('returns Pandora for pandora', () => expect(serviceLabel('pandora')).toBe('Pandora'));
+  it('returns SoundCloud for soundcloud', () => expect(serviceLabel('soundcloud')).toBe('SoundCloud'));
+  it('returns empty string for unknown slug', () => expect(serviceLabel('whatever')).toBe(''));
+});
+
+// ── pickListenUrl ─────────────────────────────────────────────────────────────
+
+const MULTI_LINKS_ALBUM = {
+  sourceUrl: 'https://open.spotify.com/album/abc',
+  links: {
+    spotify: { url: 'https://open.spotify.com/album/abc', nativeUri: 'spotify:album:abc' },
+    apple:   { url: 'https://music.apple.com/album/abc',  nativeUri: 'music://album/abc' },
+    deezer:  { url: 'https://deezer.com/album/123',       nativeUri: null },
+  },
+};
+
+describe('pickListenUrl', () => {
+  it('returns nativeUri for preferred service when present', () => {
+    expect(pickListenUrl(MULTI_LINKS_ALBUM, 'spotify')).toBe('spotify:album:abc');
+  });
+
+  it('returns web url when nativeUri is null for preferred service', () => {
+    expect(pickListenUrl(MULTI_LINKS_ALBUM, 'deezer')).toBe('https://deezer.com/album/123');
+  });
+
+  it('returns nativeUri for apple when preferred', () => {
+    expect(pickListenUrl(MULTI_LINKS_ALBUM, 'apple')).toBe('music://album/abc');
+  });
+
+  it('prefers preferred-service nativeUri over other services nativeUri', () => {
+    const album = {
+      sourceUrl: 'https://open.spotify.com/album/abc',
+      links: {
+        spotify: { url: 'https://open.spotify.com/album/abc', nativeUri: 'spotify:album:abc' },
+        apple:   { url: 'https://music.apple.com/album/abc',  nativeUri: 'music://album/abc' },
+      },
+    };
+    expect(pickListenUrl(album, 'apple')).toBe('music://album/abc');
+  });
+
+  it('falls back to first available nativeUri when preferred service not in links', () => {
+    const url = pickListenUrl(MULTI_LINKS_ALBUM, 'tidal');
+    expect(['spotify:album:abc', 'music://album/abc']).toContain(url);
+  });
+
+  it('falls back to first available url when no nativeUris and preferred missing', () => {
+    const album = {
+      sourceUrl: 'https://example.com/original',
+      links: { deezer: { url: 'https://deezer.com/album/123', nativeUri: null } },
+    };
+    expect(pickListenUrl(album, 'tidal')).toBe('https://deezer.com/album/123');
+  });
+
+  it('falls back to sourceUrl when links is empty', () => {
+    const album = { sourceUrl: 'https://original.com/album', links: {} };
+    expect(pickListenUrl(album, 'spotify')).toBe('https://original.com/album');
+  });
+
+  it('falls back to sourceUrl when links is missing', () => {
+    const album = { sourceUrl: 'https://original.com/album' };
+    expect(pickListenUrl(album, 'spotify')).toBe('https://original.com/album');
+  });
+
+  it('returns null when no links and no sourceUrl', () => {
+    expect(pickListenUrl({ links: {} }, 'spotify')).toBeNull();
+  });
+
+  it('handles legacy album with no links key', () => {
+    const legacy = { sourceUrl: 'https://open.spotify.com/album/legacy' };
+    expect(pickListenUrl(legacy, 'spotify')).toBe('https://open.spotify.com/album/legacy');
+  });
+});
 
 describe('tagsByFrequency', () => {
   it('returns empty array for no albums', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractAlbumId, validateAlbumInput, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums } from './storage.js';
+import { extractAlbumId, validateAlbumInput, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService } from './storage.js';
 
 describe('extractAlbumId', () => {
   it('extracts id from full Spotify URL', () => {
@@ -362,5 +362,38 @@ describe('serializeBackup / parseBackup', () => {
 
   it('throws on wrong version', () => {
     expect(() => parseBackup(JSON.stringify({ version: 99, albums: [], done: 0 }))).toThrow();
+  });
+});
+
+describe('getPreferredService / setPreferredService', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', {
+      _store: {},
+      getItem(k) { return this._store[k] ?? null; },
+      setItem(k, v) { this._store[k] = v; },
+      removeItem(k) { delete this._store[k]; },
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('returns spotify as default when nothing is stored', () => {
+    expect(getPreferredService()).toBe('spotify');
+  });
+
+  it('round-trips set → get', () => {
+    setPreferredService('apple');
+    expect(getPreferredService()).toBe('apple');
+  });
+
+  it('persists across multiple calls', () => {
+    setPreferredService('deezer');
+    expect(getPreferredService()).toBe('deezer');
+    expect(getPreferredService()).toBe('deezer');
+  });
+
+  it('overwrites previous preference', () => {
+    setPreferredService('tidal');
+    setPreferredService('youtube');
+    expect(getPreferredService()).toBe('youtube');
   });
 });

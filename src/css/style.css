@@ -381,6 +381,15 @@ body::after {
 .faq-item p { font-size: 13px; color: #777; line-height: 1.7; padding-bottom: 16px; }
 .faq-item code { font-size: 12px; background: #1f1f1f; padding: 1px 5px; border-radius: 4px; color: #bbb; }
 
+/* Preferred service picker */
+.profile-pref-service { width: 100%; margin-bottom: 4px; padding: 14px 0; border-top: 1px solid #1f1f1f; }
+.profile-pref-service-label { font-size: 12px; color: #666; margin-bottom: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.profile-pref-service-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.pref-service-option { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid #2a2a2a; border-radius: 20px; font-size: 13px; color: #aaa; cursor: pointer; background: transparent; user-select: none; transition: border-color .15s, color .15s; }
+.pref-service-option:hover { border-color: #444; color: #ddd; }
+.pref-service-option.active { border-color: #0FD287; color: #0FD287; }
+.pref-service-option input[type="radio"] { display: none; }
+
 /* Sync section */
 .profile-sync { width: 100%; margin-bottom: 16px; }
 .profile-sync-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; border-top: 1px solid #1f1f1f; border-bottom: 1px solid #1f1f1f; }
