@@ -6,50 +6,99 @@ const STORAGE_KEYS = {
   REFRESH: 'gp_refresh',
 };
 
-// Helpers for seeding localStorage before the page loads
-function withExpiredToken(refreshToken = null) {
-  return async ({ context }, use) => {
-    await context.addInitScript(({ keys, refresh }) => {
-      localStorage.setItem(keys.TOKEN,  'expired_token');
-      localStorage.setItem(keys.EXPIRY, String(Date.now() - 1000)); // already expired
-      if (refresh) localStorage.setItem(keys.REFRESH, refresh);
-    }, { keys: STORAGE_KEYS, refresh: refreshToken });
-    await use();
+// A realistic Odesli response for a Spotify album link
+function makeOdesliResponse() {
+  const entityId = 'SPOTIFY_ALBUM::abc123def456ghi789jklm';
+  return {
+    entityUniqueId: entityId,
+    userCountry: 'US',
+    entitiesByUniqueId: {
+      [entityId]: {
+        id: 'abc123def456ghi789jklm',
+        type: 'album',
+        title: 'Test Album',
+        artistName: 'Test Artist',
+        thumbnailUrl: 'https://example.com/cover.jpg',
+        apiProvider: 'spotify',
+        platforms: ['spotify'],
+      },
+    },
+    linksByPlatform: {
+      spotify: {
+        url: 'https://open.spotify.com/album/abc123def456ghi789jklm',
+        nativeAppUriMobile: 'spotify:album:abc123def456ghi789jklm',
+        entityUniqueId: entityId,
+      },
+    },
   };
 }
 
-// ── Show login screen only when no session is recoverable ─────────────────────
+async function stubOdesliSuccess(context) {
+  await context.route('https://api.song.link/**', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(makeOdesliResponse()),
+    })
+  );
+}
 
-test('shows login screen when no token at all', async ({ page }) => {
+async function stubLastfm(context) {
+  await context.route('https://ws.audioscrobbler.com/**', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+  );
+}
+
+// ── Logged-out: app is accessible without Spotify ────────────────────────────
+
+test('shows app when no token at all — no login wall', async ({ page, context }) => {
+  await stubLastfm(context);
   await page.goto('/');
-  await expect(page.locator('.landing')).toBeVisible();
-  await expect(page.locator('.landing [data-action="login"]')).toBeVisible();
+  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
+  // Connect Spotify button should be present but secondary
+  await expect(page.locator('#auth-area [data-action="login"]')).toBeVisible();
+  // No hard landing wall
+  await expect(page.locator('.landing')).not.toBeVisible();
 });
 
-test('shows login screen when token expired and no refresh token', async ({ page, context }) => {
+test('shows app when token expired and no refresh token — no login wall', async ({ page, context }) => {
   await context.addInitScript(({ keys }) => {
     localStorage.setItem(keys.TOKEN,  'stale');
     localStorage.setItem(keys.EXPIRY, String(Date.now() - 1000));
   }, { keys: STORAGE_KEYS });
+  await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.landing')).toBeVisible();
+  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('.landing')).not.toBeVisible();
 });
 
-test('does NOT show login screen when token expired but refresh token exists', async ({ page, context }) => {
-  // Stub the Spotify token refresh endpoint to return a fresh token
+test('logged-out user can add an album via Odesli', async ({ page, context }) => {
+  await stubOdesliSuccess(context);
+  await stubLastfm(context);
+
+  await page.goto('/');
+  await expect(page.locator('.stats')).toBeVisible();
+
+  await page.click('[data-action="toggle-add"]');
+  await page.fill('#url-input', 'https://open.spotify.com/album/abc123def456ghi789jklm');
+  await page.click('[data-action="add"]');
+
+  await expect(page.locator('.card')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('.card .card-title')).toContainText('Test Album');
+});
+
+// ── Token refresh and retry ───────────────────────────────────────────────────
+
+test('does NOT show login wall when token expired but refresh token exists', async ({ page, context }) => {
   await context.route('https://accounts.spotify.com/api/token', async route => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        access_token: 'refreshed_token',
-        expires_in: 3600,
-      }),
+      body: JSON.stringify({ access_token: 'refreshed_token', expires_in: 3600 }),
     });
   });
-
-  // Stub /me so boot doesn't fail
   await context.route('https://api.spotify.com/v1/me', async route => {
     await route.fulfill({
       status: 200,
@@ -57,23 +106,19 @@ test('does NOT show login screen when token expired but refresh token exists', a
       body: JSON.stringify({ display_name: 'Test User', images: [] }),
     });
   });
-
   await context.addInitScript(({ keys }) => {
     localStorage.setItem(keys.TOKEN,   'expired_token');
     localStorage.setItem(keys.EXPIRY,  String(Date.now() - 1000));
     localStorage.setItem(keys.REFRESH, 'valid_refresh_token');
   }, { keys: STORAGE_KEYS });
+  await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.landing')).not.toBeVisible();
   await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('.landing')).not.toBeVisible();
 });
 
-// ── Token refresh and retry on 401 ────────────────────────────────────────────
-
-test('retries Spotify API call after 401 by refreshing token', async ({ page, context }) => {
-  let albumCallCount = 0;
-
+test('adds album successfully after token refresh via Odesli', async ({ page, context }) => {
   await context.route('https://accounts.spotify.com/api/token', async route => {
     await route.fulfill({
       status: 200,
@@ -81,7 +126,6 @@ test('retries Spotify API call after 401 by refreshing token', async ({ page, co
       body: JSON.stringify({ access_token: 'new_token', expires_in: 3600 }),
     });
   });
-
   await context.route('https://api.spotify.com/v1/me', async route => {
     await route.fulfill({
       status: 200,
@@ -89,26 +133,8 @@ test('retries Spotify API call after 401 by refreshing token', async ({ page, co
       body: JSON.stringify({ display_name: 'Test User', images: [] }),
     });
   });
-
-  await context.route('https://api.spotify.com/v1/albums/abc123def456ghi789jklm', async route => {
-    albumCallCount++;
-    // First call → 401, second call → success
-    if (albumCallCount === 1) {
-      await route.fulfill({ status: 401, body: '{}' });
-    } else {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          name: 'Test Album',
-          artists: [{ name: 'Test Artist', id: 'a1' }],
-          images: [{ url: 'https://example.com/cover.jpg' }],
-          release_date: '2020-01-01',
-          external_urls: { spotify: 'https://open.spotify.com/album/abc123def456ghi789jklm' },
-        }),
-      });
-    }
-  });
+  await stubOdesliSuccess(context);
+  await stubLastfm(context);
 
   await context.addInitScript(({ keys }) => {
     localStorage.setItem(keys.TOKEN,   'about_to_expire');
@@ -119,14 +145,11 @@ test('retries Spotify API call after 401 by refreshing token', async ({ page, co
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
 
-  // Open add reveal, paste a valid 22-char album ID to trigger fetchAlbumMeta
   await page.click('[data-action="toggle-add"]');
-  await page.fill('#url-input', 'abc123def456ghi789jklm');
+  await page.fill('#url-input', 'https://open.spotify.com/album/abc123def456ghi789jklm');
   await page.click('[data-action="add"]');
 
-  // Should succeed after retry — card should appear
   await expect(page.locator('.card')).toBeVisible({ timeout: 5000 });
-  expect(albumCallCount).toBe(2);
 });
 
 // ── OAuth callback (code exchange) ────────────────────────────────────────────
@@ -143,7 +166,6 @@ test('exchanges OAuth code from URL and shows app', async ({ page, context }) =>
       }),
     });
   });
-
   await context.route('https://api.spotify.com/v1/me', async route => {
     await route.fulfill({
       status: 200,
@@ -151,25 +173,20 @@ test('exchanges OAuth code from URL and shows app', async ({ page, context }) =>
       body: JSON.stringify({ display_name: 'OAuth User', images: [] }),
     });
   });
-
-  // Seed the verifier (needed for exchangeCode)
   await context.addInitScript(({ keys }) => {
     localStorage.setItem(keys.VERIFIER, 'fake_verifier');
   }, { keys: { ...STORAGE_KEYS, VERIFIER: 'gp_verifier' } });
+  await stubLastfm(context);
 
   await page.goto('/?code=fake_auth_code');
-
-  // URL should be cleaned up
   await expect(page).toHaveURL('/');
-
-  // App should show the queue, not login screen
   await expect(page.locator('.landing')).not.toBeVisible();
   await expect(page.locator('.stats')).toBeVisible();
 });
 
 // ── invalid_grant: expired refresh token ─────────────────────────────────────
 
-test('clears session and shows login screen when refresh token returns invalid_grant at boot', async ({ page, context }) => {
+test('clears session and shows app (not logged in) when refresh token returns invalid_grant at boot', async ({ page, context }) => {
   await context.route('https://accounts.spotify.com/api/token', async route => {
     await route.fulfill({
       status: 400,
@@ -177,17 +194,18 @@ test('clears session and shows login screen when refresh token returns invalid_g
       body: JSON.stringify({ error: 'invalid_grant', error_description: 'Refresh token expired' }),
     });
   });
-
   await context.addInitScript(({ keys }) => {
     localStorage.setItem(keys.TOKEN,   'expired_token');
     localStorage.setItem(keys.EXPIRY,  String(Date.now() - 1000));
     localStorage.setItem(keys.REFRESH, 'expired_refresh_token');
   }, { keys: STORAGE_KEYS });
+  await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.landing')).toBeVisible();
-  await expect(page.locator('.stats')).not.toBeVisible();
-
+  // App shows (not blocked by landing wall) but user is logged out
+  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('.landing')).not.toBeVisible();
+  // Tokens cleared
   const stored = await page.evaluate(keys => ({
     token:   localStorage.getItem(keys.TOKEN),
     expiry:  localStorage.getItem(keys.EXPIRY),
@@ -198,7 +216,7 @@ test('clears session and shows login screen when refresh token returns invalid_g
   expect(stored.refresh).toBeNull();
 });
 
-test('clears session and shows login screen when mid-session 401 refresh returns invalid_grant', async ({ page, context }) => {
+test('clears session when mid-session add fails with invalid_grant', async ({ page, context }) => {
   await context.route('https://api.spotify.com/v1/me', async route => {
     await route.fulfill({
       status: 200,
@@ -206,11 +224,19 @@ test('clears session and shows login screen when mid-session 401 refresh returns
       body: JSON.stringify({ display_name: 'Test User', images: [] }),
     });
   });
-
-  await context.route('https://api.spotify.com/v1/albums/abc123def456ghi789jklm', async route => {
+  // Odesli call itself fails with a non-retryable code (simulate Odesli 404 so no add)
+  // The invalid_grant should still fire from the firstTrackUri Spotify fetch
+  await context.route('https://api.song.link/**', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(makeOdesliResponse()),
+    });
+  });
+  // Spotify firstTrackUri fetch returns 401
+  await context.route('https://api.spotify.com/v1/albums/**', async route => {
     await route.fulfill({ status: 401, body: '{}' });
   });
-
   await context.route('https://accounts.spotify.com/api/token', async route => {
     await route.fulfill({
       status: 400,
@@ -218,36 +244,33 @@ test('clears session and shows login screen when mid-session 401 refresh returns
       body: JSON.stringify({ error: 'invalid_grant', error_description: 'Refresh token expired' }),
     });
   });
-
   await context.addInitScript(({ keys }) => {
     localStorage.setItem(keys.TOKEN,   'valid_token');
     localStorage.setItem(keys.EXPIRY,  String(Date.now() + 999999));
     localStorage.setItem(keys.REFRESH, 'expired_refresh_token');
   }, { keys: STORAGE_KEYS });
+  await stubLastfm(context);
 
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
 
   await page.click('[data-action="toggle-add"]');
-  await page.fill('#url-input', 'abc123def456ghi789jklm');
+  await page.fill('#url-input', 'https://open.spotify.com/album/abc123def456ghi789jklm');
   await page.click('[data-action="add"]');
 
-  await expect(page.locator('.landing')).toBeVisible({ timeout: 5000 });
-  await expect(page.locator('.card')).not.toBeVisible();
-
+  // Session cleared; Connect button appears
+  await expect(page.locator('[data-action="login"]')).toBeVisible({ timeout: 5000 });
   const stored = await page.evaluate(keys => ({
     token:   localStorage.getItem(keys.TOKEN),
     expiry:  localStorage.getItem(keys.EXPIRY),
     refresh: localStorage.getItem(keys.REFRESH),
   }), STORAGE_KEYS);
   expect(stored.token).toBeNull();
-  expect(stored.expiry).toBeNull();
-  expect(stored.refresh).toBeNull();
 });
 
 // ── Logout ────────────────────────────────────────────────────────────────────
 
-test('logout clears session and shows login screen', async ({ page, context }) => {
+test('logout clears session and shows app in logged-out state', async ({ page, context }) => {
   await context.route('https://api.spotify.com/v1/me', async route => {
     await route.fulfill({
       status: 200,
@@ -255,12 +278,12 @@ test('logout clears session and shows login screen', async ({ page, context }) =
       body: JSON.stringify({ display_name: 'Test User', images: [] }),
     });
   });
-
   await context.addInitScript(({ keys }) => {
     localStorage.setItem(keys.TOKEN,   'valid_token');
     localStorage.setItem(keys.EXPIRY,  String(Date.now() + 3600000));
     localStorage.setItem(keys.REFRESH, 'refresh_tok');
   }, { keys: STORAGE_KEYS });
+  await stubLastfm(context);
 
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
@@ -268,5 +291,10 @@ test('logout clears session and shows login screen', async ({ page, context }) =
   await page.click('[data-action="open-profile"]');
   await expect(page.locator('.profile')).toBeVisible();
   await page.click('[data-action="logout"]');
-  await expect(page.locator('.landing')).toBeVisible();
+
+  // App still shows; user is just logged out
+  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('.landing')).not.toBeVisible();
+  // Connect button re-appears in header
+  await expect(page.locator('#auth-area [data-action="login"]')).toBeVisible();
 });

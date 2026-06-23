@@ -111,7 +111,7 @@ export function pickListenUrl(album, prefService) {
 
 export function renderAuthArea(el, userProfile) {
   if (!hasSession()) {
-    el.innerHTML = '';
+    el.innerHTML = `<button class="auth-btn auth-btn--small" data-action="login">${spotifyIcon(14, 14)} Connect Spotify</button>`;
     return;
   }
   const img  = userProfile?.images?.[0]?.url;
@@ -184,6 +184,7 @@ function renderPrefServiceSection(prefService) {
 }
 
 function renderProfile(userProfile, prefService) {
+  const loggedIn = hasSession();
   const img    = userProfile?.images?.[0]?.url;
   const name   = userProfile?.display_name || '';
   const id     = userProfile?.id || '';
@@ -195,21 +196,27 @@ function renderProfile(userProfile, prefService) {
         <button class="profile-back" data-action="close-profile">← Back</button>
       </div>
       <div class="profile-body">
-        ${img ? `<img class="profile-avatar" src="${attr(img)}" alt="">` : ''}
-        ${name ? `<div class="profile-name">${name}</div>` : ''}
-        ${id   ? `<div class="profile-id">@${attr(id)}</div>` : ''}
+        ${loggedIn && img ? `<img class="profile-avatar" src="${attr(img)}" alt="">` : ''}
+        ${loggedIn && name ? `<div class="profile-name">${name}</div>` : ''}
+        ${loggedIn && id   ? `<div class="profile-id">@${attr(id)}</div>` : ''}
         <div class="profile-stats">
           <div class="stat"><div class="stat-num">${albums.length}</div><div class="stat-label">queued</div></div>
           <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
           <div class="stat"><div class="stat-num">${tags.length}</div><div class="stat-label">tags</div></div>
         </div>
         ${renderPrefServiceSection(prefService)}
-        ${renderSyncSection()}
+        ${loggedIn ? renderSyncSection() : `
+        <div class="profile-connect">
+          <div class="profile-connect-label">Sync to Spotify (optional)</div>
+          <div class="profile-connect-desc">Connect to back up your queue as a private Spotify playlist and keep it in sync across devices.</div>
+          <button class="auth-btn profile-connect-btn" data-action="login">${spotifyIcon(14, 14)} Connect with Spotify</button>
+        </div>`}
         <div class="profile-actions">
           <button class="profile-action-btn" data-action="export-data">Export queue</button>
           <button class="profile-action-btn" data-action="import-data">Import queue</button>
           <input type="file" id="profile-import-input" accept="application/json" style="display:none">
         </div>
+        ${loggedIn ? `
         <details class="profile-advanced">
           <summary class="profile-advanced-summary">Advanced</summary>
           <div class="profile-advanced-body">
@@ -219,7 +226,7 @@ function renderProfile(userProfile, prefService) {
         </details>
         <div class="profile-actions profile-actions--bottom">
           <button class="auth-btn secondary" data-action="logout">Log out of Spotify</button>
-        </div>
+        </div>` : ''}
       </div>
     </div>`;
 }
@@ -242,89 +249,6 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     const cached = album ? artistCache[album.artist] : null;
     const tracks = album ? (trackCache[album.id] || null) : null;
     el.innerHTML = renderExploreCard(album, cached, tracks, exploreIndex, visible.length, prefService);
-    return;
-  }
-
-  if (!hasSession()) {
-    el.innerHTML = `
-      <div class="landing">
-        <div class="landing-hero">
-          <img class="landing-logo" src="favicon.png" alt="Groovepede">
-          <h2 class="landing-headline">Never lose a great album<br>recommendation again.</h2>
-          <p class="landing-sub">A lightweight listening inbox for Spotify albums. Save picks from your phone's share sheet, explore them by genre, and check them off as you listen.</p>
-          <button class="auth-btn landing-cta" data-action="login">
-            ${spotifyIcon(16, 16)} Connect with Spotify
-          </button>
-          <p class="landing-note">Free &middot; No account &middot; Your queue stays in your browser</p>
-        </div>
-
-        <div class="landing-features">
-          <div class="landing-feature">
-            <div class="landing-feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
-                <polyline points="16 6 12 2 8 6"/>
-                <line x1="12" y1="2" x2="12" y2="15"/>
-              </svg>
-            </div>
-            <h3>Share from Spotify</h3>
-            <p>Tap Share &rarr; Groovepede from the Spotify app. Albums appear instantly with cover art and genre tags.</p>
-          </div>
-          <div class="landing-feature">
-            <div class="landing-feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                <line x1="7" y1="7" x2="7.01" y2="7"/>
-              </svg>
-            </div>
-            <h3>Auto-tagged genres</h3>
-            <p>Every album is enriched with genre tags from Last.fm. Filter your queue by mood or style at a glance.</p>
-          </div>
-          <div class="landing-feature">
-            <div class="landing-feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-              </svg>
-            </div>
-            <h3>Fully local</h3>
-            <p>Your queue lives in your browser's storage. Nothing is sent to our servers &mdash; because there are none.</p>
-          </div>
-        </div>
-
-        <div class="landing-steps">
-          <h3 class="landing-section-title">How it works</h3>
-          <ol class="landing-step-list">
-            <li><strong>Open &amp; install</strong> &mdash; Connect with Spotify and add Groovepede to your home screen.</li>
-            <li><strong>Share albums</strong> &mdash; In the Spotify app, tap Share on any album and choose Groovepede.</li>
-            <li><strong>Listen &amp; done</strong> &mdash; When you're ready, tap Listen. Tap Done when finished to track your progress.</li>
-          </ol>
-        </div>
-
-        <div class="landing-faq">
-          <h3 class="landing-section-title">FAQ</h3>
-          <details class="faq-item">
-            <summary>Is it free?</summary>
-            <p>Yes, completely. No subscription, no ads, no upsell.</p>
-          </details>
-          <details class="faq-item">
-            <summary>What Spotify data does it access?</summary>
-            <p>By default, only your display name and profile picture (<code>user-read-private</code> scope) so we can show your avatar. If you enable cross-device sync, we also request <code>playlist-modify-private</code> to create and update a private playlist called "Groovepede Queue" on your account. We never read your listening history or library.</p>
-          </details>
-          <details class="faq-item">
-            <summary>Where is my queue stored?</summary>
-            <p>Entirely in your browser's <code>localStorage</code>. Nothing leaves your device.</p>
-          </details>
-          <details class="faq-item">
-            <summary>Does it work on iPhone?</summary>
-            <p>Yes &mdash; the app works in Safari on iOS. The Android share-sheet integration isn't available on iPhone (Apple limits PWA share targets), but you can paste any Spotify album link directly into the add bar.</p>
-          </details>
-          <details class="faq-item">
-            <summary>Can I use it on desktop?</summary>
-            <p>Yes. Install it as a PWA from Chrome or Edge, or just use it in any browser tab. Paste Spotify album links into the add bar to queue them.</p>
-          </details>
-        </div>
-      </div>`;
     return;
   }
 
@@ -389,11 +313,19 @@ function renderEmpty(activeFilter, searchQuery) {
     return `<div class="empty">${icon}<div class="empty-title">No matches for &ldquo;${escapeHtml(searchQuery.trim())}&rdquo;</div><div class="empty-body"><button class="empty-clear" data-action="clear-search">Clear search</button></div></div>`;
   }
   const noTag = activeFilter !== 'all';
+  if (noTag) {
+    return `<div class="empty">${icon}<div class="empty-title">No albums with this tag</div><div class="empty-body">Try a different filter.</div></div>`;
+  }
+  const connectNudge = !hasSession() ? `
+    <div class="empty-connect">
+      <p>Want to sync across devices? <button class="empty-connect-btn" data-action="login">${spotifyIcon(12, 12)} Connect Spotify</button></p>
+    </div>` : '';
   return `
     <div class="empty">
       ${icon}
-      <div class="empty-title">${noTag ? 'No albums with this tag' : 'Nothing queued yet'}</div>
-      <div class="empty-body">${noTag ? 'Try a different filter.' : 'Tap <strong>+ Add</strong> above to save your first album.'}</div>
+      <div class="empty-title">Nothing queued yet</div>
+      <div class="empty-body">Tap <strong>+ Add</strong> to paste a link from Spotify, Apple Music, YouTube, and more.</div>
+      ${connectNudge}
     </div>`;
 }
 

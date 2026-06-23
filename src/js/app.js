@@ -475,17 +475,17 @@ async function boot() {
   // Retry any pending records from previous sessions (runs even when logged out)
   resolvePending();
 
-  if (!tokenValid()) return;
+  // Spotify-conditional: profile + sync setup (skipped when logged out)
+  if (tokenValid()) {
+    if (navigator.storage?.persist) navigator.storage.persist();
 
-  if (navigator.storage?.persist) navigator.storage.persist();
+    userProfile = await spotifyGet('/me');
+    renderAuthArea(authEl, userProfile);
 
-  userProfile = await spotifyGet('/me');
-  renderAuthArea(authEl, userProfile);
-
-  // Complete pending sync enable that required a re-auth
-  if (sync.hasPendingEnable()) {
-    await sync.finishEnableAfterAuth(userProfile);
-    rerender();
+    if (sync.hasPendingEnable()) {
+      await sync.finishEnableAfterAuth(userProfile);
+      rerender();
+    }
   }
 
   if (shared) {

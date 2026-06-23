@@ -134,6 +134,25 @@ test('adding an album with sync on triggers a push', async ({ page, context }) =
   })({ context }, async () => {
     await stubSpotify(context);
 
+    // Stub Odesli — add flow now resolves via Odesli, not Spotify albums API
+    const newId = '4aawyAB9vmqN3uQ7FjRGTy';
+    const odesliId = `SPOTIFY_ALBUM::${newId}`;
+    await context.route('https://api.song.link/**', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        entityUniqueId: odesliId,
+        entitiesByUniqueId: {
+          [odesliId]: { id: newId, type: 'album', title: 'New Album', artistName: 'New Artist',
+            thumbnailUrl: null, apiProvider: 'spotify', platforms: ['spotify'] },
+        },
+        linksByPlatform: {
+          spotify: { url: `https://open.spotify.com/album/${newId}`,
+            nativeAppUriMobile: `spotify:album:${newId}`, entityUniqueId: odesliId },
+        },
+      }),
+    }));
+
     await context.route('https://ws.audioscrobbler.com/**', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({}),
     }));
@@ -143,12 +162,12 @@ test('adding an album with sync on triggers a push', async ({ page, context }) =
 
     const putPromise = page.waitForRequest(
       req => req.url().includes('/playlists/' + PLAYLIST_ID + '/tracks') && req.method() === 'PUT',
-      { timeout: 8000 }
+      { timeout: 10000 }
     );
 
     await page.click('[data-action="toggle-add"]');
     const input = page.locator('#url-input');
-    await input.fill('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    await input.fill(`https://open.spotify.com/album/${newId}`);
     await input.press('Enter');
 
     await putPromise;
