@@ -84,6 +84,61 @@ function stubSpotify(context) {
   });
 }
 
+function stubLastfm(context) {
+  return context.route('https://ws.audioscrobbler.com/**', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+  );
+}
+
+// ── Logged-out sync isolation ─────────────────────────────────────────────────
+
+test('sync section not present when logged out; Connect Spotify shown instead', async ({ page, context }) => {
+  await stubLastfm(context);
+  await page.goto('/');
+  await expect(page.locator('.stats')).toBeVisible();
+
+  // When logged out, profile is not accessible — sync toggle must not exist anywhere
+  await expect(page.locator('.sync-toggle')).toHaveCount(0);
+  // Auth area shows Connect button instead of user pill
+  await expect(page.locator('#auth-area [data-action="login"]')).toBeVisible();
+  // No open-profile action available (user pill not rendered when logged out)
+  await expect(page.locator('[data-action="open-profile"]')).toHaveCount(0);
+});
+
+test('marking album done when logged out does not push to Spotify (even if sync was previously enabled)', async ({ page, context }) => {
+  const album = {
+    id: 'SPOTIFY_ALBUM::alb001', title: 'No Push Album', artist: 'Test',
+    sourceUrl: 'https://open.spotify.com/album/alb001',
+    links: { spotify: { url: 'https://open.spotify.com/album/alb001' } },
+    cover: null, year: '2020', tags: [], addedAt: new Date().toISOString(),
+    firstTrackUri: 'spotify:track:t001',
+  };
+
+  // Seed sync enabled + playlist + album, but NO auth token
+  await context.addInitScript(({ keys, al, plId }) => {
+    localStorage.setItem(keys.ALBUMS,  JSON.stringify([al]));
+    localStorage.setItem(keys.SYNC_ON, '1');
+    localStorage.setItem(keys.SYNC_PL, plId);
+  }, { keys: KEYS, al: album, plId: PLAYLIST_ID });
+  await stubLastfm(context);
+
+  let playlistPushMade = false;
+  context.on('request', req => {
+    if (req.url().includes('/playlists/') && req.url().includes('/tracks')) {
+      playlistPushMade = true;
+    }
+  });
+
+  await page.goto('/');
+  await expect(page.locator('.card')).toBeVisible();
+
+  await page.click('[data-action="done"][data-index="0"]');
+  // Wait past the 2s schedulePush debounce to be sure
+  await page.waitForTimeout(3500);
+
+  expect(playlistPushMade).toBe(false);
+});
+
 // ── Enable sync from profile ───────────────────────────────────────────────────
 
 test('enabling sync creates playlist and does initial push', async ({ page, context }) => {

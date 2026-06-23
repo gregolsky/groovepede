@@ -101,7 +101,7 @@ async function handleAdd() {
       }
       fresh.push(rec);
       saveAlbums(fresh);
-      sync.schedulePush();
+      if (tokenValid()) sync.schedulePush();
     }
     loadingAdd = false;
     addOpen = false;
@@ -149,7 +149,7 @@ function applyDone(album) {
   albums.splice(idx, 1);
   saveAlbums(albums);
   saveDone(loadDone() + 1);
-  sync.schedulePush();
+  if (tokenValid()) sync.schedulePush();
   rerender();
 }
 
@@ -173,7 +173,7 @@ function applyExploreDone(visibleIdx, album) {
   albums.splice(idx, 1);
   saveAlbums(albums);
   saveDone(loadDone() + 1);
-  sync.schedulePush();
+  if (tokenValid()) sync.schedulePush();
   const newVisible = visibleAlbums();
   if (newVisible.length === 0) {
     exploreIndex = null;
@@ -516,7 +516,7 @@ async function boot() {
           if (!fresh.find(a => a.id === rec.id)) {
             fresh.push(rec);
             saveAlbums(fresh);
-            sync.schedulePush();
+            if (tokenValid()) sync.schedulePush();
           }
           highlightId = rec.id;
           addedMeta = rec;

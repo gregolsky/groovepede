@@ -19,6 +19,15 @@ describe('albumsToTrackUris', () => {
     expect(albumsToTrackUris(albums)).toEqual(['spotify:track:aaa']);
   });
 
+  it('silently skips non-Spotify albums (Apple Music, YouTube, etc.) which have no firstTrackUri', () => {
+    const albums = [
+      { id: 'ITUNES_ALBUM::123', sourceUrl: 'https://music.apple.com/us/album/test/123', links: { itunes: { url: '...' } } },
+      { id: 'YOUTUBE::xyz', sourceUrl: 'https://music.youtube.com/playlist?list=xyz', links: { youtubeMusic: { url: '...' } } },
+      { id: 'SPOTIFY_ALBUM::abc', firstTrackUri: 'spotify:track:abc' },
+    ];
+    expect(albumsToTrackUris(albums)).toEqual(['spotify:track:abc']);
+  });
+
   it('returns empty array for empty queue', () => {
     expect(albumsToTrackUris([])).toEqual([]);
   });
