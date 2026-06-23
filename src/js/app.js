@@ -1,4 +1,7 @@
 import '../css/style.css';
+import '@fontsource-variable/bricolage-grotesque';
+import '@fontsource-variable/hanken-grotesk';
+import '@fontsource-variable/geist-mono';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
@@ -6,18 +9,21 @@ import { renderAuthArea, renderApp } from './render.js';
 import * as sync from './sync.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let userProfile  = null;
-let activeFilter = 'all';
-let loadingAdd   = false;
-let artistCache  = {};
-let trackCache   = {};
-let exploreIndex = null; // integer index into visible album list, or null
-let animating    = false;
-let addError     = null;
-let profileOpen  = false;
-let searchQuery  = '';
-let tagsExpanded = false;
-let addOpen      = false;
+let userProfile    = null;
+let activeFilter   = 'all';
+let loadingAdd     = false;
+let artistCache    = {};
+let trackCache     = {};
+let exploreIndex   = null; // integer index into visible album list, or null
+let animating      = false;
+let addError       = null;
+let profileOpen    = false;
+let searchQuery    = '';
+let tagsExpanded   = false;
+let addOpen        = false;
+let importProgress = null; // { done, total } while resolving, or null
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
@@ -31,14 +37,25 @@ function visibleAlbums() {
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService() };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress };
 }
+
+let _entrancePlayed = false;
 
 function rerender() {
   const focused = document.activeElement;
   const focusId = focused?.id;
   const selStart = focused?.selectionStart;
   const selEnd   = focused?.selectionEnd;
+
+  // Play the orchestrated entrance motion once per load. The class must be on
+  // #app before its innerHTML is rebuilt so the fresh nodes match the scoped
+  // rules; remove it afterwards so later rerenders don't replay the animation.
+  if (!_entrancePlayed) {
+    _entrancePlayed = true;
+    appEl.classList.add('animate-in');
+    setTimeout(() => appEl.classList.remove('animate-in'), 2500);
+  }
 
   renderAuthArea(authEl, userProfile);
   renderApp(appEl, getState());
@@ -284,7 +301,12 @@ async function importData(text) {
   }
   saveAlbums(parsed.albums);
   saveDone(parsed.done);
+  // Close profile and land on the populated queue immediately
+  profileOpen  = false;
+  exploreIndex = null;
   rerender();
+  // Resolve all pending stubs fresh (throttled, with progress bar)
+  resolvePending();
 }
 
 // ── Event delegation ──────────────────────────────────────────────────────────
@@ -426,31 +448,54 @@ function showShareConfirmAndClose(meta, highlightId) {
 
 // ── Pending resolution retry ───────────────────────────────────────────────────
 
+let _resolvingPending = false;
+let _resolvePendingAgain = false;
+
 async function resolvePending() {
-  const albums = loadAlbums();
-  const pending = albums.filter(a => a._pending);
-  if (!pending.length) return;
+  if (_resolvingPending) { _resolvePendingAgain = true; return; }
+  if (!loadAlbums().some(a => a._pending)) return;
+
+  _resolvingPending = true;
+  do {
+  _resolvePendingAgain = false;
+  const pending = loadAlbums().filter(a => a._pending);
+  if (!pending.length) break;
+
+  importProgress = { done: 0, total: pending.length };
+  rerender();
 
   for (const stub of pending) {
     const rec = await resolveAlbum(stub.sourceUrl);
-    if (rec._error) continue; // stay pending; try again next open
+    if (!rec._error) {
+      // Fetch Spotify firstTrackUri for sync support
+      if (rec.links?.spotify && tokenValid()) {
+        const spotifyId = extractAlbumId(rec.links.spotify.url);
+        if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
+      }
 
-    // Fetch Spotify firstTrackUri for sync support
-    if (rec.links?.spotify && tokenValid()) {
-      const spotifyId = extractAlbumId(rec.links.spotify.url);
-      if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
+      // Replace the pending stub in place, preserving original addedAt
+      rec.addedAt = stub.addedAt;
+      const fresh = loadAlbums();
+      const idx = fresh.findIndex(a => a.id === stub.id);
+      if (idx !== -1) fresh.splice(idx, 1, rec);
+      saveAlbums(fresh);
+
+      enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
     }
 
-    // Replace the pending stub in place, preserving original addedAt
-    rec.addedAt = stub.addedAt;
-    const fresh = loadAlbums();
-    const idx = fresh.findIndex(a => a.id === stub.id);
-    if (idx !== -1) fresh.splice(idx, 1, rec);
-    saveAlbums(fresh);
-
-    enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
+    importProgress = { done: importProgress.done + 1, total: importProgress.total };
     rerender();
+
+    // Pace to stay within Odesli's free-tier limit (~10 req/min = 1 per 6 s)
+    if (importProgress.done < importProgress.total) {
+      await sleep(6500);
+    }
   }
+  } while (_resolvePendingAgain);
+
+  importProgress = null;
+  _resolvingPending = false;
+  rerender();
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────

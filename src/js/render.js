@@ -139,14 +139,17 @@ function renderHero({ loadingAdd, addError, addOpen }) {
   const addSection = addOpen ? `
     <div class="landing-add-open">
       <div class="add-reveal">
-        <input class="add-input" id="url-input" placeholder="Paste an album link from Spotify, Apple Music, YouTube…">
+        <input class="add-input" id="url-input" placeholder="Paste a music album link from Spotify, Apple Music, YouTube…">
         <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
           ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
         </button>
       </div>
       ${addError ? `<div class="add-error">${addError}</div>` : ''}
     </div>` : `
-    <button class="auth-btn landing-cta" data-action="toggle-add">Paste a link</button>
+    <button class="auth-btn landing-cta" data-action="toggle-add">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      Paste a music album link
+    </button>
     <p class="landing-note">Spotify &middot; Apple Music &middot; YouTube Music &middot; Tidal &middot; Deezer &middot; and more</p>`;
 
   const connectLink = !hasSession() ? `
@@ -158,7 +161,10 @@ function renderHero({ loadingAdd, addError, addOpen }) {
   return `
     <div class="landing">
       <div class="landing-hero">
-        <img class="landing-logo" src="favicon.png" alt="Groovepede">
+        <div class="landing-logo-wrap">
+          <div class="landing-logo-rings"></div>
+          <img class="landing-logo" src="favicon.png" alt="Groovepede">
+        </div>
         <h2 class="landing-headline">Never lose a great album<br>recommendation again.</h2>
         <p class="landing-sub">Paste a link from any streaming service, explore by genre, and check albums off as you listen.</p>
         ${addSection}
@@ -352,7 +358,7 @@ function renderProfile(userProfile, prefService) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService }) {
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService, importProgress }) {
   const albums  = loadAlbums();
   let visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
   const q = searchQuery?.trim().toLowerCase();
@@ -403,6 +409,15 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
       </button>
     </div>
     ${addError ? `<div class="add-error">${addError}</div>` : ''}` : ''}`;
+
+  if (importProgress) {
+    const pct = importProgress.total > 0 ? (importProgress.done / importProgress.total * 100) : 0;
+    html += `
+    <div class="import-progress">
+      <div class="import-progress-label">Fetching links &amp; tags &mdash; <span>${importProgress.done} / ${importProgress.total}</span></div>
+      <div class="import-progress-track"><div class="import-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
+    </div>`;
+  }
 
   const tagFreqList = tagsByFrequency(albums);
   if (tagFreqList.length) {
@@ -488,7 +503,7 @@ function renderCards(visible, albums, searchQuery, prefService) {
     ].filter(Boolean).join('');
 
     return `
-      <div class="card" id="card-${album.id}" data-action="explore" data-index="${visibleIdx}" role="button" tabindex="0">
+      <div class="card" id="card-${album.id}" data-action="explore" data-index="${visibleIdx}" role="button" tabindex="0" style="--i:${visibleIdx}">
         <div class="card-main">
           <div class="card-cover">
             ${album.cover

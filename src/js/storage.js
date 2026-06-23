@@ -32,15 +32,34 @@ export function extractAlbumId(url) {
 }
 
 export function serializeBackup(albums, done) {
-  return JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), albums, done });
+  // Only persist user-owned data; all external metadata is pulled fresh on import.
+  const lean = albums.map(a => ({ sourceUrl: a.sourceUrl, service: a.service, addedAt: a.addedAt }));
+  return JSON.stringify({ version: 3, exportedAt: new Date().toISOString(), albums: lean, done });
 }
 
 export function parseBackup(text) {
   const data = JSON.parse(text);
-  if (!data || ![1, 2].includes(data.version) || !Array.isArray(data.albums) || typeof data.done !== 'number') {
+  if (!data || ![1, 2, 3].includes(data.version) || !Array.isArray(data.albums) || typeof data.done !== 'number') {
     throw new Error('Invalid backup format');
   }
-  return { albums: data.albums.map(upgradeAlbumRecord), done: data.done };
+  // Rebuild every album as a pending stub; external metadata (title, cover, links, tags)
+  // is NOT restored — it will be re-fetched fresh by resolvePending() after import.
+  const stubs = data.albums.map(album => {
+    let sourceUrl, service;
+    if (data.version <= 2) {
+      const upgraded = upgradeAlbumRecord(album);
+      sourceUrl = upgraded.sourceUrl;
+      service = upgraded.service || parseMusicLink(sourceUrl || '').service;
+    } else {
+      sourceUrl = album.sourceUrl;
+      service = album.service || parseMusicLink(sourceUrl || '').service;
+    }
+    if (!sourceUrl) return null;
+    const stub = makePendingRecord(sourceUrl, service || 'spotify');
+    stub.addedAt = album.addedAt || stub.addedAt;
+    return stub;
+  }).filter(Boolean);
+  return { albums: stubs, done: data.done };
 }
 
 export function getPreferredService() {

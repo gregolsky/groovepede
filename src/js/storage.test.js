@@ -313,20 +313,49 @@ describe('loadAlbums migration', () => {
 });
 
 describe('serializeBackup / parseBackup', () => {
-  const albums = [{ id: 'abc', title: 'Test', artist: 'Artist', links: {}, sourceUrl: null }];
+  const albums = [{
+    id: 'SPOTIFY_ALBUM::4aawyAB9vmqN3uQ7FjRGTy',
+    sourceUrl: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy',
+    service: 'spotify',
+    title: 'OK Computer',
+    artist: 'Radiohead',
+    cover: 'https://example.com/cover.jpg',
+    year: '1997',
+    tags: ['alternative rock'],
+    links: { spotify: { url: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', nativeUri: 'spotify:album:4aawyAB9vmqN3uQ7FjRGTy' } },
+    addedAt: '2024-01-01T00:00:00.000Z',
+  }];
 
-  it('round-trips albums and done count', () => {
-    const text = serializeBackup(albums, 5);
-    const result = parseBackup(text);
-    expect(result.albums[0].title).toBe('Test');
-    expect(result.albums[0].id).toBe('abc');
-    expect(result.done).toBe(5);
+  it('export produces lean v3 with only sourceUrl, service, addedAt', () => {
+    const data = JSON.parse(serializeBackup(albums, 5));
+    expect(data.version).toBe(3);
+    expect(data.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(data.albums[0].service).toBe('spotify');
+    expect(data.albums[0].addedAt).toBe('2024-01-01T00:00:00.000Z');
+    // External/derived data must NOT be in the export
+    expect(data.albums[0].title).toBeUndefined();
+    expect(data.albums[0].artist).toBeUndefined();
+    expect(data.albums[0].cover).toBeUndefined();
+    expect(data.albums[0].links).toBeUndefined();
+    expect(data.done).toBe(5);
   });
 
-  it('serialized output includes version and exportedAt', () => {
+  it('serialized output includes version 3 and exportedAt', () => {
     const data = JSON.parse(serializeBackup([], 0));
-    expect(data.version).toBe(2);
+    expect(data.version).toBe(3);
     expect(typeof data.exportedAt).toBe('string');
+  });
+
+  it('import of v3 backup produces pending stubs preserving addedAt', () => {
+    const text = serializeBackup(albums, 5);
+    const result = parseBackup(text);
+    expect(result.albums[0]._pending).toBe(true);
+    expect(result.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(result.albums[0].addedAt).toBe('2024-01-01T00:00:00.000Z');
+    // External data is NOT restored
+    expect(result.albums[0].title).toBeNull();
+    expect(result.albums[0].tags).toEqual([]);
+    expect(result.done).toBe(5);
   });
 
   it('throws on malformed JSON', () => {
@@ -341,7 +370,7 @@ describe('serializeBackup / parseBackup', () => {
     expect(() => parseBackup(JSON.stringify({ version: 1, albums: [], done: 'bad' }))).toThrow();
   });
 
-  it('loads version 1 backups with upgrade applied', () => {
+  it('imports v1 Spotify backup as pending stubs, preserving addedAt', () => {
     const v1 = JSON.stringify({
       version: 1,
       exportedAt: '2024-01-01T00:00:00.000Z',
@@ -356,12 +385,57 @@ describe('serializeBackup / parseBackup', () => {
       done: 2,
     });
     const result = parseBackup(v1);
-    expect(result.albums[0].links.spotify.url).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(result.albums[0]._pending).toBe(true);
+    expect(result.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(result.albums[0].title).toBeNull();   // external data not restored
+    expect(result.albums[0].tags).toEqual([]);    // external data not restored
+    expect(result.albums[0].addedAt).toBe('2024-01-01T00:00:00.000Z');
     expect(result.done).toBe(2);
+  });
+
+  it('imports v2 backup as pending stubs, not restoring external metadata', () => {
+    const v2 = JSON.stringify({
+      version: 2,
+      exportedAt: '2024-01-01T00:00:00.000Z',
+      albums: [{
+        id: 'SPOTIFY_ALBUM::4aawyAB9vmqN3uQ7FjRGTy',
+        sourceUrl: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy',
+        service: 'spotify',
+        title: 'OK Computer',
+        artist: 'Radiohead',
+        tags: ['rock'],
+        cover: 'https://example.com/cover.jpg',
+        links: { spotify: { url: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', nativeUri: 'spotify:album:4aawyAB9vmqN3uQ7FjRGTy' } },
+        addedAt: '2024-06-01T00:00:00.000Z',
+      }],
+      done: 1,
+    });
+    const result = parseBackup(v2);
+    expect(result.albums[0]._pending).toBe(true);
+    expect(result.albums[0].title).toBeNull();
+    expect(result.albums[0].tags).toEqual([]);
+    expect(result.albums[0].cover).toBeNull();
+    expect(result.albums[0].addedAt).toBe('2024-06-01T00:00:00.000Z');
+    expect(result.done).toBe(1);
   });
 
   it('throws on wrong version', () => {
     expect(() => parseBackup(JSON.stringify({ version: 99, albums: [], done: 0 }))).toThrow();
+  });
+
+  it('filters out albums with no sourceUrl', () => {
+    const v3 = JSON.stringify({
+      version: 3,
+      exportedAt: '2024-01-01T00:00:00.000Z',
+      albums: [
+        { sourceUrl: null, service: 'spotify', addedAt: '2024-01-01T00:00:00.000Z' },
+        { sourceUrl: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', service: 'spotify', addedAt: '2024-01-01T00:00:00.000Z' },
+      ],
+      done: 0,
+    });
+    const result = parseBackup(v3);
+    expect(result.albums.length).toBe(1);
+    expect(result.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
   });
 });
 
