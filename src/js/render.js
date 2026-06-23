@@ -348,7 +348,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     </div>
     ${addOpen ? `
     <div class="add-reveal">
-      <input class="add-input" id="url-input" placeholder="Paste a Spotify album link or ID…">
+      <input class="add-input" id="url-input" placeholder="Paste an album link from Spotify, Apple Music, YouTube…">
       <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
         ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
       </button>
@@ -397,8 +397,42 @@ function renderEmpty(activeFilter, searchQuery) {
     </div>`;
 }
 
+function renderPendingCard(album, visibleIdx) {
+  const svcLabel = serviceLabel(album.service) || 'Music link';
+  const listenUrl = album.sourceUrl || null;
+  return `
+    <div class="card card--pending" id="card-${attr(album.id)}">
+      <div class="card-main">
+        <div class="card-cover">
+          <div class="card-cover-placeholder card-cover-placeholder--pending">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="card-title card-title--pending">${escapeHtml(svcLabel)}</div>
+          <div class="card-artist card-artist--pending">Looking up details…</div>
+          <div class="card-meta">Added ${timeAgo(album.addedAt)} · resolving</div>
+        </div>
+        <div class="card-actions">
+          ${listenUrl ? `
+          <button class="btn btn-listen" data-action="listen" data-url="${attr(listenUrl)}">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
+            Listen
+          </button>` : ''}
+          <button class="btn btn-done" data-action="done" data-index="${visibleIdx}">${CHECKMARK_SVG} Done</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderCards(visible, albums, searchQuery, prefService) {
   return visible.map((album, visibleIdx) => {
+    if (album._pending) return renderPendingCard(album, visibleIdx);
+
     const tagHtml = [
       album.year ? `<span class="tag year">${album.year}</span>` : '',
       ...(album.tags || []).map(t => `<span class="tag genre" data-action="filter" data-tag="${attr(t)}">${t}</span>`),

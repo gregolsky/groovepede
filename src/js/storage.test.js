@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractAlbumId, validateAlbumInput, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService } from './storage.js';
+import { extractAlbumId, validateAlbumInput, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
 
 describe('extractAlbumId', () => {
   it('extracts id from full Spotify URL', () => {
@@ -395,5 +395,89 @@ describe('getPreferredService / setPreferredService', () => {
     setPreferredService('tidal');
     setPreferredService('youtube');
     expect(getPreferredService()).toBe('youtube');
+  });
+});
+
+// ── makePendingRecord ─────────────────────────────────────────────────────────
+
+describe('makePendingRecord', () => {
+  it('has _pending: true', () => {
+    const rec = makePendingRecord('https://music.apple.com/album/abc', 'apple');
+    expect(rec._pending).toBe(true);
+  });
+
+  it('sets id to pending:<url>', () => {
+    const url = 'https://music.apple.com/album/abc';
+    const rec = makePendingRecord(url, 'apple');
+    expect(rec.id).toBe('pending:' + url);
+  });
+
+  it('stores sourceUrl', () => {
+    const url = 'https://tidal.com/album/12345';
+    const rec = makePendingRecord(url, 'tidal');
+    expect(rec.sourceUrl).toBe(url);
+  });
+
+  it('stores service', () => {
+    const rec = makePendingRecord('https://tidal.com/album/12345', 'tidal');
+    expect(rec.service).toBe('tidal');
+  });
+
+  it('has empty links object (not null)', () => {
+    const rec = makePendingRecord('https://music.apple.com/album/abc', 'apple');
+    expect(rec.links).toEqual({});
+  });
+
+  it('has null title, artist, cover, year', () => {
+    const rec = makePendingRecord('https://music.apple.com/album/abc', 'apple');
+    expect(rec.title).toBeNull();
+    expect(rec.artist).toBeNull();
+    expect(rec.cover).toBeNull();
+    expect(rec.year).toBeNull();
+  });
+
+  it('has empty tags array', () => {
+    const rec = makePendingRecord('https://music.apple.com/album/abc', 'apple');
+    expect(rec.tags).toEqual([]);
+  });
+
+  it('has an addedAt ISO string', () => {
+    const rec = makePendingRecord('https://music.apple.com/album/abc', 'apple');
+    expect(typeof rec.addedAt).toBe('string');
+    expect(() => new Date(rec.addedAt)).not.toThrow();
+  });
+
+  it('upgradeAlbumRecord leaves it untouched (links already present)', () => {
+    const rec = makePendingRecord('https://music.apple.com/album/abc', 'apple');
+    expect(upgradeAlbumRecord({ ...rec })).toEqual(rec);
+  });
+});
+
+// ── isRetryableResolveError ───────────────────────────────────────────────────
+
+describe('isRetryableResolveError', () => {
+  it('returns true for network error', () => {
+    expect(isRetryableResolveError('network')).toBe(true);
+  });
+  it('returns true for 429 rate-limit', () => {
+    expect(isRetryableResolveError(429)).toBe(true);
+  });
+  it('returns true for 500 server error', () => {
+    expect(isRetryableResolveError(500)).toBe(true);
+  });
+  it('returns true for 503', () => {
+    expect(isRetryableResolveError(503)).toBe(true);
+  });
+  it('returns false for 404 (no match — retrying is pointless)', () => {
+    expect(isRetryableResolveError(404)).toBe(false);
+  });
+  it('returns false for 400 (bad request)', () => {
+    expect(isRetryableResolveError(400)).toBe(false);
+  });
+  it('returns false for 401', () => {
+    expect(isRetryableResolveError(401)).toBe(false);
+  });
+  it('returns false for unknown string', () => {
+    expect(isRetryableResolveError('unknown')).toBe(false);
   });
 });

@@ -253,6 +253,18 @@ body::after {
 }
 .card--highlight { animation: card-highlight 2s ease-out forwards; }
 
+/* Pending (unresolved) card */
+.card--pending { opacity: 0.65; cursor: default; }
+.card--pending:hover { border-color: #2a2a2a; }
+.card-cover-placeholder--pending { background: #1e1e1e; }
+.card-title--pending { color: #aaa; font-style: italic; }
+.card-artist--pending { color: #555; font-size: 12px; }
+@keyframes pending-pulse {
+  0%, 100% { opacity: 0.65; }
+  50%       { opacity: 0.4; }
+}
+.card--pending { animation: pending-pulse 2.4s ease-in-out infinite; }
+
 /* Share confirmation overlay */
 @keyframes share-confirm-in {
   from { opacity: 0; transform: scale(0.88); }

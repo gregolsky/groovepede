@@ -124,6 +124,29 @@ export function parseMusicLink(raw) {
   return { error: 'Paste an album link from a supported service (Spotify, Apple Music, YouTube, Tidal, or Deezer)' };
 }
 
+export function makePendingRecord(url, service) {
+  return {
+    id:        'pending:' + url,
+    sourceUrl: url,
+    service,
+    title:     null,
+    artist:    null,
+    cover:     null,
+    year:      null,
+    tags:      [],
+    addedAt:   new Date().toISOString(),
+    links:     {},
+    _pending:  true,
+  };
+}
+
+export function isRetryableResolveError(err) {
+  if (err === 'network') return true;
+  if (err === 429) return true;
+  if (typeof err === 'number' && err >= 500) return true;
+  return false;
+}
+
 export function validateAlbumInput(raw) {
   const s = (raw || '').trim();
   if (!s) return { id: null, error: null };

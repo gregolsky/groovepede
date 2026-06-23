@@ -81,6 +81,16 @@ describe('pickListenUrl', () => {
     const legacy = { sourceUrl: 'https://open.spotify.com/album/legacy' };
     expect(pickListenUrl(legacy, 'spotify')).toBe('https://open.spotify.com/album/legacy');
   });
+
+  it('returns sourceUrl for a pending record (links is empty, sourceUrl set)', () => {
+    const pending = {
+      _pending: true,
+      id: 'pending:https://music.apple.com/album/abc',
+      sourceUrl: 'https://music.apple.com/album/abc',
+      links: {},
+    };
+    expect(pickListenUrl(pending, 'apple')).toBe('https://music.apple.com/album/abc');
+  });
 });
 
 describe('tagsByFrequency', () => {

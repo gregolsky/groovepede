@@ -1,7 +1,7 @@
 import '../css/style.css';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumMeta, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput, serializeBackup, parseBackup, getPreferredService, setPreferredService } from './storage.js';
+import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
 import { renderAuthArea, renderApp } from './render.js';
 import * as sync from './sync.js';
 
@@ -61,38 +61,72 @@ function setFilter(tag) {
 async function handleAdd() {
   const input = appEl.querySelector('#url-input');
   if (!input) return;
-  const { id, error } = validateAlbumInput(input.value.trim());
-  if (!id) {
-    addError = error;
-    input.classList.add('error');
-    rerender();
+  const { url, service, error } = parseMusicLink(input.value.trim());
+  if (error !== undefined) {
+    // error is set — either a real message or null (empty input)
+    if (error) {
+      addError = error;
+      input.classList.add('error');
+      rerender();
+    }
     return;
   }
   addError = null;
   input.classList.remove('error');
 
   const albums = loadAlbums();
-  if (albums.find(a => a.id === id)) { input.value = ''; return; }
+  // Dedup on sourceUrl before resolving (fast path for re-pasting same link)
+  if (albums.find(a => a.sourceUrl === url || (a._pending && a.sourceUrl === url))) {
+    input.value = '';
+    addOpen = false;
+    rerender();
+    return;
+  }
 
   loadingAdd = true;
   rerender();
 
-  const meta = await fetchAlbumMeta(id);
-  if (meta?._error === 403) {
-    addError = 'Spotify access denied — this app is in development mode and your account is not on the allowlist.';
-  } else if (meta?._error) {
-    addError = 'Could not fetch album from Spotify (error ' + meta._error + ').';
-  } else if (meta) {
-    albums.push(meta); saveAlbums(albums); sync.schedulePush();
+  const rec = await resolveAlbum(url);
+
+  if (!rec._error) {
+    // Success — dedup on resolved ID too (different URL, same album)
+    const fresh = loadAlbums();
+    if (!fresh.find(a => a.id === rec.id)) {
+      // Fetch firstTrackUri for Spotify sync support (Odesli doesn't return track URIs)
+      if (rec.links?.spotify && tokenValid()) {
+        const spotifyId = extractAlbumId(rec.links.spotify.url);
+        if (spotifyId) {
+          rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
+        }
+      }
+      fresh.push(rec);
+      saveAlbums(fresh);
+      sync.schedulePush();
+    }
+    loadingAdd = false;
+    addOpen = false;
+    rerender();
+    const inp = appEl.querySelector('#url-input');
+    if (inp) inp.value = '';
+    enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
+  } else if (isRetryableResolveError(rec._error)) {
+    // Odesli is down / rate-limited — save a pending stub so the link isn't lost
+    const fresh = loadAlbums();
+    if (!fresh.find(a => a.sourceUrl === url)) {
+      fresh.push(makePendingRecord(url, service));
+      saveAlbums(fresh);
+    }
+    loadingAdd = false;
+    addOpen = false;
+    rerender();
+    const inp = appEl.querySelector('#url-input');
+    if (inp) inp.value = '';
+  } else {
+    // Non-retryable (404 / 400) — show error, don't save
+    addError = 'Couldn’t find that album — double-check the link and try again.';
+    loadingAdd = false;
+    rerender();
   }
-
-  loadingAdd = false;
-  if (meta && !meta._error) addOpen = false;
-  rerender();
-
-  const inp = appEl.querySelector('#url-input');
-  if (inp) inp.value = '';
-  if (meta && !meta._error) enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
 }
 
 function markDone(visibleIdx, triggerEl) {
@@ -390,6 +424,35 @@ function showShareConfirmAndClose(meta, highlightId) {
   }, 1050);
 }
 
+// ── Pending resolution retry ───────────────────────────────────────────────────
+
+async function resolvePending() {
+  const albums = loadAlbums();
+  const pending = albums.filter(a => a._pending);
+  if (!pending.length) return;
+
+  for (const stub of pending) {
+    const rec = await resolveAlbum(stub.sourceUrl);
+    if (rec._error) continue; // stay pending; try again next open
+
+    // Fetch Spotify firstTrackUri for sync support
+    if (rec.links?.spotify && tokenValid()) {
+      const spotifyId = extractAlbumId(rec.links.spotify.url);
+      if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
+    }
+
+    // Replace the pending stub in place, preserving original addedAt
+    rec.addedAt = stub.addedAt;
+    const fresh = loadAlbums();
+    const idx = fresh.findIndex(a => a.id === stub.id);
+    if (idx !== -1) fresh.splice(idx, 1, rec);
+    saveAlbums(fresh);
+
+    enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
+    rerender();
+  }
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 sync.setStatusListener(rerender);
 
@@ -409,6 +472,9 @@ async function boot() {
 
   rerender();
 
+  // Retry any pending records from previous sessions (runs even when logged out)
+  resolvePending();
+
   if (!tokenValid()) return;
 
   if (navigator.storage?.persist) navigator.storage.persist();
@@ -424,34 +490,51 @@ async function boot() {
 
   if (shared) {
     const isShareLaunch = window.matchMedia('(display-mode: standalone)').matches;
-    const { id, error } = validateAlbumInput(shared);
-    if (!id && error) {
+    const { url, service, error } = parseMusicLink(shared);
+    if (error) {
       addError = error;
       addOpen = true;
       window.history.replaceState({}, document.title, window.location.pathname);
       rerender();
-    }
-    if (id) {
+    } else if (url) {
       const albums = loadAlbums();
       let highlightId = null;
       let addedMeta = null;
-      if (!albums.find(a => a.id === id)) {
-        const meta = await fetchAlbumMeta(id);
-        if (meta) {
-          albums.push(meta);
-          saveAlbums(albums);
-          highlightId = meta.id;
-          addedMeta = meta;
-          enrichWithLastfm(meta.id, meta.artist, meta.title, rerender);
-        }
+      const existing = albums.find(a => a.sourceUrl === url);
+      if (existing) {
+        highlightId = existing.id;
+        addedMeta = existing._pending ? null : existing;
       } else {
-        highlightId = id;
-        addedMeta = albums.find(a => a.id === id);
+        const rec = await resolveAlbum(url);
+        if (!rec._error) {
+          // Fetch Spotify firstTrackUri for sync support
+          if (rec.links?.spotify && tokenValid()) {
+            const spotifyId = extractAlbumId(rec.links.spotify.url);
+            if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
+          }
+          const fresh = loadAlbums();
+          if (!fresh.find(a => a.id === rec.id)) {
+            fresh.push(rec);
+            saveAlbums(fresh);
+            sync.schedulePush();
+          }
+          highlightId = rec.id;
+          addedMeta = rec;
+          enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
+        } else if (isRetryableResolveError(rec._error)) {
+          // Odesli down — save pending stub so share isn't lost
+          const stub = makePendingRecord(url, service);
+          const fresh = loadAlbums();
+          fresh.push(stub);
+          saveAlbums(fresh);
+          highlightId = stub.id;
+          addedMeta = null; // no cover/title for confirmation overlay
+        }
       }
       window.history.replaceState({}, document.title, window.location.pathname);
       rerender();
       if (highlightId) {
-        if (isShareLaunch && addedMeta) {
+        if (isShareLaunch && addedMeta?.cover) {
           showShareConfirmAndClose(addedMeta, highlightId);
         } else {
           requestAnimationFrame(() => requestAnimationFrame(() => {
