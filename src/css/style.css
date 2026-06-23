@@ -307,12 +307,34 @@ body::after {
 
 /* Import progress bar */
 .import-progress { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); margin-bottom: 12px; }
+.import-progress--waiting { border-color: #5a4a00; }
 .import-progress-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); letter-spacing: 0.02em; }
+.import-progress-retry { color: #c0900a; font-weight: 600; }
 .import-progress-track { height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
 .import-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+.import-progress--waiting .import-progress-fill { background: #c0900a; }
 @media (prefers-reduced-motion: no-preference) {
   .import-progress-fill { transition: width 0.35s ease; }
 }
+
+/* Import summary modal */
+.import-summary-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; z-index: 200; padding: 0 0 env(safe-area-inset-bottom,0); }
+@media (min-width: 480px) { .import-summary-overlay { align-items: center; padding: 0; } }
+.import-summary { background: var(--surface); border: 1px solid var(--border-2); border-radius: 16px 16px 0 0; width: 100%; max-width: 480px; padding: 24px 20px 28px; display: flex; flex-direction: column; gap: 16px; }
+@media (min-width: 480px) { .import-summary { border-radius: 16px; } }
+.import-summary-top { display: flex; align-items: center; justify-content: space-between; }
+.import-summary-title { font-family: var(--font-display); font-size: 18px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+.import-summary-close { background: none; border: none; color: var(--text-faint); font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1; }
+.import-summary-close:hover { color: var(--text); }
+.import-summary-added { margin: 0; font-size: 14px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.import-summary-failed { display: flex; flex-direction: column; gap: 10px; padding: 12px; background: #1a1200; border: 1px solid #3a2800; border-radius: var(--r-md); }
+.import-summary-failed-title { margin: 0; font-family: var(--font-mono); font-size: 11px; color: #c0900a; text-transform: uppercase; letter-spacing: .05em; }
+.import-summary-failed-list { margin: 0; padding: 0 0 0 16px; display: flex; flex-direction: column; gap: 4px; }
+.import-summary-failed-list li { font-size: 12px; }
+.import-summary-link { color: var(--text-faint); word-break: break-all; }
+.import-summary-link:hover { color: var(--text); }
+.import-summary-copy { align-self: flex-start; }
+.import-summary-dismiss { width: 100%; justify-content: center; }
 
 .card-actions { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 12px 12px 12px 0; flex-shrink: 0; }
 .btn {
@@ -335,6 +357,8 @@ body::after {
 .btn:active { transform: scale(.97); }
 .btn-listen { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 700; }
 .btn-listen:hover { background: #0ae87a; border-color: #0ae87a; box-shadow: 0 0 0 3px rgba(15,210,135,.18); }
+.btn-listen--unavailable { background: transparent; border-color: var(--border); color: var(--text-faint); font-weight: 400; cursor: not-allowed; }
+.btn-listen--unavailable:hover { background: transparent; border-color: var(--border); box-shadow: none; }
 .btn-done { color: var(--text-dim); border-color: var(--border-2); font-size: 12px; }
 .btn-done:hover { color: var(--text); border-color: var(--text-faint); }
 

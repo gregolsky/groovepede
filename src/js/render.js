@@ -17,6 +17,8 @@ function lastfmIcon(w, h) {
 }
 
 const CHECKMARK_SVG = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>`;
+const PLAY_SVG      = `<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>`;
+const X_SVG         = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>`;
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
@@ -91,6 +93,33 @@ export function pickListenUrl(album, prefService) {
 
   // 5. last resort
   return album.sourceUrl || null;
+}
+
+/**
+ * True when the album has a usable link (url or nativeUri) for the preferred
+ * service. Used to decide whether to show the Listen button as enabled or
+ * disabled (with an X) — avoids silently opening a different service.
+ */
+export function isOnPreferredService(album, prefService) {
+  const e = album.links?.[prefService];
+  return !!(e && (e.url || e.nativeUri));
+}
+
+/**
+ * Render the Listen button for a resolved album.
+ * Disabled + X icon when the album isn't on the user's preferred service.
+ * @param {object} album
+ * @param {string} prefService
+ * @param {{ showService?: boolean }} opts — show "Listen on Spotify" vs "Listen"
+ */
+function renderListenBtn(album, prefService, { showService = false } = {}) {
+  const svcName = serviceLabel(prefService) || 'Spotify';
+  if (isOnPreferredService(album, prefService)) {
+    const url = pickListenUrl(album, prefService);
+    const label = showService ? `Listen on ${escapeHtml(svcName)}` : 'Listen';
+    return `<button class="btn btn-listen" data-action="listen" data-url="${attr(url)}">${PLAY_SVG} ${label}</button>`;
+  }
+  return `<button class="btn btn-listen btn-listen--unavailable" disabled title="${attr(`Not available on ${svcName}`)}">${X_SVG} Not on ${escapeHtml(svcName)}</button>`;
 }
 
 // ── Auth area ─────────────────────────────────────────────────────────────────
@@ -342,9 +371,36 @@ function renderProfile(userProfile, prefService) {
     </div>`;
 }
 
+// ── Import summary modal ──────────────────────────────────────────────────────
+
+function renderImportSummaryModal({ added, failed }) {
+  return `
+  <div class="import-summary-overlay" role="dialog" aria-modal="true" aria-label="Import complete">
+    <div class="import-summary">
+      <div class="import-summary-top">
+        <h2 class="import-summary-title">Import complete</h2>
+        <button class="import-summary-close" data-action="close-import-summary" aria-label="Dismiss">✕</button>
+      </div>
+      <p class="import-summary-added">
+        <svg width="14" height="14" viewBox="0 0 12 12" fill="none" stroke="#0FD287" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>
+        ${added} album${added !== 1 ? 's' : ''} added to your queue
+      </p>
+      ${failed.length ? `
+      <div class="import-summary-failed">
+        <p class="import-summary-failed-title">${failed.length} link${failed.length !== 1 ? 's' : ''} couldn't be resolved</p>
+        <ul class="import-summary-failed-list">
+          ${failed.map(u => `<li><a class="import-summary-link" href="${attr(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a></li>`).join('')}
+        </ul>
+        <button class="profile-action-btn import-summary-copy" data-action="copy-import-links">Copy links</button>
+      </div>` : ''}
+      <button class="auth-btn import-summary-dismiss" data-action="close-import-summary">Done</button>
+    </div>
+  </div>`;
+}
+
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService, importProgress }) {
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary }) {
   const albums  = loadAlbums();
   let visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
   const q = searchQuery?.trim().toLowerCase();
@@ -363,9 +419,12 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     return;
   }
 
-  // Empty queue → show the hero landing (background, features, FAQ)
+  // Empty queue → show the hero landing. Exception: if an import summary is
+  // waiting, keep it visible over the (now-empty) queue so the user sees the result.
   if (albums.length === 0) {
-    el.innerHTML = renderHero({ loadingAdd, addError, addOpen });
+    let html = renderHero({ loadingAdd, addError, addOpen });
+    if (importSummary) html += renderImportSummaryModal(importSummary);
+    el.innerHTML = html;
     return;
   }
 
@@ -397,10 +456,14 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     ${addError ? `<div class="add-error">${addError}</div>` : ''}` : ''}`;
 
   if (importProgress) {
-    const pct = importProgress.total > 0 ? (importProgress.done / importProgress.total * 100) : 0;
+    const pct      = importProgress.total > 0 ? (importProgress.done / importProgress.total * 100) : 0;
+    const waiting  = (importProgress.retrying || 0) > 0;
+    const label    = waiting
+      ? `Rate limited — retrying&hellip; <span class="import-progress-retry">(${importProgress.retrying})</span> &bull; ${importProgress.done} / ${importProgress.total}`
+      : `Fetching links &amp; tags &mdash; <span>${importProgress.done} / ${importProgress.total}</span>`;
     html += `
-    <div class="import-progress">
-      <div class="import-progress-label">Fetching links &amp; tags &mdash; <span>${importProgress.done} / ${importProgress.total}</span></div>
+    <div class="import-progress${waiting ? ' import-progress--waiting' : ''}">
+      <div class="import-progress-label">${label}</div>
       <div class="import-progress-track"><div class="import-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
     </div>`;
   }
@@ -430,6 +493,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
   html += visible.length ? renderCards(visible, albums, searchQuery, prefService) : renderEmpty(activeFilter, searchQuery);
   html += '</div>';
 
+  if (importSummary) html += renderImportSummaryModal(importSummary);
   el.innerHTML = html;
 }
 
@@ -469,10 +533,7 @@ function renderPendingCard(album, visibleIdx) {
         </div>
         <div class="card-actions">
           ${listenUrl ? `
-          <button class="btn btn-listen" data-action="listen" data-url="${attr(listenUrl)}">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
-            Listen
-          </button>` : ''}
+          <button class="btn btn-listen" data-action="listen" data-url="${attr(listenUrl)}">${PLAY_SVG} Listen</button>` : ''}
           <button class="btn btn-done" data-action="done" data-index="${visibleIdx}">${CHECKMARK_SVG} Done</button>
         </div>
       </div>
@@ -508,10 +569,7 @@ function renderCards(visible, albums, searchQuery, prefService) {
             <div class="card-meta">Added ${timeAgo(album.addedAt)}</div>
           </div>
           <div class="card-actions">
-            <button class="btn btn-listen" data-action="listen" data-url="${attr(pickListenUrl(album, prefService))}">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
-              Listen
-            </button>
+            ${renderListenBtn(album, prefService)}
             <button class="btn btn-done" data-action="done" data-index="${visibleIdx}">${CHECKMARK_SVG} Done</button>
           </div>
         </div>
@@ -571,10 +629,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService) {
           ${album.year ? `<span class="explore-album-year">${album.year}</span>` : ''}
         </div>
         <div class="explore-album-actions">
-          <button class="btn btn-listen" data-action="listen" data-url="${attr(pickListenUrl(album, prefService))}">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
-            Listen on ${serviceLabel(prefService) || 'Spotify'}
-          </button>
+          ${renderListenBtn(album, prefService, { showService: true })}
           <button class="btn btn-done" data-action="explore-done" data-index="${index}">Done</button>
         </div>
         ${tracklistHtml}

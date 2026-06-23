@@ -253,6 +253,86 @@ test('importing falls back to MusicBrainz when Odesli is unavailable', async ({ 
   await expect(page.locator('.card-title')).toContainText('MB Fallback Album', { timeout: 10000 });
 });
 
+test('unresolvable import link is dropped and shown in the summary modal', async ({ page, context }) => {
+  await stubLastfm(context);
+
+  // Odesli returns a non-retryable 404 — album not found
+  await context.route('https://api.song.link/**', route =>
+    route.fulfill({ status: 404, contentType: 'application/json', body: '{"code":404}' })
+  );
+  // MusicBrainz also returns not-found (relations array empty)
+  await context.route('https://musicbrainz.org/**', route =>
+    route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ resource: 'https://open.spotify.com/album/notfound123', id: 'url-uuid', relations: [] }),
+    })
+  );
+
+  const bogusUrl = 'https://open.spotify.com/album/notfound123';
+  const backup = {
+    version: 3,
+    exportedAt: new Date().toISOString(),
+    albums: [{ sourceUrl: bogusUrl, service: 'spotify', addedAt: new Date().toISOString() }],
+    done: 0,
+  };
+
+  await page.goto('/');
+  await page.click('[data-action="open-profile"]');
+  await expect(page.locator('[data-action="import-data"]')).toBeVisible();
+
+  const [fileChooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.click('[data-action="import-data"]'),
+  ]);
+  await fileChooser.setFiles({
+    name: 'backup.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(backup)),
+  });
+
+  // Summary modal appears with 0 added + the failed link
+  await expect(page.locator('.import-summary-overlay')).toBeVisible({ timeout: 8000 });
+  await expect(page.locator('.import-summary-title')).toContainText('Import complete');
+  await expect(page.locator('.import-summary-added')).toContainText('0 albums added');
+  await expect(page.locator('.import-summary-failed-title')).toContainText('1 link');
+  await expect(page.locator('.import-summary-link')).toContainText('notfound123');
+
+  // The stub was removed — no pending card lingers
+  await expect(page.locator('.card--pending')).toHaveCount(0);
+
+  // Dismissing the modal hides it
+  await page.click('[data-action="close-import-summary"]');
+  await expect(page.locator('.import-summary-overlay')).not.toBeAttached();
+});
+
+test('Listen button is disabled when album is not on preferred service', async ({ page, context }) => {
+  await stubLastfm(context);
+
+  // Seed a resolved album that only has an Apple Music link, while the
+  // preferred service (default: spotify) is not present
+  const album = {
+    id: 'APPLE_ALBUM::apple1',
+    title: 'Apple-only Album',
+    artist: 'Some Artist',
+    sourceUrl: 'https://music.apple.com/album/apple1',
+    links: {
+      apple: { url: 'https://music.apple.com/album/apple1', nativeUri: 'music://album/apple1' },
+    },
+    cover: null, year: '2024', tags: [], addedAt: new Date().toISOString(),
+  };
+  await context.addInitScript(({ keys, al }) => {
+    localStorage.setItem(keys.ALBUMS, JSON.stringify([al]));
+  }, { keys: KEYS, al: album });
+
+  await page.goto('/');
+  await expect(page.locator('.stats')).toBeVisible();
+
+  // The Listen button should be disabled (preferred service = spotify, album only on apple)
+  const listenBtn = page.locator('.btn-listen--unavailable');
+  await expect(listenBtn).toBeVisible();
+  await expect(listenBtn).toBeDisabled();
+  await expect(listenBtn).toContainText('Not on Spotify');
+});
+
 test('resolution resumes when user returns to tab (visibilitychange)', async ({ page, context }) => {
   await stubLastfm(context);
 

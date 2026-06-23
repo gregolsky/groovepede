@@ -1,5 +1,52 @@
 import { describe, it, expect } from 'vitest';
-import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, serviceLabel } from './render.js';
+import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, serviceLabel, isOnPreferredService } from './render.js';
+
+// ── isOnPreferredService ──────────────────────────────────────────────────────
+
+describe('isOnPreferredService', () => {
+  it('returns true when preferred service has a url', () => {
+    const album = { links: { spotify: { url: 'https://open.spotify.com/album/x', nativeUri: null } } };
+    expect(isOnPreferredService(album, 'spotify')).toBe(true);
+  });
+
+  it('returns true when preferred service has a nativeUri only', () => {
+    const album = { links: { spotify: { url: null, nativeUri: 'spotify:album:x' } } };
+    expect(isOnPreferredService(album, 'spotify')).toBe(true);
+  });
+
+  it('returns true when preferred service has both url and nativeUri', () => {
+    const album = { links: { spotify: { url: 'https://open.spotify.com/album/x', nativeUri: 'spotify:album:x' } } };
+    expect(isOnPreferredService(album, 'spotify')).toBe(true);
+  });
+
+  it('returns false when preferred service is not in links (other services present)', () => {
+    const album = {
+      links: {
+        apple: { url: 'https://music.apple.com/album/x', nativeUri: 'music://x' },
+        deezer: { url: 'https://deezer.com/album/x', nativeUri: null },
+      },
+    };
+    expect(isOnPreferredService(album, 'spotify')).toBe(false);
+  });
+
+  it('returns false when links object is empty', () => {
+    expect(isOnPreferredService({ links: {} }, 'spotify')).toBe(false);
+  });
+
+  it('returns false when links is missing', () => {
+    expect(isOnPreferredService({}, 'spotify')).toBe(false);
+  });
+
+  it('returns false when preferred entry has neither url nor nativeUri', () => {
+    const album = { links: { spotify: { url: null, nativeUri: null } } };
+    expect(isOnPreferredService(album, 'spotify')).toBe(false);
+  });
+
+  it('returns false when preferred entry exists but url is empty string', () => {
+    const album = { links: { spotify: { url: '', nativeUri: '' } } };
+    expect(isOnPreferredService(album, 'spotify')).toBe(false);
+  });
+});
 
 // ── serviceLabel ──────────────────────────────────────────────────────────────
 

@@ -21,7 +21,9 @@ let profileOpen    = false;
 let searchQuery    = '';
 let tagsExpanded   = false;
 let addOpen        = false;
-let importProgress = null; // { done, total } while resolving, or null
+let importProgress = null;  // { done, total, retrying } while resolving, or null
+let importSummary  = null;  // { added, failed[] } shown as modal after a user-triggered import
+let summarizeOnDrain = false; // set true in importData; cleared when summary is shown
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
@@ -35,7 +37,7 @@ function visibleAlbums() {
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress, importSummary };
 }
 
 let _entrancePlayed = false;
@@ -309,7 +311,8 @@ async function importData(text) {
   profileOpen  = false;
   exploreIndex = null;
   rerender();
-  // Resolve all pending stubs fresh (throttled, with progress bar)
+  // Resolve all pending stubs fresh (throttled, with progress bar + summary on drain)
+  summarizeOnDrain = true;
   resolvePending();
 }
 
@@ -350,6 +353,15 @@ document.body.addEventListener('click', e => {
     case 'close-profile': closeProfile();                       break;
     case 'export-data':   exportData();                         break;
     case 'import-data':   document.getElementById('profile-import-input')?.click(); break;
+    case 'close-import-summary':
+      importSummary = null;
+      rerender();
+      break;
+    case 'copy-import-links':
+      if (importSummary?.failed?.length) {
+        navigator.clipboard?.writeText(importSummary.failed.join('\n'));
+      }
+      break;
     case 'toggle-sync':
       if (sync.isSyncEnabled()) { sync.disableSync(); rerender(); }
       else { sync.enableSync(userProfile); } // notify() inside rerenders via _onChange
@@ -395,9 +407,10 @@ appEl.addEventListener('change', e => {
 // Keyboard navigation
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !animating) {
-    if (addOpen) { addOpen = false; addError = null; rerender(); }
+    if (importSummary)          { importSummary = null; rerender(); }
+    else if (addOpen)           { addOpen = false; addError = null; rerender(); }
     else if (exploreIndex !== null) closeExplore();
-    else if (profileOpen) closeProfile();
+    else if (profileOpen)       closeProfile();
   }
   if (exploreIndex === null) return;
   if (e.key === 'ArrowLeft')  navigateExplore(-1);
@@ -455,41 +468,76 @@ function showShareConfirmAndClose(meta, highlightId) {
 let _resolvingPending = false;
 let _resolvePendingAgain = false;
 
+// Backoff for transient errors in the retry loop (separate from the throttler's
+// cooldown, which already paces Odesli/MB calls). Capped at 60 s.
+const _retryBackoff = n => Math.min(Math.pow(2, n) * 1000, 60_000);
+const _sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function resolvePending() {
   if (_resolvingPending) { _resolvePendingAgain = true; return; }
   if (!loadAlbums().some(a => a._pending)) return;
 
   _resolvingPending = true;
+  let added = 0;
+  const failed = [];
+
   do {
-  _resolvePendingAgain = false;
-  const pending = loadAlbums().filter(a => a._pending);
-  if (!pending.length) break;
+    _resolvePendingAgain = false;
+    const pending = loadAlbums().filter(a => a._pending);
+    if (!pending.length) break;
 
-  importProgress = { done: 0, total: pending.length };
-  rerender();
-
-  for (const stub of pending) {
-    const rec = await resolveAlbumResilient(stub.sourceUrl, { service: stub.service });
-    if (!rec._error) {
-      await attachFirstTrackUri(rec);
-
-      // Replace the pending stub in place, preserving original addedAt
-      rec.addedAt = stub.addedAt;
-      const fresh = loadAlbums();
-      const idx = fresh.findIndex(a => a.id === stub.id);
-      if (idx !== -1) fresh.splice(idx, 1, rec);
-      saveAlbums(fresh);
-
-      enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
-    }
-
-    importProgress = { done: importProgress.done + 1, total: importProgress.total };
+    importProgress = { done: 0, total: pending.length, retrying: 0 };
     rerender();
-  }
+
+    for (const stub of pending) {
+      let retry = 0;
+      let resolved = false;
+      let permanent = false;
+
+      while (!resolved && !permanent) {
+        const rec = await resolveAlbumResilient(stub.sourceUrl, { service: stub.service });
+
+        if (!rec._error) {
+          // ── Resolved ──────────────────────────────────────────────────────
+          await attachFirstTrackUri(rec);
+          rec.addedAt = stub.addedAt; // preserve original addedAt
+          const fresh = loadAlbums();
+          const pos = fresh.findIndex(a => a.id === stub.id);
+          if (pos !== -1) fresh.splice(pos, 1, rec);
+          saveAlbums(fresh);
+          enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
+          added++;
+          resolved = true;
+
+        } else if (isRetryableResolveError(rec._error)) {
+          // ── Transient / rate-limited — hold on this stub, show retry count ─
+          retry++;
+          importProgress = { ...importProgress, retrying: retry };
+          rerender();
+          await _sleep(_retryBackoff(retry));
+
+        } else {
+          // ── Permanent failure (not-found / 4xx) — drop stub, record URL ──
+          failed.push(stub.sourceUrl);
+          const fresh = loadAlbums();
+          const pos = fresh.findIndex(a => a.id === stub.id);
+          if (pos !== -1) { fresh.splice(pos, 1); saveAlbums(fresh); }
+          permanent = true;
+        }
+      }
+
+      importProgress = { done: importProgress.done + 1, total: importProgress.total, retrying: 0 };
+      rerender();
+    }
   } while (_resolvePendingAgain);
 
   importProgress = null;
   _resolvingPending = false;
+
+  if (summarizeOnDrain) {
+    summarizeOnDrain = false;
+    importSummary = { added, failed };
+  }
   rerender();
 }
 
