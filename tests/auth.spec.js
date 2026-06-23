@@ -54,12 +54,14 @@ async function stubLastfm(context) {
 test('shows app when no token at all — no login wall', async ({ page, context }) => {
   await stubLastfm(context);
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  // Hero shows (not a blocking login wall) — add CTA is directly accessible
   await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
-  // Connect Spotify button should be present but secondary
+  // Connect Spotify button present but secondary in the hero
   await expect(page.locator('#auth-area [data-action="login"]')).toBeVisible();
-  // No hard landing wall
-  await expect(page.locator('.landing')).not.toBeVisible();
+  // The landing hero is visible (and that is correct — it's not a wall, it's the empty-state)
+  await expect(page.locator('.landing')).toBeVisible();
+  // Primary CTA is paste-a-link, not login
+  await expect(page.locator('.landing-cta[data-action="toggle-add"]')).toBeVisible();
 });
 
 test('shows app when token expired and no refresh token — no login wall', async ({ page, context }) => {
@@ -70,8 +72,8 @@ test('shows app when token expired and no refresh token — no login wall', asyn
   await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
-  await expect(page.locator('.landing')).not.toBeVisible();
+  // Hero shows on empty queue; app is usable without login
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 });
 
 test('logged-out user can add an album via Odesli', async ({ page, context }) => {
@@ -79,7 +81,7 @@ test('logged-out user can add an album via Odesli', async ({ page, context }) =>
   await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 
   await page.click('[data-action="toggle-add"]');
   await page.fill('#url-input', 'https://open.spotify.com/album/abc123def456ghi789jklm');
@@ -114,8 +116,8 @@ test('does NOT show login wall when token expired but refresh token exists', asy
   await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
-  await expect(page.locator('.landing')).not.toBeVisible();
+  // Empty queue → hero shows; app usable without blocking
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 });
 
 test('adds album successfully after token refresh via Odesli', async ({ page, context }) => {
@@ -143,7 +145,7 @@ test('adds album successfully after token refresh via Odesli', async ({ page, co
   }, { keys: STORAGE_KEYS });
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 
   await page.click('[data-action="toggle-add"]');
   await page.fill('#url-input', 'https://open.spotify.com/album/abc123def456ghi789jklm');
@@ -180,8 +182,8 @@ test('exchanges OAuth code from URL and shows app', async ({ page, context }) =>
 
   await page.goto('/?code=fake_auth_code');
   await expect(page).toHaveURL('/');
-  await expect(page.locator('.landing')).not.toBeVisible();
-  await expect(page.locator('.stats')).toBeVisible();
+  // App is usable (hero/empty state — no albums seeded)
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 });
 
 // ── invalid_grant: expired refresh token ─────────────────────────────────────
@@ -202,9 +204,8 @@ test('clears session and shows app (not logged in) when refresh token returns in
   await stubLastfm(context);
 
   await page.goto('/');
-  // App shows (not blocked by landing wall) but user is logged out
-  await expect(page.locator('.stats')).toBeVisible();
-  await expect(page.locator('.landing')).not.toBeVisible();
+  // App shows (hero on empty queue — not a login wall) but user is logged out
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
   // Tokens cleared
   const stored = await page.evaluate(keys => ({
     token:   localStorage.getItem(keys.TOKEN),
@@ -252,7 +253,7 @@ test('clears session when mid-session add fails with invalid_grant', async ({ pa
   await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 
   await page.click('[data-action="toggle-add"]');
   await page.fill('#url-input', 'https://open.spotify.com/album/abc123def456ghi789jklm');
@@ -286,15 +287,15 @@ test('logout clears session and shows app in logged-out state', async ({ page, c
   await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  // No albums seeded → hero; logged-in user-pill in header has open-profile
+  await expect(page.locator('#auth-area [data-action="open-profile"]')).toBeVisible();
 
-  await page.click('[data-action="open-profile"]');
+  await page.click('#auth-area [data-action="open-profile"]');
   await expect(page.locator('.profile')).toBeVisible();
   await page.click('[data-action="logout"]');
 
-  // App still shows; user is just logged out
-  await expect(page.locator('.stats')).toBeVisible();
-  await expect(page.locator('.landing')).not.toBeVisible();
-  // Connect button re-appears in header
+  // App still shows (hero); user is just logged out
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
+  // Connect button re-appears in header auth area
   await expect(page.locator('#auth-area [data-action="login"]')).toBeVisible();
 });

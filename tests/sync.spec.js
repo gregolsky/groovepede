@@ -95,14 +95,15 @@ function stubLastfm(context) {
 test('sync section not present when logged out; Connect Spotify shown instead', async ({ page, context }) => {
   await stubLastfm(context);
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  // Empty queue → hero shown; add CTA accessible
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 
-  // When logged out, profile is not accessible — sync toggle must not exist anywhere
+  // When logged out, sync toggle must not exist anywhere
   await expect(page.locator('.sync-toggle')).toHaveCount(0);
-  // Auth area shows Connect button instead of user pill
+  // Auth area shows Connect button
   await expect(page.locator('#auth-area [data-action="login"]')).toBeVisible();
-  // No open-profile action available (user pill not rendered when logged out)
-  await expect(page.locator('[data-action="open-profile"]')).toHaveCount(0);
+  // Profile IS now accessible even when logged out (import/export fix)
+  await expect(page.locator('#auth-area [data-action="open-profile"]')).toBeVisible();
 });
 
 test('marking album done when logged out does not push to Spotify (even if sync was previously enabled)', async ({ page, context }) => {
@@ -160,9 +161,10 @@ test('enabling sync creates playlist and does initial push', async ({ page, cont
       );
 
       await page.goto('/');
-      await expect(page.locator('.stats')).toBeVisible();
+      // No albums seeded → hero shows; logged-in header user-pill has open-profile
+      await expect(page.locator('#auth-area [data-action="open-profile"]')).toBeVisible();
 
-      await page.click('[data-action="open-profile"]');
+      await page.click('#auth-area [data-action="open-profile"]');
       await expect(page.locator('.profile')).toBeVisible();
       await page.click('[data-action="toggle-sync"]');
 
@@ -333,7 +335,8 @@ test('enabling sync with 403 sets pending flag and redirects to Spotify auth', a
     });
 
     await page.goto('/');
-    await expect(page.locator('.stats')).toBeVisible();
+    // No albums seeded → hero; logged-in header user-pill has open-profile
+    await expect(page.locator('#auth-area [data-action="open-profile"]')).toBeVisible();
 
     let authUrl = null;
     const authRedirected = new Promise(resolve => {
@@ -344,7 +347,7 @@ test('enabling sync with 403 sets pending flag and redirects to Spotify auth', a
       });
     });
 
-    await page.click('[data-action="open-profile"]');
+    await page.click('#auth-area [data-action="open-profile"]');
     await page.click('[data-action="toggle-sync"]');
 
     await authRedirected;

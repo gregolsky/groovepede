@@ -59,7 +59,7 @@ test('adds album from Spotify URL without being logged in', async ({ page, conte
   await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 
   await openAddReveal(page);
   await page.fill('#url-input', SPOTIFY_URL);
@@ -78,7 +78,7 @@ test('Odesli 404 shows error and does not add card', async ({ page, context }) =
   await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 
   await openAddReveal(page);
   await page.fill('#url-input', SPOTIFY_URL);
@@ -96,7 +96,7 @@ test('Odesli 503 saves a pending card (retryable error)', async ({ page, context
   await stubLastfm(context);
 
   await page.goto('/');
-  await expect(page.locator('.stats')).toBeVisible();
+  await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 
   await openAddReveal(page);
   await page.fill('#url-input', SPOTIFY_URL);

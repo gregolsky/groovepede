@@ -452,11 +452,25 @@ body::after {
 .profile-connect-desc { font-size: 13px; color: #555; line-height: 1.6; margin-bottom: 12px; }
 .profile-connect-btn { display: inline-flex; }
 
-/* Empty-state connect nudge */
-.empty-connect { margin-top: 16px; }
-.empty-connect p { font-size: 12px; color: #444; display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
-.empty-connect-btn { display: inline-flex; height: 26px; padding: 0 10px; border-radius: 5px; font-size: 11px; align-items: center; gap: 4px; background: #1DB954; border: none; color: #000; font-weight: 600; font-family: inherit; cursor: pointer; }
-.empty-connect-btn:hover { background: #1ed760; }
+/* Logged-out auth area: icon button + connect button side by side */
+.auth-area-logged-out { display: flex; align-items: center; gap: 8px; }
+.profile-icon-btn { background: transparent; border: 1px solid #2a2a2a; border-radius: 8px; color: #555; cursor: pointer; padding: 6px 7px; display: flex; align-items: center; transition: border-color .15s, color .15s; }
+.profile-icon-btn:hover { border-color: #555; color: #ccc; }
+
+/* Landing hero add-reveal (centred in hero column) */
+.landing-add-open { max-width: 440px; margin: 0 auto 8px; width: 100%; }
+.landing-add-open .add-reveal { width: 100%; }
+.landing-add-open .add-error { margin-top: 6px; }
+
+/* Optional Spotify connect nudge in hero */
+.landing-optional { margin-top: 18px; font-size: 12px; color: #444; display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; line-height: 1.6; }
+.landing-connect-link { background: transparent; border: none; color: #555; font-size: 12px; font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 0; transition: color .15s; }
+.landing-connect-link:hover { color: #aaa; }
+
+/* Import backup link at bottom of hero */
+.landing-footer-links { text-align: center; margin-top: 32px; padding-bottom: 8px; }
+.landing-import-link { background: transparent; border: none; color: #333; font-size: 12px; font-family: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; padding: 0; transition: color .15s; }
+.landing-import-link:hover { color: #777; }
 
 /* Footer */
 .footer { text-align: center; font-size: 11px; color: #333; margin-top: 40px; padding-bottom: 8px; }

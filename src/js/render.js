@@ -111,7 +111,15 @@ export function pickListenUrl(album, prefService) {
 
 export function renderAuthArea(el, userProfile) {
   if (!hasSession()) {
-    el.innerHTML = `<button class="auth-btn auth-btn--small" data-action="login">${spotifyIcon(14, 14)} Connect Spotify</button>`;
+    el.innerHTML = `
+      <div class="auth-area-logged-out">
+        <button class="profile-icon-btn" data-action="open-profile" aria-label="Profile &amp; settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+          </svg>
+        </button>
+        <button class="auth-btn auth-btn--small" data-action="login">${spotifyIcon(14, 14)} Connect Spotify</button>
+      </div>`;
     return;
   }
   const img  = userProfile?.images?.[0]?.url;
@@ -122,6 +130,117 @@ export function renderAuthArea(el, userProfile) {
         ${img ? `<img class="user-avatar" src="${attr(img)}" alt="">` : spotifyIcon(20, 20)}
       </button>
       ${name ? `<span class="user-name">${name}</span>` : ''}
+    </div>`;
+}
+
+// ── Empty-state hero (shown when queue has 0 albums) ─────────────────────────
+
+function renderHero({ loadingAdd, addError, addOpen }) {
+  const addSection = addOpen ? `
+    <div class="landing-add-open">
+      <div class="add-reveal">
+        <input class="add-input" id="url-input" placeholder="Paste an album link from Spotify, Apple Music, YouTube…">
+        <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
+          ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
+        </button>
+      </div>
+      ${addError ? `<div class="add-error">${addError}</div>` : ''}
+    </div>` : `
+    <button class="auth-btn landing-cta" data-action="toggle-add">Paste a link</button>
+    <p class="landing-note">Spotify &middot; Apple Music &middot; YouTube Music &middot; Tidal &middot; Deezer &middot; and more</p>`;
+
+  const connectLink = !hasSession() ? `
+    <p class="landing-optional">
+      <button class="landing-connect-link" data-action="login">${spotifyIcon(12, 12)} Connect Spotify</button>
+      <span>to sync your queue across devices (optional)</span>
+    </p>` : '';
+
+  return `
+    <div class="landing">
+      <div class="landing-hero">
+        <img class="landing-logo" src="favicon.png" alt="Groovepede">
+        <h2 class="landing-headline">Never lose a great album<br>recommendation again.</h2>
+        <p class="landing-sub">Paste a link from any streaming service, explore by genre, and check albums off as you listen.</p>
+        ${addSection}
+        ${connectLink}
+      </div>
+
+      <div class="landing-features">
+        <div class="landing-feature">
+          <div class="landing-feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+              <polyline points="16 6 12 2 8 6"/>
+              <line x1="12" y1="2" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Save from anywhere</h3>
+            <p>Paste links from Spotify, Apple Music, YouTube Music, Tidal, Deezer, and more. Or share directly from your phone's music app.</p>
+          </div>
+        </div>
+        <div class="landing-feature">
+          <div class="landing-feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+              <line x1="7" y1="7" x2="7.01" y2="7"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Auto-tagged genres</h3>
+            <p>Every album is enriched with genre tags from Last.fm. Filter your queue by mood or style at a glance.</p>
+          </div>
+        </div>
+        <div class="landing-feature">
+          <div class="landing-feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Fully local</h3>
+            <p>Your queue lives in your browser's storage. Nothing is sent to our servers &mdash; because there are none.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="landing-steps">
+        <h3 class="landing-section-title">How it works</h3>
+        <ol class="landing-step-list">
+          <li><strong>Paste a link</strong> &mdash; Copy an album URL from any supported service and paste it in. Or share directly from your phone's music app.</li>
+          <li><strong>Pick your service</strong> &mdash; Set your preferred streaming service in the profile so the Listen button always opens in the right app.</li>
+          <li><strong>Listen &amp; done</strong> &mdash; When you're ready, tap Listen. Tap Done when finished to track your progress.</li>
+        </ol>
+      </div>
+
+      <div class="landing-faq">
+        <h3 class="landing-section-title">FAQ</h3>
+        <details class="faq-item">
+          <summary>Which services work?</summary>
+          <p>Spotify, Apple Music, YouTube Music, Tidal, Deezer, Amazon Music, Pandora, and SoundCloud. Paste any album link and Groovepede resolves cross-service links automatically via Odesli.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Is it free?</summary>
+          <p>Yes, completely. No subscription, no ads, no upsell.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Do I need to log in?</summary>
+          <p>No. Groovepede works without any account. Connecting Spotify is optional &mdash; it lets you sync your queue to a private Spotify playlist so it&rsquo;s backed up and accessible across devices.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Where is my queue stored?</summary>
+          <p>Entirely in your browser&rsquo;s <code>localStorage</code>. Nothing leaves your device. You can export a backup JSON from the profile at any time.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Does it work on mobile?</summary>
+          <p>Yes. Add it to your home screen (Safari on iOS or Chrome on Android) for a native-like experience. Android supports sharing albums directly from your music app; on iPhone you can paste links or use the share sheet.</p>
+        </details>
+      </div>
+
+      <p class="landing-footer-links">
+        <button class="landing-import-link" data-action="open-profile">Import a backup</button>
+      </p>
     </div>`;
 }
 
@@ -252,6 +371,12 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     return;
   }
 
+  // Empty queue → show the hero landing (background, features, FAQ)
+  if (albums.length === 0) {
+    el.innerHTML = renderHero({ loadingAdd, addError, addOpen });
+    return;
+  }
+
   const addedToday = albums.filter(a => (a.addedAt || '').slice(0, 10) === todayStr()).length;
 
   let html = `
@@ -316,17 +441,9 @@ function renderEmpty(activeFilter, searchQuery) {
   if (noTag) {
     return `<div class="empty">${icon}<div class="empty-title">No albums with this tag</div><div class="empty-body">Try a different filter.</div></div>`;
   }
-  const connectNudge = !hasSession() ? `
-    <div class="empty-connect">
-      <p>Want to sync across devices? <button class="empty-connect-btn" data-action="login">${spotifyIcon(12, 12)} Connect Spotify</button></p>
-    </div>` : '';
-  return `
-    <div class="empty">
-      ${icon}
-      <div class="empty-title">Nothing queued yet</div>
-      <div class="empty-body">Tap <strong>+ Add</strong> to paste a link from Spotify, Apple Music, YouTube, and more.</div>
-      ${connectNudge}
-    </div>`;
+  // "All" filter but no albums — shouldn't normally be reached now that albums.length===0
+  // goes to the hero; but guard just in case (e.g. pending records only / cleared mid-render)
+  return `<div class="empty">${icon}<div class="empty-title">Nothing here</div><div class="empty-body">Tap <strong>+ Add</strong> to paste a link.</div></div>`;
 }
 
 function renderPendingCard(album, visibleIdx) {
