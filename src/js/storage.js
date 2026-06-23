@@ -31,6 +31,14 @@ export function extractAlbumId(url) {
   return null;
 }
 
+// Bare Spotify album ID for Web API calls. album.id is now an Odesli
+// entityUniqueId (e.g. "SPOTIFY_ALBUM::<id>"), so it can't be passed to
+// /v1/albums/<id> directly — derive it from the resolved Spotify link.
+export function spotifyAlbumId(album) {
+  const url = album?.links?.spotify?.url;
+  return url ? extractAlbumId(url) : null;
+}
+
 export function serializeBackup(albums, done) {
   // Only persist user-owned data; all external metadata is pulled fresh on import.
   const lean = albums.map(a => ({ sourceUrl: a.sourceUrl, service: a.service, addedAt: a.addedAt }));
@@ -112,8 +120,14 @@ export function parseMusicLink(raw) {
     return { error: "Couldn’t find an album in that Spotify link" };
   }
 
-  // Apple Music
-  if (host === 'music.apple.com') return { url: s, service: 'apple' };
+  // Apple Music — album URLs are /album/…; a trailing ?i= makes it a single track
+  if (host === 'music.apple.com') {
+    if (/\/album\//.test(s) && /[?&]i=/.test(s)) return { error: "That’s a track — paste the album link instead" };
+    if (/\/album\//.test(s)) return { url: s, service: 'apple' };
+    if (/\/artist\//.test(s)) return { error: "That’s an artist link — paste an album link instead" };
+    if (/\/playlist\//.test(s)) return { error: "That’s a playlist — paste an album link instead" };
+    return { error: "Couldn’t find an album in that Apple Music link" };
+  }
 
   // YouTube / YouTube Music
   if (host === 'music.youtube.com' || host === 'youtube.com') {

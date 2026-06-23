@@ -4,8 +4,8 @@ import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, extractAlbumId, validateAlbumInput, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
-import { renderAuthArea, renderApp } from './render.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
+import { renderAuthArea, renderApp, escapeHtml } from './render.js';
 import * as sync from './sync.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -70,6 +70,14 @@ function rerender() {
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
+// Spotify track URIs aren't in Odesli's response; fetch the album's first
+// track from the Spotify API (when logged in) so playlist sync has a URI.
+async function attachFirstTrackUri(rec) {
+  if (!tokenValid()) return;
+  const spotifyId = spotifyAlbumId(rec);
+  if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
+}
+
 function setFilter(tag) {
   activeFilter = tag;
   rerender();
@@ -109,13 +117,7 @@ async function handleAdd() {
     // Success — dedup on resolved ID too (different URL, same album)
     const fresh = loadAlbums();
     if (!fresh.find(a => a.id === rec.id)) {
-      // Fetch firstTrackUri for Spotify sync support (Odesli doesn't return track URIs)
-      if (rec.links?.spotify && tokenValid()) {
-        const spotifyId = extractAlbumId(rec.links.spotify.url);
-        if (spotifyId) {
-          rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
-        }
-      }
+      await attachFirstTrackUri(rec);
       fresh.push(rec);
       saveAlbums(fresh);
       if (tokenValid()) sync.schedulePush();
@@ -211,14 +213,18 @@ async function openExplore(index) {
 
 async function prefetchExplore(album) {
   const { artist, artistId, id } = album;
+  const spotifyId    = spotifyAlbumId(album);
   const needsLastfm  = !artistCache[artist];
   const needsSpotify = artistId && artistCache[artist]?.image === undefined;
-  const needsTracks  = !trackCache[id];
+  const needsTracks  = spotifyId && !trackCache[id];
+  // No Spotify link → no Spotify tracklist to fetch; mark empty so the card
+  // shows no tracklist instead of a perpetual "Loading tracks…".
+  if (!spotifyId && trackCache[id] === undefined) trackCache[id] = [];
 
   const fetches = [];
   if (needsLastfm)  fetches.push(fetchLastfmArtist(artist).then(d => { artistCache[artist] = { ...artistCache[artist], ...d }; }));
   if (needsSpotify) fetches.push(fetchSpotifyArtist(artistId).then(d => { if (d) artistCache[artist] = { ...artistCache[artist], ...d }; }));
-  if (needsTracks)  fetches.push(fetchAlbumTracks(id).then(t => { trackCache[id] = t; }));
+  if (needsTracks)  fetches.push(fetchAlbumTracks(spotifyId).then(t => { trackCache[id] = t; }));
 
   if (fetches.length) {
     await Promise.all(fetches);
@@ -419,14 +425,14 @@ function showShareConfirmAndClose(meta, highlightId) {
   const el = document.createElement('div');
   el.id = 'share-confirm';
   el.innerHTML = `
-    <img src="${meta.cover}" alt="">
+    <img src="${escapeHtml(meta.cover || '')}" alt="">
     <svg class="share-check" viewBox="0 0 52 52" aria-hidden="true">
       <circle cx="26" cy="26" r="26"/>
       <path d="M14 27l8 8 16-16"/>
     </svg>
     <div class="share-confirm__text">
-      <p class="share-confirm__title">${meta.title}</p>
-      <p class="share-confirm__artist">${meta.artist}</p>
+      <p class="share-confirm__title">${escapeHtml(meta.title || '')}</p>
+      <p class="share-confirm__artist">${escapeHtml(meta.artist || '')}</p>
       <p class="share-confirm__label">Added to queue</p>
     </div>
   `;
@@ -467,11 +473,7 @@ async function resolvePending() {
   for (const stub of pending) {
     const rec = await resolveAlbum(stub.sourceUrl);
     if (!rec._error) {
-      // Fetch Spotify firstTrackUri for sync support
-      if (rec.links?.spotify && tokenValid()) {
-        const spotifyId = extractAlbumId(rec.links.spotify.url);
-        if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
-      }
+      await attachFirstTrackUri(rec);
 
       // Replace the pending stub in place, preserving original addedAt
       rec.addedAt = stub.addedAt;
@@ -552,11 +554,7 @@ async function boot() {
       } else {
         const rec = await resolveAlbum(url);
         if (!rec._error) {
-          // Fetch Spotify firstTrackUri for sync support
-          if (rec.links?.spotify && tokenValid()) {
-            const spotifyId = extractAlbumId(rec.links.spotify.url);
-            if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
-          }
+          await attachFirstTrackUri(rec);
           const fresh = loadAlbums();
           if (!fresh.find(a => a.id === rec.id)) {
             fresh.push(rec);
@@ -574,6 +572,10 @@ async function boot() {
           saveAlbums(fresh);
           highlightId = stub.id;
           addedMeta = null; // no cover/title for confirmation overlay
+        } else {
+          // Non-retryable (404 / 400) — surface the failure instead of dropping it silently
+          addError = 'Couldn’t find that album — double-check the link and try again.';
+          addOpen = true;
         }
       }
       window.history.replaceState({}, document.title, window.location.pathname);

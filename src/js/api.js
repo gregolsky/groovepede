@@ -51,7 +51,7 @@ export async function resolveAlbum(inputUrl) {
       tags:          [],
       addedAt:       new Date().toISOString(),
       links,
-      firstTrackUri: links.spotify ? null : null, // resolved later by sync.js if needed
+      firstTrackUri: null, // fetched lazily from Spotify (by add flow / sync.js) when a spotify link exists
     };
   } catch {
     return { _error: 'network' };
@@ -120,6 +120,7 @@ export async function fetchAlbumMeta(id) {
 // Fetch Last.fm tags in the background and update the saved album.
 // onUpdate() is called after storage is written so the caller can re-render.
 export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate) {
+  if (!artistName) return; // sparse Odesli entities can resolve with no artist
   const primaryArtist = artistName.split(',')[0].trim();
 
   // Fetch artist + album tags in parallel; artist tags take priority

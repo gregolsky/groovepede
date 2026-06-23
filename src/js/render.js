@@ -499,7 +499,7 @@ function renderCards(visible, albums, searchQuery, prefService) {
 
     const tagHtml = [
       album.year ? `<span class="tag year">${album.year}</span>` : '',
-      ...(album.tags || []).map(t => `<span class="tag genre" data-action="filter" data-tag="${attr(t)}">${t}</span>`),
+      ...(album.tags || []).map(t => `<span class="tag genre" data-action="filter" data-tag="${attr(t)}">${escapeHtml(t)}</span>`),
     ].filter(Boolean).join('');
 
     return `
@@ -559,7 +559,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService) {
       ? `<ol class="explore-tracklist">
           ${tracks.map(t => `
             <li class="explore-track">
-              <span class="explore-track-name">${t.name}</span>
+              <span class="explore-track-name">${escapeHtml(t.name)}</span>
               <span class="explore-track-dur">${fmtDuration(t.duration_ms)}</span>
             </li>`).join('')}
         </ol>`
@@ -581,7 +581,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService) {
       <div class="explore-album">
         ${album.cover ? `<img class="explore-album-cover" src="${attr(album.cover)}" alt="${attr(album.title || '')}">` : ''}
         <div class="explore-album-meta">
-          <h3 class="explore-album-title">${album.title || 'Unknown album'}</h3>
+          <h3 class="explore-album-title">${escapeHtml(album.title || 'Unknown album')}</h3>
           ${album.year ? `<span class="explore-album-year">${album.year}</span>` : ''}
         </div>
         <div class="explore-album-actions">
@@ -600,8 +600,8 @@ function renderExploreCard(album, cached, tracks, index, total, prefService) {
             ? `<img class="explore-artist-image" src="${attr(image)}" alt="${attr(album.artist)}">`
             : `<div class="explore-artist-image explore-artist-image--placeholder"></div>`}
           <div class="explore-artist-info">
-            <h2 class="explore-artist-name">${album.artist}</h2>
-            ${mergedTags.length ? `<div class="explore-tags">${mergedTags.map(t => `<span class="tag genre">${t}</span>`).join('')}</div>` : ''}
+            <h2 class="explore-artist-name">${escapeHtml(album.artist || '')}</h2>
+            ${mergedTags.length ? `<div class="explore-tags">${mergedTags.map(t => `<span class="tag genre">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
             <div class="explore-links">
               ${spotifyUrl ? `<a class="explore-link explore-link--spotify" href="${attr(spotifyUrl)}" target="_blank">${spotifyIcon(12, 12)} Follow on Spotify</a>` : ''}
               ${links}
@@ -612,7 +612,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService) {
         ${similar.length ? `
           <div class="explore-section-label">Similar artists</div>
           <div class="similar-list">
-            ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${a.name}</a>`).join('')}
+            ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${escapeHtml(a.name)}</a>`).join('')}
           </div>` : ''}
       </div>
 

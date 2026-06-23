@@ -1,5 +1,5 @@
 import { SYNC_ENABLED_KEY, SYNC_PLAYLIST_KEY, SYNC_LAST_KEY, SYNC_PENDING_KEY, SYNC_SCOPES } from './config.js';
-import { loadAlbums, saveAlbums } from './storage.js';
+import { loadAlbums, saveAlbums, spotifyAlbumId } from './storage.js';
 import { spotifyGet, spotifyPost, spotifyPut, fetchAlbumFirstTrack, enrichWithLastfm } from './api.js';
 import { login } from './auth.js';
 
@@ -132,9 +132,9 @@ export async function pushNow() {
 
   // Lazy backfill firstTrackUri for pre-sync albums (parallel)
   const albums  = loadAlbums();
-  const missing = albums.filter(a => !a.firstTrackUri);
+  const missing = albums.filter(a => !a.firstTrackUri && spotifyAlbumId(a));
   if (missing.length) {
-    const uris = await Promise.all(missing.map(a => fetchAlbumFirstTrack(a.id)));
+    const uris = await Promise.all(missing.map(a => fetchAlbumFirstTrack(spotifyAlbumId(a))));
     let changed = false;
     missing.forEach((album, i) => { if (uris[i]) { album.firstTrackUri = uris[i]; changed = true; } });
     if (changed) saveAlbums(albums);
