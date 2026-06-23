@@ -141,6 +141,27 @@ test('Import a backup link in hero opens the profile overlay', async ({ page, co
 
 test('importing a JSON backup from the hero populates the queue', async ({ page, context }) => {
   await stubLastfm(context);
+  // Stub Odesli so resolvePending can resolve the imported pending stub
+  const importEntityId = 'SPOTIFY_ALBUM::imported1xxxxxxxxxxxx';
+  await context.route('https://api.song.link/**', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        entityUniqueId: importEntityId,
+        userCountry: 'US',
+        entitiesByUniqueId: {
+          [importEntityId]: { id: 'imported1xxxxxxxxxxxx', type: 'album', title: 'Imported Album',
+            artistName: 'Imported Artist', thumbnailUrl: 'https://img/cover',
+            apiProvider: 'spotify', platforms: ['spotify'] },
+        },
+        linksByPlatform: {
+          spotify: { url: 'https://open.spotify.com/album/imported1',
+            nativeAppUriMobile: 'spotify:album:imported1', entityUniqueId: importEntityId },
+        },
+      }),
+    })
+  );
   const backup = {
     version: 2,
     exportedAt: new Date().toISOString(),
@@ -173,10 +194,7 @@ test('importing a JSON backup from the hero populates the queue', async ({ page,
     buffer: Buffer.from(JSON.stringify(backup)),
   });
 
-  // Close profile to return to the main app view
-  await page.click('[data-action="close-profile"]');
-
-  // Queue populated, hero gone
+  // Profile auto-closes after import; wait for queue to populate
   await expect(page.locator('.card-title')).toContainText('Imported Album', { timeout: 5000 });
   await expect(page.locator('.landing')).not.toBeAttached();
 });

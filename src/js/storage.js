@@ -1,4 +1,5 @@
 import { STORAGE_KEY, DONE_KEY, PREF_SERVICE_KEY } from './config.js';
+import { findServiceByHost } from './services.js';
 
 export function upgradeAlbumRecord(rec) {
   if (rec.links) return rec; // already migrated
@@ -77,8 +78,6 @@ export function setPreferredService(s) {
   localStorage.setItem(PREF_SERVICE_KEY, s);
 }
 
-const SUPPORTED_SERVICES = new Set(['spotify', 'apple', 'youtube', 'deezer', 'tidal', 'amazon', 'pandora', 'soundcloud']);
-
 export function parseMusicLink(raw) {
   const s = (raw || '').trim();
   if (!s) return { error: null };
@@ -88,11 +87,11 @@ export function parseMusicLink(raw) {
   if (spotifyUri) return { url: `https://open.spotify.com/album/${spotifyUri[1]}`, service: 'spotify' };
 
   // Spotify non-album URIs
-  if (/^spotify:artist:/.test(s)) return { error: "That’s an artist link — paste an album link instead" };
-  if (/^spotify:track:/.test(s))  return { error: "That’s a track link — paste the album link instead" };
-  if (/^spotify:playlist:/.test(s)) return { error: "That’s a playlist — paste an album link instead" };
+  if (/^spotify:artist:/.test(s))              return { error: "That's an artist link — paste an album link instead" };
+  if (/^spotify:track:/.test(s))               return { error: "That's a track link — paste the album link instead" };
+  if (/^spotify:playlist:/.test(s))            return { error: "That's a playlist — paste an album link instead" };
   if (/^spotify:(show|episode|user):/.test(s)) return { error: "Paste a Spotify album link or URI" };
-  if (/^spotify:/.test(s)) return { error: "Couldn’t find an album in that Spotify link" };
+  if (/^spotify:/.test(s))                     return { error: "Couldn't find an album in that Spotify link" };
 
   // Bare 22-char Spotify album ID
   if (/^[a-zA-Z0-9]{22}$/.test(s)) return { url: `https://open.spotify.com/album/${s}`, service: 'spotify' };
@@ -104,55 +103,20 @@ export function parseMusicLink(raw) {
   try { host = new URL(s).hostname.replace(/^www\./, ''); }
   catch { return { error: 'Paste an album link from a supported music service' }; }
 
-  // Blocked sources
+  // Blocked sources (not in the service registry)
   if (host.includes('bandcamp.com'))
-    return { error: "Bandcamp isn’t supported yet — paste a link from Spotify, Apple Music, YouTube, Tidal, or Deezer" };
+    return { error: "Bandcamp isn't supported yet — paste a link from Spotify, Apple Music, YouTube, Tidal, or Deezer" };
   if (host.includes('discogs.com'))
-    return { error: "Discogs isn’t supported yet — paste a link from Spotify, Apple Music, YouTube, Tidal, or Deezer" };
-
-  // Spotify
-  if (host === 'open.spotify.com') {
-    if (/\/album\//.test(s))   return { url: s, service: 'spotify' };
-    if (/\/artist\//.test(s))  return { error: "That’s an artist link — paste an album link instead" };
-    if (/\/track\//.test(s))   return { error: "That’s a track link — paste the album link instead" };
-    if (/\/playlist\//.test(s)) return { error: "That’s a playlist — paste an album link instead" };
-    if (/\/(show|episode)\//.test(s)) return { error: "That’s a podcast — paste an album link instead" };
-    return { error: "Couldn’t find an album in that Spotify link" };
-  }
-
-  // Apple Music — album URLs are /album/…; a trailing ?i= makes it a single track
-  if (host === 'music.apple.com') {
-    if (/\/album\//.test(s) && /[?&]i=/.test(s)) return { error: "That’s a track — paste the album link instead" };
-    if (/\/album\//.test(s)) return { url: s, service: 'apple' };
-    if (/\/artist\//.test(s)) return { error: "That’s an artist link — paste an album link instead" };
-    if (/\/playlist\//.test(s)) return { error: "That’s a playlist — paste an album link instead" };
-    return { error: "Couldn’t find an album in that Apple Music link" };
-  }
-
-  // YouTube / YouTube Music
-  if (host === 'music.youtube.com' || host === 'youtube.com') {
-    if (/[?&]list=/.test(s)) return { url: s, service: 'youtube' };
-    if (/\/watch/.test(s))   return { error: "That’s a track — paste a YouTube playlist link for an album" };
-    return { url: s, service: 'youtube' };
-  }
+    return { error: "Discogs isn't supported yet — paste a link from Spotify, Apple Music, YouTube, Tidal, or Deezer" };
   if (host === 'youtu.be')
-    return { error: "That’s a track — paste a YouTube playlist link for an album" };
+    return { error: "That's a track — paste a YouTube playlist link for an album" };
 
-  // Deezer
-  if (host === 'deezer.com' && /\/album\//.test(s)) return { url: s, service: 'deezer' };
-
-  // Tidal
-  if ((host === 'tidal.com' || host === 'listen.tidal.com') && /\/album\//.test(s))
-    return { url: s, service: 'tidal' };
-
-  // Amazon Music
-  if (host === 'music.amazon.com' && /\/albums\//.test(s)) return { url: s, service: 'amazon' };
-
-  // Pandora
-  if (host === 'pandora.com' && /\/album\//.test(s)) return { url: s, service: 'pandora' };
-
-  // SoundCloud sets (albums)
-  if (host === 'soundcloud.com' && /\/sets\//.test(s)) return { url: s, service: 'soundcloud' };
+  // Registry lookup — covers all supported services
+  const svc = findServiceByHost(host);
+  if (svc) {
+    if (svc.albumMatch(s)) return { url: s, service: svc.slug };
+    return { error: svc.nonAlbumError(s) || 'Paste an album link from a supported service (Spotify, Apple Music, YouTube, Tidal, or Deezer)' };
+  }
 
   return { error: 'Paste an album link from a supported service (Spotify, Apple Music, YouTube, Tidal, or Deezer)' };
 }
@@ -178,27 +142,4 @@ export function isRetryableResolveError(err) {
   if (err === 429) return true;
   if (typeof err === 'number' && err >= 500) return true;
   return false;
-}
-
-export function validateAlbumInput(raw) {
-  const s = (raw || '').trim();
-  if (!s) return { id: null, error: null };
-
-  const id = extractAlbumId(s);
-  if (id) return { id, error: null };
-
-  if (/spotify\.com\/artist\/|^spotify:artist:/.test(s))
-    return { id: null, error: "That\u2019s an artist link \u2014 paste an album link instead" };
-  if (/spotify\.com\/track\/|^spotify:track:/.test(s))
-    return { id: null, error: "That\u2019s a track link \u2014 paste the album link instead" };
-  if (/spotify\.com\/playlist\/|^spotify:playlist:/.test(s))
-    return { id: null, error: "That\u2019s a playlist \u2014 paste an album link instead" };
-  if (/spotify\.com\/(show|episode)\/|^spotify:(show|episode):/.test(s))
-    return { id: null, error: "That\u2019s a podcast \u2014 paste an album link instead" };
-  if (/spotify\.com\//.test(s))
-    return { id: null, error: "Couldn\u2019t find an album in that Spotify link" };
-  if (/^https?:\/\//.test(s))
-    return { id: null, error: "That doesn\u2019t look like a Spotify link" };
-
-  return { id: null, error: "Paste a Spotify album link or URI" };
 }

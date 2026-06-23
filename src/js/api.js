@@ -1,23 +1,11 @@
 import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY } from './config.js';
 import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums } from './storage.js';
+import { ODESLI_KEY_MAP } from './services.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
 
 // ── Odesli (universal resolver) ───────────────────────────────────────────────
-
-// Odesli linksByPlatform key → our internal slug
-const ODESLI_KEY_MAP = {
-  spotify:      'spotify',
-  appleMusic:   'apple',
-  youtube:      'youtube',
-  youtubeMusic: 'youtube',
-  deezer:       'deezer',
-  tidal:        'tidal',
-  amazonMusic:  'amazon',
-  pandora:      'pandora',
-  soundcloud:   'soundcloud',
-};
 
 export async function resolveAlbum(inputUrl) {
   try {
