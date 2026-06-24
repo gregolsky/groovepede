@@ -49,12 +49,11 @@ test('empty queue shows hero with bg.jpg landing, not a login wall', async ({ pa
   // App is NOT blocked — add CTA is available without login
   await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 
-  // Spotify connect is secondary, not the primary CTA
-  // (primary is toggle-add, not a hard login wall)
-  await expect(page.locator('.landing [data-action="login"]')).toBeVisible();
+  // Primary CTA is the add button, not a login wall
   await expect(page.locator('.landing-cta')).toBeVisible();
-  // landing-cta is the add button, not login
   await expect(page.locator('.landing-cta[data-action="toggle-add"]')).toBeVisible();
+  // Spotify connect is NOT shown in the landing (it lives in preferences only)
+  await expect(page.locator('.landing [data-action="login"]')).toHaveCount(0);
 });
 
 test('hero collapses to populated app once an album is added', async ({ page, context }) => {
@@ -129,12 +128,12 @@ test('logged-out user can open profile from hero and access Import', async ({ pa
   await expect(page.locator('[data-action="export-data"]')).toBeVisible();
 });
 
-test('Import a backup link in hero opens the profile overlay', async ({ page, context }) => {
+test('Profile icon in header opens the profile overlay with import option', async ({ page, context }) => {
   await stubLastfm(context);
   await page.goto('/');
-  await expect(page.locator('.landing-import-link')).toBeVisible();
+  await expect(page.locator('.landing')).toBeVisible();
 
-  await page.click('.landing-import-link');
+  await page.click('[data-action="open-profile"]');
   await expect(page.locator('.profile')).toBeVisible();
   await expect(page.locator('[data-action="import-data"]')).toBeVisible();
 });
@@ -380,4 +379,64 @@ test('resolution resumes when user returns to tab (visibilitychange)', async ({ 
 
   // Resolution completes via MB fallback
   await expect(page.locator('.card-title')).toContainText('Resumed Album', { timeout: 8000 });
+});
+
+// ── Desktop layout smoke tests ────────────────────────────────────────────────
+
+test('desktop viewport renders hero with 2-col layout and 3 feature cards', async ({ page, context }) => {
+  await stubLastfm(context);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+
+  await expect(page.locator('.landing')).toBeVisible();
+  await expect(page.locator('.landing-headline')).toContainText('Never lose a great album');
+  await expect(page.locator('.landing-feature')).toHaveCount(3);
+  await expect(page.locator('.landing-hero-text')).toBeVisible();
+  await expect(page.locator('.landing-hero-visual')).toBeVisible();
+  await expect(page.locator('.landing-timeline')).toBeVisible();
+  await expect(page.locator('.landing-timeline-step')).toHaveCount(3);
+});
+
+test('FAQ is not inline in the hero anymore', async ({ page, context }) => {
+  await stubLastfm(context);
+  await page.goto('/');
+
+  await expect(page.locator('.landing')).toBeVisible();
+  await expect(page.locator('.landing .faq-item')).toHaveCount(0);
+});
+
+test('FAQ link in hero navigates to faq.html', async ({ page, context }) => {
+  await stubLastfm(context);
+  await page.goto('/');
+
+  await expect(page.locator('.landing-hero-faq-link')).toHaveAttribute('href', 'faq.html');
+});
+
+test('FAQ link in footer navigates to faq.html', async ({ page, context }) => {
+  await stubLastfm(context);
+  await page.goto('/');
+
+  const faqLinks = page.locator('.footer a[href="faq.html"]');
+  await expect(faqLinks).toHaveCount(1);
+});
+
+// ── FAQ subpage ───────────────────────────────────────────────────────────────
+
+test('faq.html loads with on-brand styles and accordion items', async ({ page }) => {
+  await page.goto('/faq.html');
+
+  // Title present
+  await expect(page.locator('.faq-page-title')).toContainText('Frequently asked questions');
+
+  // Five FAQ items
+  await expect(page.locator('.faq-item')).toHaveCount(5);
+
+  // Back-to-home link in header
+  const backLink = page.locator('.header-right a[href="/"]');
+  await expect(backLink).toBeVisible();
+  await expect(backLink).toContainText('Back');
+
+  // Accordions are interactive — open the first one
+  await page.locator('.faq-item:first-of-type summary').click();
+  await expect(page.locator('.faq-item:first-of-type')).toHaveAttribute('open', '');
 });

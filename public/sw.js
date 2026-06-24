@@ -1,7 +1,8 @@
-const CACHE = 'groovepede-v16';
+const CACHE = 'groovepede-v17';
 const ASSETS = [
   '/',
   '/index.html',
+  '/faq.html',
   '/manifest.json',
   '/favicon.png',
 ];

@@ -8,5 +8,11 @@ export default defineConfig(() => ({
   build: {
     outDir: resolve(import.meta.dirname, 'dist'),
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, 'src/index.html'),
+        faq:  resolve(import.meta.dirname, 'src/faq.html'),
+      },
+    },
   },
 }));

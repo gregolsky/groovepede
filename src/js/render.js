@@ -167,59 +167,66 @@ function renderHero({ loadingAdd, addError, addOpen }) {
     </button>
     <p class="landing-note">Spotify &middot; Apple Music &middot; YouTube Music &middot; Tidal &middot; Deezer &middot; and more</p>`;
 
-  const connectLink = !hasSession() ? `
-    <p class="landing-optional">
-      <button class="landing-connect-link" data-action="login">${spotifyIcon(12, 12)} Connect Spotify</button>
-      <span>to sync your queue across devices (optional)</span>
-    </p>` : '';
-
   return `
     <div class="landing">
       <div class="landing-hero">
-        <div class="landing-logo-wrap">
-          <div class="landing-logo-rings"></div>
-          <img class="landing-logo" src="favicon.png" alt="Groovepede">
+        <div class="landing-hero-text">
+          <h2 class="landing-headline">Never lose a great album<br>recommendation again.</h2>
+          <p class="landing-sub">Paste a link from any streaming service, explore by genre, and check albums off as you listen.</p>
+          ${addSection}
+          <p class="landing-hero-faq"><a href="faq.html" class="landing-hero-faq-link">Frequently asked questions →</a></p>
         </div>
-        <h2 class="landing-headline">Never lose a great album<br>recommendation again.</h2>
-        <p class="landing-sub">Paste a link from any streaming service, explore by genre, and check albums off as you listen.</p>
-        ${addSection}
-        ${connectLink}
+        <div class="landing-hero-visual">
+          <div class="landing-logo-wrap">
+            <div class="landing-logo-rings"></div>
+            <img class="landing-logo" src="favicon.png" alt="Groovepede">
+          </div>
+        </div>
       </div>
 
       <div class="landing-features">
         <div class="landing-feature">
-          <div class="landing-feature-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
-              <polyline points="16 6 12 2 8 6"/>
-              <line x1="12" y1="2" x2="12" y2="15"/>
-            </svg>
+          <div class="landing-feature-img-wrap">
+            <img class="landing-feature-img" src="img/feature-save.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <div class="landing-feature-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                <polyline points="16 6 12 2 8 6"/>
+                <line x1="12" y1="2" x2="12" y2="15"/>
+              </svg>
+            </div>
           </div>
-          <div>
+          <div class="landing-feature-body">
             <h3>Save from anywhere</h3>
             <p>Paste links from Spotify, Apple Music, YouTube Music, Tidal, Deezer, and more. Or share directly from your phone's music app.</p>
           </div>
         </div>
         <div class="landing-feature">
-          <div class="landing-feature-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-              <line x1="7" y1="7" x2="7.01" y2="7"/>
-            </svg>
+          <div class="landing-feature-img-wrap">
+            <img class="landing-feature-img" src="img/feature-genres.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <div class="landing-feature-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                <line x1="7" y1="7" x2="7.01" y2="7"/>
+              </svg>
+            </div>
           </div>
-          <div>
+          <div class="landing-feature-body">
             <h3>Auto-tagged genres</h3>
             <p>Every album is enriched with genre tags from Last.fm. Filter your queue by mood or style at a glance.</p>
           </div>
         </div>
         <div class="landing-feature">
-          <div class="landing-feature-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
+          <div class="landing-feature-img-wrap">
+            <img class="landing-feature-img" src="img/feature-local.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <div class="landing-feature-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </div>
           </div>
-          <div>
+          <div class="landing-feature-body">
             <h3>Fully local</h3>
             <p>Your queue lives in your browser's storage. Nothing is sent to our servers &mdash; because there are none.</p>
           </div>
@@ -228,40 +235,28 @@ function renderHero({ loadingAdd, addError, addOpen }) {
 
       <div class="landing-steps">
         <h3 class="landing-section-title">How it works</h3>
-        <ol class="landing-step-list">
-          <li><strong>Paste a link</strong> &mdash; Copy an album URL from any supported service and paste it in. Or share directly from your phone's music app.</li>
-          <li><strong>Pick your service</strong> &mdash; Set your preferred streaming service in the profile so the Listen button always opens in the right app.</li>
-          <li><strong>Listen &amp; done</strong> &mdash; When you're ready, tap Listen. Tap Done when finished to track your progress.</li>
-        </ol>
+        <div class="landing-timeline">
+          <div class="landing-timeline-step">
+            <div class="landing-timeline-num">1</div>
+            <img class="landing-timeline-img" src="img/step-paste.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <strong class="landing-timeline-title">Paste a link</strong>
+            <p class="landing-timeline-caption">Copy an album URL from any supported service and paste it in. Or share directly from your phone's music app.</p>
+          </div>
+          <div class="landing-timeline-step">
+            <div class="landing-timeline-num">2</div>
+            <img class="landing-timeline-img" src="img/step-service.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <strong class="landing-timeline-title">Pick your service</strong>
+            <p class="landing-timeline-caption">Set your preferred streaming service in the profile so the Listen button always opens in the right app.</p>
+          </div>
+          <div class="landing-timeline-step">
+            <div class="landing-timeline-num">3</div>
+            <img class="landing-timeline-img" src="img/step-listen.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <strong class="landing-timeline-title">Listen. Done. Repeat.</strong>
+            <p class="landing-timeline-caption">When you're ready, tap Listen. Tap Done when finished to track your progress.</p>
+          </div>
+        </div>
       </div>
 
-      <div class="landing-faq">
-        <h3 class="landing-section-title">FAQ</h3>
-        <details class="faq-item">
-          <summary>Which services work?</summary>
-          <p>Spotify, Apple Music, YouTube Music, Tidal, Deezer, Amazon Music, Pandora, and SoundCloud. Paste any album link and Groovepede resolves cross-service links automatically via Odesli.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Is it free?</summary>
-          <p>Yes, completely. No subscription, no ads, no upsell.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Do I need to log in?</summary>
-          <p>No. Groovepede works without any account. Connecting Spotify is optional &mdash; it lets you sync your queue to a private Spotify playlist so it&rsquo;s backed up and accessible across devices.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Where is my queue stored?</summary>
-          <p>Entirely in your browser&rsquo;s <code>localStorage</code>. Nothing leaves your device. You can export a backup JSON from the profile at any time.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Does it work on mobile?</summary>
-          <p>Yes. Add it to your home screen (Safari on iOS or Chrome on Android) for a native-like experience. Android supports sharing albums directly from your music app; on iPhone you can paste links or use the share sheet.</p>
-        </details>
-      </div>
-
-      <p class="landing-footer-links">
-        <button class="landing-import-link" data-action="open-profile">Import a backup</button>
-      </p>
     </div>`;
 }
 

@@ -74,6 +74,10 @@ export function parseBackup(text) {
 export function getPreferredService() {
   return localStorage.getItem(PREF_SERVICE_KEY) || 'spotify';
 }
+/** True when the user has explicitly chosen a preferred service (not just the default). */
+export function hasExplicitPreferredService() {
+  return !!localStorage.getItem(PREF_SERVICE_KEY);
+}
 export function setPreferredService(s) {
   localStorage.setItem(PREF_SERVICE_KEY, s);
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles } from './api.js';
+import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, spotifyAlbumMatches, searchSpotifyAlbum } from './api.js';
 
 // ── throttle helpers ──────────────────────────────────────────────────────────
 
@@ -309,5 +309,148 @@ describe('resolveAlbumResilient', () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // MB fails
     const rec = await resolveAlbumResilient('https://url');
     expect(rec._error).toBe(429); // cooling = effectively 429
+  });
+});
+
+// ── normalizeAlbumStr ─────────────────────────────────────────────────────────
+
+describe('normalizeAlbumStr', () => {
+  it('lowercases and strips punctuation', () => {
+    expect(normalizeAlbumStr('OK Computer')).toBe('ok computer');
+  });
+
+  it('strips diacritics', () => {
+    expect(normalizeAlbumStr('Björk')).toBe('bjork');
+  });
+
+  it('removes (Deluxe Edition) suffix', () => {
+    expect(normalizeAlbumStr('Dopethrone (Deluxe Edition)')).toBe('dopethrone');
+  });
+
+  it('removes (Remastered) suffix', () => {
+    expect(normalizeAlbumStr('Dark Side of the Moon (Remastered)')).toBe('dark side of the moon');
+  });
+
+  it('removes trailing - Remastered', () => {
+    expect(normalizeAlbumStr('Nevermind - Remastered')).toBe('nevermind');
+  });
+
+  it('returns empty string for null/undefined', () => {
+    expect(normalizeAlbumStr(null)).toBe('');
+    expect(normalizeAlbumStr(undefined)).toBe('');
+  });
+});
+
+// ── spotifyAlbumMatches ───────────────────────────────────────────────────────
+
+describe('spotifyAlbumMatches', () => {
+  const makeItem = (name, artists) => ({ name, artists: artists.map(a => ({ name: a })) });
+
+  it('returns true for exact artist + title match', () => {
+    expect(spotifyAlbumMatches(
+      makeItem('Dopethrone', ['Electric Wizard']),
+      'Electric Wizard', 'Dopethrone',
+    )).toBe(true);
+  });
+
+  it('returns true when album has edition noise but core title matches', () => {
+    expect(spotifyAlbumMatches(
+      makeItem('Dopethrone (Deluxe Edition)', ['Electric Wizard']),
+      'Electric Wizard', 'Dopethrone',
+    )).toBe(true);
+  });
+
+  it('returns true when resolved title has edition noise', () => {
+    expect(spotifyAlbumMatches(
+      makeItem('Dopethrone', ['Electric Wizard']),
+      'Electric Wizard', 'Dopethrone (Remastered)',
+    )).toBe(true);
+  });
+
+  it('returns false when titles differ', () => {
+    expect(spotifyAlbumMatches(
+      makeItem('Come My Fanatics', ['Electric Wizard']),
+      'Electric Wizard', 'Dopethrone',
+    )).toBe(false);
+  });
+
+  it('returns false when artist does not match', () => {
+    expect(spotifyAlbumMatches(
+      makeItem('Dopethrone', ['Sleep']),
+      'Electric Wizard', 'Dopethrone',
+    )).toBe(false);
+  });
+
+  it('returns true for artist partial-overlap (e.g. feat. credits)', () => {
+    expect(spotifyAlbumMatches(
+      makeItem('OK Computer', ['Radiohead']),
+      'Radiohead', 'OK Computer',
+    )).toBe(true);
+  });
+});
+
+// ── searchSpotifyAlbum ────────────────────────────────────────────────────────
+
+describe('searchSpotifyAlbum', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    resetThrottles();
+    // Stub localStorage so getToken() doesn't throw in the test environment
+    globalThis.localStorage = { getItem: () => 'fake-token', setItem: () => {}, removeItem: () => {} };
+  });
+
+  const SEARCH_RESPONSE = {
+    albums: {
+      items: [{
+        name: 'Dopethrone',
+        uri: 'spotify:album:1AxwLCMtx8rnIxkFQKU2LO',
+        external_urls: { spotify: 'https://open.spotify.com/album/1AxwLCMtx8rnIxkFQKU2LO' },
+        artists: [{ name: 'Electric Wizard' }],
+      }],
+    },
+  };
+
+  it('returns url + nativeUri when search finds a confident match', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => SEARCH_RESPONSE,
+      headers: { get: () => null },
+    });
+    const result = await searchSpotifyAlbum('Electric Wizard', 'Dopethrone');
+    expect(result).toEqual({
+      url: 'https://open.spotify.com/album/1AxwLCMtx8rnIxkFQKU2LO',
+      nativeUri: 'spotify:album:1AxwLCMtx8rnIxkFQKU2LO',
+    });
+  });
+
+  it('returns null when no items match', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => ({ albums: { items: [] } }),
+      headers: { get: () => null },
+    });
+    const result = await searchSpotifyAlbum('Electric Wizard', 'Dopethrone');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when items present but none match the title', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => ({ albums: { items: [{ name: 'Come My Fanatics', uri: 'spotify:album:xyz', external_urls: { spotify: 'https://...' }, artists: [{ name: 'Electric Wizard' }] }] } }),
+      headers: { get: () => null },
+    });
+    const result = await searchSpotifyAlbum('Electric Wizard', 'Dopethrone');
+    expect(result).toBeNull();
+  });
+
+  it('returns null on fetch error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 401, headers: { get: () => null } });
+    const result = await searchSpotifyAlbum('Electric Wizard', 'Dopethrone');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when artist or title is missing', async () => {
+    expect(await searchSpotifyAlbum('', 'Dopethrone')).toBeNull();
+    expect(await searchSpotifyAlbum('Electric Wizard', '')).toBeNull();
   });
 });

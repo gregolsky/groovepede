@@ -320,6 +320,66 @@ async function fetchTagsFromSimilarArtists(artist) {
     .map(([name]) => name);
 }
 
+// ── Spotify album search (fills gaps from Odesli asymmetric matching) ─────────
+
+/**
+ * Normalise an album/artist string for fuzzy matching:
+ * - Unicode NFKD + strip combining diacritics
+ * - Drop common edition/parenthetical noise
+ * - Strip all non-alphanumeric, collapse whitespace, lowercase
+ */
+export function normalizeAlbumStr(s) {
+  if (!s) return '';
+  return s
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s*[-–—:]\s*(single|ep|album|remaster(?:ed)?|deluxe(?:\s+edition)?|expanded(?:\s+edition)?|bonus\s+tracks?|anniversary\s+edition|special\s+edition)\s*$/i, '')
+    .replace(/\s*\((?:deluxe|remaster(?:ed)?|expanded|bonus\s+tracks?|anniversary|special|edition|version)[^)]*\)/gi, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Returns true when a Spotify search result item is a confident match for the
+ * resolved artist + title.
+ * @param {{ name: string, artists: Array<{name:string}> }} item  Spotify search result
+ * @param {string} artist  Resolved artist name
+ * @param {string} title   Resolved album title
+ */
+export function spotifyAlbumMatches(item, artist, title) {
+  const normTitle = normalizeAlbumStr(title);
+  const normItem  = normalizeAlbumStr(item.name);
+  if (!normTitle || normTitle !== normItem) return false;
+
+  const normArtist = normalizeAlbumStr(artist);
+  return (item.artists || []).some(a => {
+    const na = normalizeAlbumStr(a.name);
+    return na === normArtist || na.includes(normArtist) || normArtist.includes(na);
+  });
+}
+
+/**
+ * Search Spotify for an album by artist + title and return a
+ * `{ url, nativeUri }` entry (suitable for `links.spotify`) when a confident
+ * match is found, or null otherwise.
+ * Only callable when a Spotify token is valid (caller is responsible).
+ */
+export async function searchSpotifyAlbum(artist, title) {
+  if (!artist || !title) return null;
+  const q = `album:${title} artist:${artist}`;
+  const data = await spotifyGet('/search?type=album&limit=5&q=' + encodeURIComponent(q));
+  if (!data || data._error) return null;
+  const items = data.albums?.items || [];
+  const match = items.find(item => spotifyAlbumMatches(item, artist, title));
+  if (!match) return null;
+  return {
+    url:       match.external_urls?.spotify || null,
+    nativeUri: match.uri || null,
+  };
+}
+
 export async function fetchAlbumTracks(albumId) {
   const data = await spotifyGet('/albums/' + albumId);
   if (!data?.tracks?.items) return [];

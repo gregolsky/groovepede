@@ -3,8 +3,8 @@ import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
+import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
 import { renderAuthArea, renderApp, escapeHtml } from './render.js';
 import * as sync from './sync.js';
 
@@ -71,8 +71,15 @@ function rerender() {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 // Spotify track URIs aren't in Odesli's response; fetch the album's first
 // track from the Spotify API (when logged in) so playlist sync has a URI.
+// Also recovers a missing links.spotify entry via search when Odesli's
+// cross-service matching had a gap (e.g. Deezer → Spotify asymmetry).
 async function attachFirstTrackUri(rec) {
   if (!tokenValid()) return;
+  // Fill in missing Spotify link via search fallback
+  if (!rec.links?.spotify && rec.artist && rec.title) {
+    const found = await searchSpotifyAlbum(rec.artist, rec.title);
+    if (found) (rec.links ??= {}).spotify = found;
+  }
   const spotifyId = spotifyAlbumId(rec);
   if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
 }
@@ -113,6 +120,9 @@ async function handleAdd() {
   const rec = await resolveAlbum(url);
 
   if (!rec._error) {
+    // Auto-set preferred service from the first link pasted (if never explicitly chosen)
+    if (service && !hasExplicitPreferredService()) setPreferredService(service);
+
     // Success — dedup on resolved ID too (different URL, same album)
     const fresh = loadAlbums();
     if (!fresh.find(a => a.id === rec.id)) {
