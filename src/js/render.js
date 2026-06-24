@@ -395,7 +395,7 @@ function renderImportSummaryModal({ added, failed }) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary }) {
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary, refreshingId }) {
   const albums  = loadAlbums();
   let visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
   const q = searchQuery?.trim().toLowerCase();
@@ -410,7 +410,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     const album  = visible[exploreIndex];
     const cached = album ? artistCache[album.artist] : null;
     const tracks = album ? (trackCache[album.id] || null) : null;
-    el.innerHTML = renderExploreCard(album, cached, tracks, exploreIndex, visible.length, prefService);
+    el.innerHTML = renderExploreCard(album, cached, tracks, exploreIndex, visible.length, prefService, refreshingId);
     return;
   }
 
@@ -574,7 +574,7 @@ function renderCards(visible, albums, searchQuery, prefService) {
 
 // ── Explore card ──────────────────────────────────────────────────────────────
 
-function renderExploreCard(album, cached, tracks, index, total, prefService) {
+function renderExploreCard(album, cached, tracks, index, total, prefService, refreshingId = null) {
   const hasPrev = index > 0;
   const hasNext = index < total - 1;
   const loading = !cached;
@@ -650,6 +650,13 @@ function renderExploreCard(album, cached, tracks, index, total, prefService) {
           <div class="similar-list">
             ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${escapeHtml(a.name)}</a>`).join('')}
           </div>` : ''}
+      </div>
+
+      <div class="explore-footer">
+        <button class="explore-refresh" data-action="refresh" data-index="${index}"
+            ${refreshingId === album.id ? 'disabled' : ''}>
+          ↻ ${refreshingId === album.id ? 'Refreshing…' : 'Refresh details'}
+        </button>
       </div>
 
       `}

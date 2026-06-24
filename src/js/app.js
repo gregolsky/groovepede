@@ -4,7 +4,7 @@ import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, escapeHtml } from './render.js';
 import * as sync from './sync.js';
 
@@ -23,6 +23,7 @@ let tagsExpanded   = false;
 let addOpen        = false;
 let importProgress = null;  // { done, total, retrying } while resolving, or null
 let importSummary  = null;  // { added, failed[] } shown as modal after a user-triggered import
+let refreshingId   = null;  // album.id currently being refreshed, or null
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
@@ -36,7 +37,7 @@ function visibleAlbums() {
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress, importSummary };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress, importSummary, refreshingId };
 }
 
 let _entrancePlayed = false;
@@ -324,6 +325,34 @@ async function importData(text) {
   resolvePending({ summarize: true });
 }
 
+async function refreshAlbum(visibleIdx) {
+  const album = visibleAlbums()[visibleIdx];
+  if (!album || !album.sourceUrl) return;
+  refreshingId = album.id;
+  rerender();
+  try {
+    const rec = await resolveAlbum(album.sourceUrl);
+    if (!rec._error) {
+      const merged = mergeRefreshedAlbum(album, rec);
+      const all = loadAlbums();
+      const pos = all.findIndex(a => a.id === album.id);
+      if (pos !== -1) { all[pos] = merged; saveAlbums(all); }
+      await attachFirstTrackUri(merged);
+      // Re-save after firstTrackUri is filled in
+      const all2 = loadAlbums();
+      const pos2 = all2.findIndex(a => a.id === merged.id);
+      if (pos2 !== -1) { all2[pos2] = merged; saveAlbums(all2); }
+      delete artistCache[album.artist]; // clear so explore re-fetches artist data
+      enrichWithLastfm(merged.id, merged.artist, merged.title, rerender);
+      if (tokenValid()) sync.schedulePush();
+    }
+    // On failure: silently keep existing data, no error surfaced
+  } finally {
+    refreshingId = null;
+    rerender();
+  }
+}
+
 // ── Event delegation ──────────────────────────────────────────────────────────
 document.body.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
@@ -375,6 +404,7 @@ document.body.addEventListener('click', e => {
       else { sync.enableSync(userProfile); } // notify() inside rerenders via _onChange
       break;
     case 'restore-sync':  sync.pullNow(rerender);               break;
+    case 'refresh':       refreshAlbum(parseInt(index, 10));    break;
     case 'set-pref-service':
       setPreferredService(el.value);
       rerender();

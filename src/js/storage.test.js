@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError } from './storage.js';
+import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 
 describe('extractAlbumId', () => {
   it('extracts id from full Spotify URL', () => {
@@ -245,7 +245,7 @@ describe('loadAlbums migration', () => {
 });
 
 describe('serializeBackup / parseBackup', () => {
-  const albums = [{
+  const fullAlbum = {
     id: 'SPOTIFY_ALBUM::4aawyAB9vmqN3uQ7FjRGTy',
     sourceUrl: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy',
     service: 'spotify',
@@ -255,38 +255,45 @@ describe('serializeBackup / parseBackup', () => {
     year: '1997',
     tags: ['alternative rock'],
     links: { spotify: { url: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', nativeUri: 'spotify:album:4aawyAB9vmqN3uQ7FjRGTy' } },
+    firstTrackUri: 'spotify:track:abc123',
     addedAt: '2024-01-01T00:00:00.000Z',
-  }];
+  };
 
-  it('export produces lean v3 with only sourceUrl, service, addedAt', () => {
-    const data = JSON.parse(serializeBackup(albums, 5));
-    expect(data.version).toBe(3);
+  it('export produces v4 with full metadata including cover and links', () => {
+    const data = JSON.parse(serializeBackup([fullAlbum], 5));
+    expect(data.version).toBe(4);
+    expect(data.albums[0].title).toBe('OK Computer');
+    expect(data.albums[0].artist).toBe('Radiohead');
+    expect(data.albums[0].cover).toBe('https://example.com/cover.jpg');
+    expect(data.albums[0].year).toBe('1997');
+    expect(data.albums[0].tags).toEqual(['alternative rock']);
+    expect(data.albums[0].links.spotify.url).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(data.albums[0].firstTrackUri).toBe('spotify:track:abc123');
     expect(data.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
-    expect(data.albums[0].service).toBe('spotify');
     expect(data.albums[0].addedAt).toBe('2024-01-01T00:00:00.000Z');
-    // External/derived data must NOT be in the export
-    expect(data.albums[0].title).toBeUndefined();
-    expect(data.albums[0].artist).toBeUndefined();
-    expect(data.albums[0].cover).toBeUndefined();
-    expect(data.albums[0].links).toBeUndefined();
+    // Transient flags must NOT appear
+    expect(data.albums[0]._pending).toBeUndefined();
     expect(data.done).toBe(5);
   });
 
-  it('serialized output includes version 3 and exportedAt', () => {
+  it('serialized output includes version 4 and exportedAt', () => {
     const data = JSON.parse(serializeBackup([], 0));
-    expect(data.version).toBe(3);
+    expect(data.version).toBe(4);
     expect(typeof data.exportedAt).toBe('string');
   });
 
-  it('import of v3 backup produces pending stubs preserving addedAt', () => {
-    const text = serializeBackup(albums, 5);
+  it('v4 round-trip: export then import restores full non-pending record', () => {
+    const text = serializeBackup([fullAlbum], 5);
     const result = parseBackup(text);
-    expect(result.albums[0]._pending).toBe(true);
-    expect(result.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(result.albums[0]._pending).toBeFalsy();
+    expect(result.albums[0].title).toBe('OK Computer');
+    expect(result.albums[0].artist).toBe('Radiohead');
+    expect(result.albums[0].cover).toBe('https://example.com/cover.jpg');
+    expect(result.albums[0].year).toBe('1997');
+    expect(result.albums[0].tags).toEqual(['alternative rock']);
+    expect(result.albums[0].links.spotify.url).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(result.albums[0].firstTrackUri).toBe('spotify:track:abc123');
     expect(result.albums[0].addedAt).toBe('2024-01-01T00:00:00.000Z');
-    // External data is NOT restored
-    expect(result.albums[0].title).toBeNull();
-    expect(result.albums[0].tags).toEqual([]);
     expect(result.done).toBe(5);
   });
 
@@ -302,7 +309,7 @@ describe('serializeBackup / parseBackup', () => {
     expect(() => parseBackup(JSON.stringify({ version: 1, albums: [], done: 'bad' }))).toThrow();
   });
 
-  it('imports v1 Spotify backup as pending stubs, preserving addedAt', () => {
+  it('imports v1 Spotify backup with metadata directly (non-pending)', () => {
     const v1 = JSON.stringify({
       version: 1,
       exportedAt: '2024-01-01T00:00:00.000Z',
@@ -317,15 +324,15 @@ describe('serializeBackup / parseBackup', () => {
       done: 2,
     });
     const result = parseBackup(v1);
-    expect(result.albums[0]._pending).toBe(true);
+    expect(result.albums[0]._pending).toBeFalsy();
     expect(result.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
-    expect(result.albums[0].title).toBeNull();   // external data not restored
-    expect(result.albums[0].tags).toEqual([]);    // external data not restored
+    expect(result.albums[0].title).toBe('OK Computer');
+    expect(result.albums[0].artist).toBe('Radiohead');
     expect(result.albums[0].addedAt).toBe('2024-01-01T00:00:00.000Z');
     expect(result.done).toBe(2);
   });
 
-  it('imports v2 backup as pending stubs, not restoring external metadata', () => {
+  it('imports v2 backup with metadata directly (non-pending), cover and links restored', () => {
     const v2 = JSON.stringify({
       version: 2,
       exportedAt: '2024-01-01T00:00:00.000Z',
@@ -343,12 +350,43 @@ describe('serializeBackup / parseBackup', () => {
       done: 1,
     });
     const result = parseBackup(v2);
-    expect(result.albums[0]._pending).toBe(true);
-    expect(result.albums[0].title).toBeNull();
-    expect(result.albums[0].tags).toEqual([]);
-    expect(result.albums[0].cover).toBeNull();
+    expect(result.albums[0]._pending).toBeFalsy();
+    expect(result.albums[0].title).toBe('OK Computer');
+    expect(result.albums[0].cover).toBe('https://example.com/cover.jpg');
+    expect(result.albums[0].tags).toEqual(['rock']);
+    expect(result.albums[0].links.spotify.url).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(result.albums[0].addedAt).toBe('2024-06-01T00:00:00.000Z');
     expect(result.done).toBe(1);
+  });
+
+  it('legacy record with no title/artist falls back to pending stub', () => {
+    const v1 = JSON.stringify({
+      version: 1,
+      exportedAt: '2024-01-01T00:00:00.000Z',
+      albums: [{
+        id: '4aawyAB9vmqN3uQ7FjRGTy',
+        url: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy',
+        addedAt: '2024-01-01T00:00:00.000Z',
+      }],
+      done: 0,
+    });
+    const result = parseBackup(v1);
+    expect(result.albums[0]._pending).toBe(true);
+    expect(result.albums[0].title).toBeNull();
+  });
+
+  it('v3 lean backup still produces pending stubs (back-compat)', () => {
+    const v3 = JSON.stringify({
+      version: 3,
+      exportedAt: '2024-01-01T00:00:00.000Z',
+      albums: [{ sourceUrl: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', service: 'spotify', addedAt: '2024-01-01T00:00:00.000Z' }],
+      done: 0,
+    });
+    const result = parseBackup(v3);
+    expect(result.albums[0]._pending).toBe(true);
+    expect(result.albums[0].title).toBeNull();
+    expect(result.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(result.albums[0].addedAt).toBe('2024-01-01T00:00:00.000Z');
   });
 
   it('throws on wrong version', () => {
@@ -368,6 +406,64 @@ describe('serializeBackup / parseBackup', () => {
     const result = parseBackup(v3);
     expect(result.albums.length).toBe(1);
     expect(result.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+  });
+});
+
+describe('mergeRefreshedAlbum', () => {
+  const existing = {
+    id: 'SPOTIFY_ALBUM::abc',
+    sourceUrl: 'https://open.spotify.com/album/abc',
+    service: 'spotify',
+    title: 'Old Title',
+    artist: 'Old Artist',
+    cover: 'https://example.com/old.jpg',
+    year: '2020',
+    tags: ['jazz', 'blues'],
+    links: { spotify: { url: 'https://open.spotify.com/album/abc', nativeUri: 'spotify:album:abc' } },
+    firstTrackUri: 'spotify:track:old',
+    addedAt: '2024-01-01T00:00:00.000Z',
+  };
+  const resolved = {
+    id: 'SPOTIFY_ALBUM::abc',
+    title: 'New Title',
+    artist: 'New Artist',
+    cover: 'https://example.com/new.jpg',
+    year: '2024',
+    links: { spotify: { url: 'https://open.spotify.com/album/abc', nativeUri: 'spotify:album:abc' }, apple: { url: 'https://music.apple.com/album/abc' } },
+  };
+
+  it('overwrites title, artist, cover, year', () => {
+    const merged = mergeRefreshedAlbum(existing, resolved);
+    expect(merged.title).toBe('New Title');
+    expect(merged.artist).toBe('New Artist');
+    expect(merged.cover).toBe('https://example.com/new.jpg');
+    expect(merged.year).toBe('2024');
+  });
+
+  it('merges links (adds new platforms, keeps existing)', () => {
+    const merged = mergeRefreshedAlbum(existing, resolved);
+    expect(merged.links.spotify.url).toBe('https://open.spotify.com/album/abc');
+    expect(merged.links.apple.url).toBe('https://music.apple.com/album/abc');
+  });
+
+  it('preserves identity: id, sourceUrl, addedAt', () => {
+    const merged = mergeRefreshedAlbum(existing, resolved);
+    expect(merged.id).toBe(existing.id);
+    expect(merged.sourceUrl).toBe(existing.sourceUrl);
+    expect(merged.addedAt).toBe(existing.addedAt);
+  });
+
+  it('preserves user data: tags and firstTrackUri', () => {
+    const merged = mergeRefreshedAlbum(existing, resolved);
+    expect(merged.tags).toEqual(['jazz', 'blues']);
+    expect(merged.firstTrackUri).toBe('spotify:track:old');
+  });
+
+  it('null fields in resolved fall back to existing value', () => {
+    const sparse = { ...resolved, cover: null, year: null };
+    const merged = mergeRefreshedAlbum(existing, sparse);
+    expect(merged.cover).toBe('https://example.com/old.jpg');
+    expect(merged.year).toBe('2020');
   });
 });
 

@@ -548,6 +548,15 @@ body::after {
 .explore-track-dur { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
 .explore-loading { font-size: 13px; color: var(--text-faint); font-style: italic; }
 
+.explore-footer { display: flex; justify-content: center; padding: 20px 0 4px; }
+.explore-refresh {
+  background: none; border: none; cursor: pointer; padding: 4px 8px;
+  font-size: 12px; color: var(--text-faint); border-radius: var(--r-sm);
+  transition: color 100ms, background 100ms;
+}
+.explore-refresh:hover { color: var(--text-dim); background: rgba(255,255,255,.05); }
+.explore-refresh:disabled { opacity: .45; cursor: default; }
+
 /* Explore slide animations */
 @keyframes slide-out-left  { from { transform: translateX(0);     opacity: 1; } to { transform: translateX(-100%); opacity: 0; } }
 @keyframes slide-out-right { from { transform: translateX(0);     opacity: 1; } to { transform: translateX(100%);  opacity: 0; } }

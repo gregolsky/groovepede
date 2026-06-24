@@ -41,34 +41,65 @@ export function spotifyAlbumId(album) {
 }
 
 export function serializeBackup(albums, done) {
-  // Only persist user-owned data; all external metadata is pulled fresh on import.
-  const lean = albums.map(a => ({ sourceUrl: a.sourceUrl, service: a.service, addedAt: a.addedAt }));
-  return JSON.stringify({ version: 3, exportedAt: new Date().toISOString(), albums: lean, done });
+  // Persist the full album record (snapshot), stripping only transient flags.
+  // Cover art URL, links, tags, and firstTrackUri are all included so import
+  // is instant — no Odesli re-resolution needed.
+  const full = albums.map(({ _pending, _error, ...a }) => a);
+  return JSON.stringify({ version: 4, exportedAt: new Date().toISOString(), albums: full, done });
 }
 
 export function parseBackup(text) {
   const data = JSON.parse(text);
-  if (!data || ![1, 2, 3].includes(data.version) || !Array.isArray(data.albums) || typeof data.done !== 'number') {
+  if (!data || ![1, 2, 3, 4].includes(data.version) || !Array.isArray(data.albums) || typeof data.done !== 'number') {
     throw new Error('Invalid backup format');
   }
-  // Rebuild every album as a pending stub; external metadata (title, cover, links, tags)
-  // is NOT restored — it will be re-fetched fresh by resolvePending() after import.
-  const stubs = data.albums.map(album => {
-    let sourceUrl, service;
-    if (data.version <= 2) {
-      const upgraded = upgradeAlbumRecord(album);
-      sourceUrl = upgraded.sourceUrl;
-      service = upgraded.service || parseMusicLink(sourceUrl || '').service;
-    } else {
-      sourceUrl = album.sourceUrl;
-      service = album.service || parseMusicLink(sourceUrl || '').service;
+
+  const albums = data.albums.map(album => {
+    if (data.version === 3) {
+      // Legacy lean export (v3): only sourceUrl/service/addedAt; must re-resolve.
+      const sourceUrl = album.sourceUrl;
+      if (!sourceUrl) return null;
+      const service = album.service || parseMusicLink(sourceUrl).service;
+      const stub = makePendingRecord(sourceUrl, service || 'spotify');
+      stub.addedAt = album.addedAt || stub.addedAt;
+      return stub;
     }
+
+    // v1 / v2 / v4: carry metadata — restore directly without Odesli.
+    const upgraded = upgradeAlbumRecord(album); // normalises links.spotify for v1/v2
+    const sourceUrl = upgraded.sourceUrl;
     if (!sourceUrl) return null;
+
+    if (upgraded.title && upgraded.artist) {
+      // Full record: return as-is (non-pending); preserve addedAt from backup.
+      const { _pending, _error, ...clean } = upgraded;
+      return { ...clean, addedAt: album.addedAt || clean.addedAt };
+    }
+
+    // Metadata absent (sparse legacy entry) — fall back to pending stub.
+    const service = upgraded.service || parseMusicLink(sourceUrl).service;
     const stub = makePendingRecord(sourceUrl, service || 'spotify');
     stub.addedAt = album.addedAt || stub.addedAt;
     return stub;
   }).filter(Boolean);
-  return { albums: stubs, done: data.done };
+
+  return { albums, done: data.done };
+}
+
+/**
+ * Merge a fresh Odesli resolve result into an existing album record.
+ * Overwrites title/artist/cover/year/links; preserves id, sourceUrl,
+ * addedAt, tags, and firstTrackUri (those are enriched separately).
+ */
+export function mergeRefreshedAlbum(existing, resolved) {
+  return {
+    ...existing,
+    title:  resolved.title  ?? existing.title,
+    artist: resolved.artist ?? existing.artist,
+    cover:  resolved.cover  ?? existing.cover,
+    year:   resolved.year   ?? existing.year,
+    links:  { ...existing.links, ...resolved.links },
+  };
 }
 
 export function getPreferredService() {
