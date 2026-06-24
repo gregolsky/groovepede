@@ -113,7 +113,7 @@ export function isOnPreferredService(album, prefService) {
  * @param {{ showService?: boolean }} opts — show "Listen on Spotify" vs "Listen"
  */
 function renderListenBtn(album, prefService, { showService = false } = {}) {
-  const svcName = serviceLabel(prefService) || 'Spotify';
+  const svcName = serviceLabel(prefService);
   if (isOnPreferredService(album, prefService)) {
     const url = pickListenUrl(album, prefService);
     const label = showService ? `Listen on ${escapeHtml(svcName)}` : 'Listen';

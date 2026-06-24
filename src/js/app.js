@@ -23,7 +23,6 @@ let tagsExpanded   = false;
 let addOpen        = false;
 let importProgress = null;  // { done, total, retrying } while resolving, or null
 let importSummary  = null;  // { added, failed[] } shown as modal after a user-triggered import
-let summarizeOnDrain = false; // set true in importData; cleared when summary is shown
 
 const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
@@ -312,8 +311,7 @@ async function importData(text) {
   exploreIndex = null;
   rerender();
   // Resolve all pending stubs fresh (throttled, with progress bar + summary on drain)
-  summarizeOnDrain = true;
-  resolvePending();
+  resolvePending({ summarize: true });
 }
 
 // ── Event delegation ──────────────────────────────────────────────────────────
@@ -473,7 +471,7 @@ let _resolvePendingAgain = false;
 const _retryBackoff = n => Math.min(Math.pow(2, n) * 1000, 60_000);
 const _sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function resolvePending() {
+async function resolvePending({ summarize = false } = {}) {
   if (_resolvingPending) { _resolvePendingAgain = true; return; }
   if (!loadAlbums().some(a => a._pending)) return;
 
@@ -491,10 +489,8 @@ async function resolvePending() {
 
     for (const stub of pending) {
       let retry = 0;
-      let resolved = false;
-      let permanent = false;
 
-      while (!resolved && !permanent) {
+      while (true) {
         const rec = await resolveAlbumResilient(stub.sourceUrl, { service: stub.service });
 
         if (!rec._error) {
@@ -507,12 +503,12 @@ async function resolvePending() {
           saveAlbums(fresh);
           enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
           added++;
-          resolved = true;
+          break;
 
         } else if (isRetryableResolveError(rec._error)) {
           // ── Transient / rate-limited — hold on this stub, show retry count ─
           retry++;
-          importProgress = { ...importProgress, retrying: retry };
+          importProgress.retrying = retry;
           rerender();
           await _sleep(_retryBackoff(retry));
 
@@ -522,11 +518,12 @@ async function resolvePending() {
           const fresh = loadAlbums();
           const pos = fresh.findIndex(a => a.id === stub.id);
           if (pos !== -1) { fresh.splice(pos, 1); saveAlbums(fresh); }
-          permanent = true;
+          break;
         }
       }
 
-      importProgress = { done: importProgress.done + 1, total: importProgress.total, retrying: 0 };
+      importProgress.done++;
+      importProgress.retrying = 0;
       rerender();
     }
   } while (_resolvePendingAgain);
@@ -534,8 +531,7 @@ async function resolvePending() {
   importProgress = null;
   _resolvingPending = false;
 
-  if (summarizeOnDrain) {
-    summarizeOnDrain = false;
+  if (summarize) {
     importSummary = { added, failed };
   }
   rerender();
