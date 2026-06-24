@@ -1,4 +1,4 @@
-const CACHE = 'groovepede-v18';
+const CACHE = 'groovepede-v19';
 const ASSETS = [
   '/',
   '/index.html',
@@ -21,19 +21,17 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+  // Only handle same-origin requests; let cross-origin (APIs) go straight to network.
+  if (url.origin !== self.location.origin) return;
   // Network-first for same-origin assets so deploys take effect immediately;
   // fall back to cache when offline.
-  if (url.origin === self.location.origin) {
-    e.respondWith(
-      fetch(e.request)
-        .then(res => {
-          const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
-          return res;
-        })
-        .catch(() => caches.match(e.request))
-    );
-  } else {
-    e.respondWith(fetch(e.request));
-  }
+  e.respondWith(
+    fetch(e.request)
+      .then(res => {
+        const clone = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+        return res;
+      })
+      .catch(() => caches.match(e.request))
+  );
 });

@@ -499,6 +499,7 @@ async function resolvePending({ summarize = false } = {}) {
 
     for (const stub of pending) {
       let retry = 0;
+      const MAX_RETRIES = 4;
 
       while (true) {
         const rec = await resolveAlbumResilient(stub.sourceUrl, { service: stub.service });
@@ -515,12 +516,17 @@ async function resolvePending({ summarize = false } = {}) {
           added++;
           break;
 
-        } else if (isRetryableResolveError(rec._error)) {
-          // ── Transient / rate-limited — hold on this stub, show retry count ─
+        } else if (isRetryableResolveError(rec._error) && retry < MAX_RETRIES) {
+          // ── Transient / rate-limited — back off and retry ─────────────────
           retry++;
           importProgress.retrying = retry;
           rerender();
           await _sleep(_retryBackoff(retry));
+
+        } else if (isRetryableResolveError(rec._error)) {
+          // ── Still failing after MAX_RETRIES — leave stub pending, move on ─
+          // resumePendingIfAny() will retry it when the user returns later.
+          break;
 
         } else {
           // ── Permanent failure (not-found / 4xx) — drop stub, record URL ──
