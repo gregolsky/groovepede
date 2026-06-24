@@ -187,7 +187,7 @@ function renderHero({ loadingAdd, addError, addOpen }) {
       <div class="landing-features">
         <div class="landing-feature">
           <div class="landing-feature-img-wrap">
-            <img class="landing-feature-img" src="img/feature-save.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <img class="landing-feature-img" src="img/feature-save.webp" width="1081" height="808" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
             <div class="landing-feature-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
@@ -203,7 +203,7 @@ function renderHero({ loadingAdd, addError, addOpen }) {
         </div>
         <div class="landing-feature">
           <div class="landing-feature-img-wrap">
-            <img class="landing-feature-img" src="img/feature-genres.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <img class="landing-feature-img" src="img/feature-genres.webp" width="1081" height="808" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
             <div class="landing-feature-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
@@ -218,7 +218,7 @@ function renderHero({ loadingAdd, addError, addOpen }) {
         </div>
         <div class="landing-feature">
           <div class="landing-feature-img-wrap">
-            <img class="landing-feature-img" src="img/feature-local.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <img class="landing-feature-img" src="img/feature-local.webp" width="1081" height="808" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
             <div class="landing-feature-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0FD287" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -238,19 +238,19 @@ function renderHero({ loadingAdd, addError, addOpen }) {
         <div class="landing-timeline">
           <div class="landing-timeline-step">
             <div class="landing-timeline-num">1</div>
-            <img class="landing-timeline-img" src="img/step-paste.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <img class="landing-timeline-img" src="img/step-paste.webp" width="1081" height="808" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
             <strong class="landing-timeline-title">Paste a link</strong>
             <p class="landing-timeline-caption">Copy an album URL from any supported service and paste it in. Or share directly from your phone's music app.</p>
           </div>
           <div class="landing-timeline-step">
             <div class="landing-timeline-num">2</div>
-            <img class="landing-timeline-img" src="img/step-service.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <img class="landing-timeline-img" src="img/step-service.webp" width="1081" height="808" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
             <strong class="landing-timeline-title">Pick your service</strong>
             <p class="landing-timeline-caption">Set your preferred streaming service in the profile so the Listen button always opens in the right app.</p>
           </div>
           <div class="landing-timeline-step">
             <div class="landing-timeline-num">3</div>
-            <img class="landing-timeline-img" src="img/step-listen.jpeg" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
+            <img class="landing-timeline-img" src="img/step-listen.webp" width="1081" height="808" alt="" onerror="this.style.visibility='hidden'" loading="lazy">
             <strong class="landing-timeline-title">Listen. Done. Repeat.</strong>
             <p class="landing-timeline-caption">When you're ready, tap Listen. Tap Done when finished to track your progress.</p>
           </div>
