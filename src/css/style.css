@@ -785,7 +785,11 @@ body::after {
   height: 100%;
   object-fit: cover;
   display: block;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .4s ease, transform .4s ease;
 }
+.landing-feature-img.img-loaded { opacity: 1; transform: none; }
 .landing-feature-icon {
   position: absolute;
   bottom: 10px;
@@ -852,6 +856,13 @@ body::after {
   border-radius: var(--r-md);
   background: var(--surface-2);
   display: block;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .4s ease, transform .4s ease;
+}
+.landing-timeline-img.img-loaded { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .landing-feature-img, .landing-timeline-img { transition: opacity .2s ease; transform: none !important; }
 }
 .landing-timeline-title {
   font-size: 15px;

@@ -1,10 +1,10 @@
-const CACHE = 'groovepede-v19';
+const CACHE = 'groovepede-v20';
 const ASSETS = [
   '/',
   '/index.html',
   '/faq.html',
   '/manifest.json',
-  '/favicon.png',
+  '/img/logo.webp',
 ];
 
 self.addEventListener('install', e => {

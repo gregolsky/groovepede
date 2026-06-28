@@ -6,6 +6,9 @@ import { createThrottle } from './throttle.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
 
+// Last.fm returns a single item as an object instead of a 1-element array.
+const asArray = v => Array.isArray(v) ? v : v == null ? [] : [v];
+
 // ── Per-service throttlers ────────────────────────────────────────────────────
 // One throttler per rate-limited endpoint — owns global pacing + 429 cooldown.
 // Raw API functions are "just calls"; throttling is applied at the choke points
@@ -278,7 +281,7 @@ function lfmGet(params) {
 
 export async function fetchLastfmAlbum(artist, album) {
   const data = await lfmGet({ method: 'album.getinfo', artist, album, autocorrect: '1' });
-  const tags = cleanTags((data?.album?.tags?.tag || []).slice(0, 5));
+  const tags = cleanTags(asArray(data?.album?.tags?.tag).slice(0, 5));
   return { tags };
 }
 
@@ -293,18 +296,18 @@ function cleanTags(rawTags) {
 
 async function fetchArtistTags(artist) {
   const data = await lfmGet({ method: 'artist.gettoptags', artist, autocorrect: '1' });
-  return cleanTags((data?.toptags?.tag || []).filter(t => t.count >= 5).slice(0, 5));
+  return cleanTags(asArray(data?.toptags?.tag).filter(t => t.count >= 5).slice(0, 5));
 }
 
 async function fetchTagsFromSimilarArtists(artist) {
   const simData = await lfmGet({ method: 'artist.getsimilar', artist, limit: '4', autocorrect: '1' });
-  const simArtists = (simData?.similarartists?.artist || []).slice(0, 4);
+  const simArtists = asArray(simData?.similarartists?.artist).slice(0, 4);
   const counts = {};
   const results = await Promise.all(
     simArtists.map(a => lfmGet({ method: 'artist.gettoptags', artist: a.name, autocorrect: '1' }))
   );
   for (const data of results) {
-    const tags = (data?.toptags?.tag || []).filter(t => t.count >= 15).slice(0, 5);
+    const tags = asArray(data?.toptags?.tag).filter(t => t.count >= 15).slice(0, 5);
     for (const t of tags) {
       const name = t.name.toLowerCase();
       if (name.length > 1 && name.length <= 25 && !YEAR_RE.test(name) && !JUNK_TAGS.has(name)) {
@@ -416,7 +419,7 @@ export async function fetchLastfmArtist(artistName) {
   let bio = fullBio;
   if (bio.length > 420) bio = bio.slice(0, 420).replace(/\s+\S*$/, '') + '…';
 
-  const similar = (similarData?.similarartists?.artist || [])
+  const similar = asArray(similarData?.similarartists?.artist)
     .slice(0, 6)
     .map(a => ({ name: a.name, url: a.url }));
 

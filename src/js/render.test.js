@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, serviceLabel, isOnPreferredService } from './render.js';
+import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, serviceLabel, isOnPreferredService, timeAgo } from './render.js';
 
 // ── isOnPreferredService ──────────────────────────────────────────────────────
 
@@ -207,5 +207,53 @@ describe('highlightMatch', () => {
   it('treats regex special chars in query as literals', () => {
     const result = highlightMatch('3.14', '3.1');
     expect(result).toBe('<mark class="hl">3.1</mark>4');
+  });
+});
+
+// ── timeAgo ───────────────────────────────────────────────────────────────────
+
+function isoAgo(ms) {
+  return new Date(Date.now() - ms).toISOString();
+}
+const sec  = 1000;
+const min  = 60 * sec;
+const hour = 60 * min;
+const day  = 24 * hour;
+const week = 7 * day;
+
+describe('timeAgo', () => {
+  it('returns "just now" for less than 1 minute', () => {
+    expect(timeAgo(isoAgo(30 * sec))).toBe('just now');
+  });
+
+  it('returns minutes for 1–59 min', () => {
+    expect(timeAgo(isoAgo(5 * min))).toBe('5m ago');
+    expect(timeAgo(isoAgo(59 * min))).toBe('59m ago');
+  });
+
+  it('returns hours for 1–23 h', () => {
+    expect(timeAgo(isoAgo(2 * hour))).toBe('2h ago');
+    expect(timeAgo(isoAgo(23 * hour))).toBe('23h ago');
+  });
+
+  it('returns days for 1–6 d', () => {
+    expect(timeAgo(isoAgo(1 * day))).toBe('1d ago');
+    expect(timeAgo(isoAgo(6 * day))).toBe('6d ago');
+  });
+
+  it('returns weeks for 1–4 w', () => {
+    expect(timeAgo(isoAgo(1 * week))).toBe('1w ago');
+    expect(timeAgo(isoAgo(4 * week))).toBe('4w ago');
+  });
+
+  it('returns months for ~5 weeks to 11 months', () => {
+    expect(timeAgo(isoAgo(35 * day))).toBe('1mo ago');
+    expect(timeAgo(isoAgo(90 * day))).toBe('2mo ago');
+    expect(timeAgo(isoAgo(300 * day))).toBe('9mo ago');
+  });
+
+  it('returns years for 1+ years', () => {
+    expect(timeAgo(isoAgo(400 * day))).toBe('1y ago');
+    expect(timeAgo(isoAgo(730 * day))).toBe('2y ago');
   });
 });

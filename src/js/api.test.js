@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, spotifyAlbumMatches, searchSpotifyAlbum } from './api.js';
+import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, spotifyAlbumMatches, searchSpotifyAlbum, fetchLastfmAlbum, fetchLastfmArtist } from './api.js';
 
 // ── throttle helpers ──────────────────────────────────────────────────────────
 
@@ -452,5 +452,81 @@ describe('searchSpotifyAlbum', () => {
   it('returns null when artist or title is missing', async () => {
     expect(await searchSpotifyAlbum('', 'Dopethrone')).toBeNull();
     expect(await searchSpotifyAlbum('Electric Wizard', '')).toBeNull();
+  });
+});
+
+// ── Last.fm single-element-as-object guard ────────────────────────────────────
+
+describe('fetchLastfmAlbum — Last.fm single-object quirk', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    resetThrottles();
+  });
+
+  it('extracts tags when Last.fm returns tag as array', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        album: { tags: { tag: [{ name: 'post-rock' }, { name: 'ambient' }] } },
+      }),
+    });
+    const { tags } = await fetchLastfmAlbum('Mogwai', 'Young Team');
+    expect(tags).toContain('post-rock');
+    expect(tags).toContain('ambient');
+  });
+
+  it('extracts tags when Last.fm returns tag as a single object (not array)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        album: { tags: { tag: { name: 'post-rock' } } },
+      }),
+    });
+    const { tags } = await fetchLastfmAlbum('Mogwai', 'Young Team');
+    expect(tags).toContain('post-rock');
+  });
+
+  it('returns empty tags when tag field is missing', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ album: { tags: {} } }),
+    });
+    const { tags } = await fetchLastfmAlbum('Unknown', 'Unknown');
+    expect(tags).toEqual([]);
+  });
+});
+
+describe('fetchLastfmArtist — Last.fm single-object quirk', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    resetThrottles();
+  });
+
+  function mockFetchSequence(responses) {
+    let i = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve({ ok: true, json: async () => responses[i++] })
+    );
+  }
+
+  it('handles similar artists as array', async () => {
+    mockFetchSequence([
+      { artist: { bio: { content: 'Some bio.' }, url: 'https://last.fm/music/Mogwai', toptags: { tag: [] } } },
+      { similarartists: { artist: [{ name: 'Godspeed', url: 'https://last.fm/music/GY!BE' }, { name: 'Explosions', url: 'https://last.fm/music/EitS' }] } },
+      { toptags: { tag: [] } },
+    ]);
+    const { similar } = await fetchLastfmArtist('Mogwai');
+    expect(similar.length).toBeGreaterThan(0);
+    expect(similar[0].name).toBe('Godspeed');
+  });
+
+  it('handles similar artists as single object (not array)', async () => {
+    mockFetchSequence([
+      { artist: { bio: { content: 'Some bio.' }, url: 'https://last.fm/music/Mogwai', toptags: { tag: [] } } },
+      { similarartists: { artist: { name: 'Godspeed', url: 'https://last.fm/music/GY!BE' } } },
+      { toptags: { tag: [] } },
+    ]);
+    const { similar } = await fetchLastfmArtist('Mogwai');
+    expect(similar).toEqual([{ name: 'Godspeed', url: 'https://last.fm/music/GY!BE' }]);
   });
 });
