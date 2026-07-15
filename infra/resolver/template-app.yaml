@@ -2,8 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Groovepede Resolver — app-region stack (eu-central-1).
-  Deploys the Lambda resolver function, its Function URL, and the DynamoDB
-  response cache. Deploy this stack FIRST, then the edge stack (us-east-1).
+  Deploys the Lambda resolver function (Node 22), its Function URL, and the
+  DynamoDB response cache. Deploy this stack FIRST, then the edge stack (us-east-1).
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ Conditions:
 
 Globals:
   Function:
-    Runtime: nodejs20.x
+    Runtime: nodejs22.x
     MemorySize: 128
     Timeout: 3
     Architectures:

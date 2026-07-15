@@ -51,7 +51,7 @@ CloudFront OAC (SigV4-signs origin request)
   ▼
 Lambda Function URL  (AuthType: AWS_IAM — only CloudFront OAC can invoke)
   ▼
-Lambda gp-resolver  (Node 20, 128 MB, 3 s timeout, concurrency: 3)
+Lambda gp-resolver  (Node 22, 128 MB, 3 s timeout, concurrency: 3)
   ├─ Input validation: url present + host in allowlist
   ├─ DynamoDB cache check (TTL 60 days)
   │   hit  → return cached body
@@ -158,7 +158,7 @@ go through `resolveAlbum` — one change covers them all.
 
 ```
 infra/resolver/
-├── handler.mjs          — Lambda handler (Node 20 ESM)
+├── handler.mjs          — Lambda handler (Node 22 ESM)
 ├── package.json         — declares @aws-sdk/* as external (runtime-provided)
 ├── template-app.yaml    — SAM: Lambda + DynamoDB (deploy to app region)
 ├── template-edge.yaml   — CFN: ACM + WAF + CloudFront (deploy to us-east-1)

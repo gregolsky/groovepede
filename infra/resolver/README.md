@@ -8,7 +8,7 @@ See `specs/resolver-proxy.md` for the full design rationale and architecture.
 ```
 Browser → CloudFront (api.groovepede.gregolsky.pl)
         → WAF (token format check + rate limit)
-        → /v1/* CacheBehavior → Lambda gp-resolver (Node 20, arm64)
+        → /v1/* CacheBehavior → Lambda gp-resolver (Node 22, arm64)
           → signature verification (ECDSA-P256, 5-min replay window, URL-bound)
           → DynamoDB cache → Odesli API
 ```
