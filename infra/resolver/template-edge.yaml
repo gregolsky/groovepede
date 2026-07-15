@@ -329,6 +329,22 @@ Resources:
           AccessControlMaxAgeSec: 86400
           OriginOverride: false   # let Lambda's own ACAO through if present
 
+  # ── Route 53 A-alias record ───────────────────────────────────────────────
+  # Created only when HostedZoneId is provided. Points api.groovepede.gregolsky.pl
+  # at the CloudFront distribution using an alias (free, no TTL, no CNAME limit).
+  # CloudFront's alias hosted zone ID is the well-known constant Z2FDTNDATAQYW2.
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasHostedZone
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ResolverDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2   # CloudFront global alias hosted zone (constant)
+        EvaluateTargetHealth: false
+
   # ── S3 bucket for CloudFront access logs ───────────────────────────────────
   LogBucket:
     Type: AWS::S3::Bucket

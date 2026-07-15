@@ -105,7 +105,11 @@ make lock-permission GP_PUBLIC_KEY="$GP_PUBLIC_KEY"
 
 ### 5. Set up DNS
 
-Create a CNAME (or Route 53 A-alias) from `resolver.groovepede.gregolsky.pl` to the
+If you provided `HostedZoneId` in step 3, the Route 53 A-alias record was created
+automatically — nothing to do here.
+
+If you left `HostedZoneId` empty, create the record manually: add a CNAME (or A-alias
+if your provider supports it) from `api.groovepede.gregolsky.pl` to the
 `DistributionDomainName` from `make outputs-edge`.
 
 ### 6. Build and deploy the PWA

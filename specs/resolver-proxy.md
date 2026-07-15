@@ -188,8 +188,9 @@ make deploy-edge LAMBDA_FUNCTION_URL="$LAMBDA_FUNCTION_URL" LAMBDA_FUNCTION_ARN=
 # 4. Lock Lambda permission to the specific distribution
 make lock-permission GP_PUBLIC_KEY="$GP_PUBLIC_KEY"
 
-# 5. Point api.groovepede.gregolsky.pl at the CloudFront domain
-#    (CNAME or Route 53 A-alias to DistributionDomainName from outputs-edge)
+# 5. DNS — if HostedZoneId was provided, the Route 53 A-alias was created
+#    automatically by the edge stack. Otherwise add a CNAME manually:
+#    api.groovepede.gregolsky.pl → DistributionDomainName from outputs-edge
 
 # 6. Build + deploy the PWA
 npm run build && npm test
