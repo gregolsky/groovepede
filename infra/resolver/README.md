@@ -34,7 +34,7 @@ The Lambda verifies the signature using the matching public key (`GP_PUBLIC_KEY`
 ## Prerequisites
 
 - AWS CLI configured (`aws sts get-caller-identity` works)
-- AWS SAM CLI installed (`sam --version`)
+- Node.js 18+ and npm (`node --version`)
 - `openssl` available (for key generation)
 - DNS for `gregolsky.pl` accessible (Route 53 hosted zone ID needed for cert validation)
 
@@ -184,19 +184,26 @@ The proxy accepts `http://localhost:5173` as an allowed CORS origin. Set `VITE_G
 in `.env.local` and point the dev server at the deployed CloudFront URL (already the default
 via `ODESLI_BASE = 'https://api.groovepede.gregolsky.pl'`).
 
-To test the Lambda locally without CloudFront:
+To test the Lambda locally, build it and invoke with the AWS CLI:
 
 ```bash
 cd infra/resolver
-npm install
-GP_PUBLIC_KEY="$GP_PUBLIC_KEY" sam local start-api --template template-app.yaml --port 3001
+make build
+# invoke directly (skip CF; useful for a quick sanity check)
+node -e "
+import('./handler.mjs').then(async m => {
+  const res = await m.handler({
+    requestContext: { http: { method: 'GET' } },
+    headers: { origin: 'http://localhost:5173', 'x-gp-token': '' },
+    queryStringParameters: { url: 'https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp', userCountry: 'US' },
+  });
+  console.log(res.statusCode, res.body.slice(0, 120));
+});
+"
 ```
 
-Then temporarily set `ODESLI_BASE = 'http://localhost:3001'` in `src/js/config.js`
-(the path `/v1/resolve` is already in `api.js`, so the full URL becomes
-`http://localhost:3001/v1/resolve?url=…`).
-The signature verification still runs locally — set `VITE_GP_PRIVATE_KEY` in the shell
-so the dev app produces valid tokens.
+For a full local integration test, temporarily set `ODESLI_BASE = 'http://localhost:3001'`
+in `src/js/config.js` and run a minimal HTTP wrapper around the handler.
 
 ---
 

@@ -1,5 +1,4 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Transform: AWS::Serverless-2016-10-31
 Description: >
   Groovepede Resolver — app-region stack (eu-central-1).
   Deploys the Lambda resolver function (Node 22), its Function URL, and the
@@ -36,16 +35,6 @@ Conditions:
   HasDistributionArn: !Not [!Equals [!Ref CloudFrontDistributionArn, '']]
   NoDistributionArn:  !Equals [!Ref CloudFrontDistributionArn, '']
 
-# ── Globals ───────────────────────────────────────────────────────────────────
-
-Globals:
-  Function:
-    Runtime: nodejs22.x
-    MemorySize: 128
-    Timeout: 3
-    Architectures:
-      - arm64          # Graviton2 — same price tier, ~20% cheaper per ms
-
 # ── Resources ─────────────────────────────────────────────────────────────────
 
 Resources:
@@ -53,7 +42,7 @@ Resources:
   # ── DynamoDB — response cache ──────────────────────────────────────────────
   ResolveCache:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain       # don't destroy cached data on stack delete
+    DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
       TableName: gp-resolve-cache
@@ -70,46 +59,67 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: false   # cache data; no need for PITR
 
+  # ── IAM execution role ─────────────────────────────────────────────────────
+  ResolveFnRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBCache
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt ResolveCache.Arn
+
   # ── Lambda function ────────────────────────────────────────────────────────
   ResolveFn:
-    Type: AWS::Serverless::Function
+    Type: AWS::Lambda::Function
     Properties:
       FunctionName: gp-resolver
+      Runtime: nodejs22.x
       Handler: handler.handler
-      CodeUri: .
+      Role: !GetAtt ResolveFnRole.Arn
+      # `aws cloudformation package` uploads this zip to S3 and replaces
+      # this path with { S3Bucket, S3Key } before deploying.
+      Code: .build/handler.zip
+      MemorySize: 128
+      Timeout: 3
+      Architectures:
+        - arm64          # Graviton2 — same price tier, ~20% cheaper per ms
       ReservedConcurrentExecutions: 3      # hard cost cap; adjust after load is known
       Environment:
         Variables:
           CACHE_TABLE:   !Ref ResolveCache
           ODESLI_KEY:    !Ref OdesliKey
           GP_PUBLIC_KEY: !Ref GpPublicKey
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ResolveCache
-      FunctionUrlConfig:
-        AuthType: AWS_IAM   # ONLY CloudFront OAC (SigV4-signed) can invoke
-        Cors:
-          AllowOrigins:
-            - 'https://groovepede.gregolsky.pl'
-            - 'http://localhost:5173'
-          AllowHeaders:
-            - 'x-gp-token'
-            - 'content-type'
-          AllowMethods:
-            - GET
-      # ESBuild bundler — produces a small, self-contained bundle (no node_modules upload)
-      Metadata:
-        BuildMethod: esbuild
-        BuildProperties:
-          Minify: true
-          Target: es2022
-          Format: esm
-          OutExtension:
-            - .js=.mjs
-          EntryPoints:
-            - handler.mjs
-          External:
-            - '@aws-sdk/*'   # provided by the Node 20 Lambda runtime
+
+  # ── Lambda Function URL ────────────────────────────────────────────────────
+  ResolveFnUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt ResolveFn.Arn
+      AuthType: AWS_IAM   # ONLY CloudFront OAC (SigV4-signed) can invoke
+      Cors:
+        AllowOrigins:
+          - 'https://groovepede.gregolsky.pl'
+          - 'http://localhost:5173'
+        AllowHeaders:
+          - 'x-gp-token'
+          - 'content-type'
+        AllowMethods:
+          - GET
 
   # ── Lambda permission — allow CloudFront to invoke the Function URL ─────────
   # Phase 1 (DISTRIBUTION_ARN empty): wildcard SourceArn — any distribution in

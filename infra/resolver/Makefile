@@ -41,11 +41,18 @@ keygen:
 	@echo "Key pair generated. The private key is NOT saved to disk."
 
 # ── Build ─────────────────────────────────────────────────────────────────────
+# Bundles handler.mjs with esbuild (minified, ESM, @aws-sdk/* kept external),
+# then zips the output for `aws cloudformation package` to upload to S3.
 
 build:
-	sam build \
-	  --template template-app.yaml \
-	  --region $(APP_REGION)
+	@mkdir -p .build
+	npm install --silent
+	node_modules/.bin/esbuild handler.mjs \
+	  --bundle --platform=node --target=node22 --format=esm \
+	  --minify --outfile=.build/handler.mjs \
+	  --external:@aws-sdk/client-dynamodb \
+	  --external:@aws-sdk/lib-dynamodb
+	cd .build && zip -q handler.zip handler.mjs
 
 # ── App stack (eu-central-1): Lambda + DynamoDB ───────────────────────────────
 
@@ -54,11 +61,18 @@ build:
 # Requires: GP_PUBLIC_KEY (from `make keygen`)
 deploy-app: build
 	@test -n "$(GP_PUBLIC_KEY)" || (echo "ERROR: set GP_PUBLIC_KEY (from: make keygen)"; exit 1)
-	sam deploy \
-	  --template .aws-sam/build/template.yaml \
+	$(eval DEPLOY_BUCKET := gp-resolver-deploy-$(shell aws sts get-caller-identity --query Account --output text))
+	aws s3 mb s3://$(DEPLOY_BUCKET) --region $(APP_REGION) 2>/dev/null || true
+	aws cloudformation package \
+	  --template-file template-app.yaml \
+	  --s3-bucket $(DEPLOY_BUCKET) \
+	  --region $(APP_REGION) \
+	  --output-template-file .build/template-packaged.yaml
+	aws cloudformation deploy \
+	  --template-file .build/template-packaged.yaml \
 	  --stack-name $(APP_STACK) \
 	  --region $(APP_REGION) \
-	  --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+	  --capabilities CAPABILITY_IAM \
 	  --parameter-overrides \
 	    GpPublicKey="$(GP_PUBLIC_KEY)" \
 	    OdesliKey="$(ODESLI_KEY)" \

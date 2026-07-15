@@ -1,7 +1,7 @@
 {
   "name": "gp-resolver",
   "version": "1.0.0",
-  "description": "Groovepede Odesli resolver proxy — AWS Lambda (Node 20)",
+  "description": "Groovepede Odesli resolver proxy — AWS Lambda (Node 22)",
   "type": "module",
   "main": "handler.mjs",
   "scripts": {
@@ -12,6 +12,7 @@
     "@aws-sdk/lib-dynamodb": "^3.0.0"
   },
   "devDependencies": {
+    "esbuild": "^0.25.0",
     "vitest": "^2.0.0"
   }
 }

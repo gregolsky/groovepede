@@ -1,5 +1,6 @@
 node_modules/
 dist/
+infra/resolver/.build/
 test-results/
 playwright-report/
 
