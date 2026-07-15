@@ -1,0 +1,388 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Groovepede Resolver — edge stack (us-east-1 ONLY).
+  Deploys the ACM certificate, WAF Web ACL, CloudFront OAC, and CloudFront
+  distribution that sits in front of the Lambda Function URL.
+  Deploy AFTER the app stack (template-app.yaml) in eu-central-1.
+
+  ⚠ This stack MUST be deployed to us-east-1. CloudFront requires ACM certs and
+    WAF Web ACLs (scope=CLOUDFRONT) to live in us-east-1.
+
+# ── Parameters ────────────────────────────────────────────────────────────────
+
+Parameters:
+
+  DomainName:
+    Type: String
+    Default: api.groovepede.gregolsky.pl
+    Description: Custom domain for the CloudFront distribution.
+
+  HostedZoneId:
+    Type: String
+    Description: >
+      Route 53 hosted zone ID for the domain (e.g. Z3DZXE0Q79N41H for
+      gregolsky.pl). Used for ACM DNS validation. Leave empty if you validate
+      the cert manually or via another DNS provider.
+    Default: ''
+
+  LambdaFunctionUrl:
+    Type: String
+    Description: >
+      Full Lambda Function URL from the app stack output (e.g.
+      https://abcdef1234567890.lambda-url.eu-central-1.on.aws/).
+      Do NOT include a trailing path — CloudFront appends /links?… itself.
+
+  LambdaFunctionArn:
+    Type: String
+    Description: >
+      Lambda function ARN from the app stack output. Used to name the OAC
+      permission and for documentation; the actual resource policy is managed
+      in the app stack (template-app.yaml).
+
+  RateLimitPerIp:
+    Type: Number
+    Default: 100
+    MinValue: 10
+    MaxValue: 10000
+    Description: >
+      Maximum requests per IP per 5-minute window before WAF blocks the IP.
+      Groovepede users open the app infrequently; 100 is generous for legitimate
+      use and blocks abuse.
+
+# ── Conditions ────────────────────────────────────────────────────────────────
+
+Conditions:
+  HasHostedZone: !Not [!Equals [!Ref HostedZoneId, '']]
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+
+Resources:
+
+  # ── ACM Certificate ─────────────────────────────────────────────────────────
+  # DNS-validated. If HostedZoneId is set, SAM/CFN can auto-create the DNS record
+  # in Route 53. Otherwise validate manually in the ACM console.
+  ResolverCert:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions: !If
+        - HasHostedZone
+        - - DomainName:    !Ref DomainName
+            HostedZoneId:  !Ref HostedZoneId
+        - !Ref AWS::NoValue
+
+  # ── WAF Web ACL ─────────────────────────────────────────────────────────────
+  # scope: CLOUDFRONT — MUST be created in us-east-1.
+  ResolverWaf:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: gp-resolver-waf
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}              # allow by default; rules below block
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: gp-resolver-waf
+
+      Rules:
+
+        # Rule 1 — Block requests whose x-gp-token doesn't look like a signed token.
+        # The real signature check happens in the Lambda (on cache misses only).
+        # This coarse regex filter rejects obviously malformed requests at the edge
+        # before they can wake Lambda. Token format: "<10-digit-ts>.<86-char-b64url-sig>"
+        - Name: RequireAppToken
+          Priority: 0
+          Action:
+            Block:
+              CustomResponse:
+                ResponseCode: 403
+                CustomResponseBodyKey: forbidden
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: RequireAppToken
+          Statement:
+            NotStatement:
+              Statement:
+                RegexMatchStatement:
+                  RegexString: '^[0-9]{9,11}\.[A-Za-z0-9_-]{80,128}$'
+                  FieldToMatch:
+                    SingleHeader:
+                      Name: x-gp-token
+                  TextTransformations:
+                    - Priority: 0
+                      Type: NONE
+
+        # Rule 2 — Per-IP rate limit.
+        # Blocks any IP that fires more than RateLimitPerIp requests in 5 minutes.
+        - Name: PerIpRateLimit
+          Priority: 1
+          Action:
+            Block:
+              CustomResponse:
+                ResponseCode: 429
+                CustomResponseBodyKey: rate_limited
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: PerIpRateLimit
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref RateLimitPerIp
+              AggregateKeyType: IP
+
+        # Rule 3 — AWS managed IP reputation list.
+        # Blocks IPs known to be bots, crawlers, and malicious actors.
+        # WCU cost: 25 (cheap; included in the WebACL WCU budget).
+        - Name: AWSManagedIpReputationList
+          Priority: 2
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWSManagedIpReputationList
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+
+      CustomResponseBodies:
+        forbidden:
+          ContentType: APPLICATION_JSON
+          Content: '{"_error":"forbidden"}'
+        rate_limited:
+          ContentType: APPLICATION_JSON
+          Content: '{"_error":429}'
+
+  # ── CloudFront Origin Access Control (OAC) for Lambda Function URLs ─────────
+  ResolverOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: gp-resolver-oac
+        Description: Signs requests from CloudFront to the Lambda Function URL
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # ── CloudFront Cache Policy ─────────────────────────────────────────────────
+  # Cache keyed on: url + userCountry query strings + Origin header.
+  # Origin must be in the cache key because the handler returns a different
+  # Access-Control-Allow-Origin value per origin (same as Odesli's CORS pattern).
+  # In practice there are only 2 origins (prod + localhost) so cache fragmentation
+  # is negligible. x-gp-token is NOT in the key (all users share it).
+  ResolverCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: gp-resolver-cache-policy
+        Comment: Cache Odesli responses keyed on url + userCountry + Origin
+        DefaultTTL: 86400       # 1 day (DynamoDB TTL is 60 days; CF is shorter)
+        MaxTTL: 604800          # 7 days
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          QueryStringsConfig:
+            QueryStringBehavior: whitelist
+            QueryStrings:
+              Items:
+                - url
+                - userCountry
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              Items:
+                - Origin                          # drives ACAO in handler response
+                - Access-Control-Request-Method   # for OPTIONS preflight caching
+                - Access-Control-Request-Headers
+          CookiesConfig:
+            CookieBehavior: none
+
+  # ── CloudFront Origin Request Policy ───────────────────────────────────────
+  # Forwards query strings + CORS headers to the Lambda origin.
+  # x-gp-token is NOT forwarded (WAF checked it; Lambda doesn't use it).
+  ResolverOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: gp-resolver-origin-request-policy
+        Comment: Forward url + userCountry + Origin to the Lambda origin
+        QueryStringsConfig:
+          QueryStringBehavior: whitelist
+          QueryStrings:
+            Items:
+              - url
+              - userCountry
+        HeadersConfig:
+          HeaderBehavior: whitelist
+          Headers:
+            Items:
+              - Origin
+              - Access-Control-Request-Method
+              - Access-Control-Request-Headers
+        CookiesConfig:
+          CookieBehavior: none
+
+  # ── CloudFront Distribution ─────────────────────────────────────────────────
+  ResolverDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Groovepede resolver proxy
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100     # US + EU PoPs (cheapest; our users are in EU)
+        Aliases:
+          - !Ref DomainName
+        ViewerCertificate:
+          AcmCertificateArn: !Ref ResolverCert
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        WebACLId: !GetAtt ResolverWaf.Arn
+
+        # Lambda Function URL as origin
+        Origins:
+          - Id: LambdaFunctionUrl
+            # Strip https:// and trailing slash from the Function URL to get the domain
+            DomainName: !Select
+              - 2
+              - !Split ['/', !Ref LambdaFunctionUrl]
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+            OriginAccessControlId: !GetAtt ResolverOac.Id
+
+        # Named behavior for /v1/* — all versioned API endpoints go to the Lambda.
+        # DefaultCacheBehavior is reserved for future backends on this shared api. domain.
+        # WAF is distribution-level, so the x-gp-token regex + rate rules still apply here.
+        CacheBehaviors:
+          - PathPattern: /v1/*
+            TargetOriginId: LambdaFunctionUrl
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: !Ref ResolverCachePolicy
+            OriginRequestPolicyId: !Ref ResolverOriginRequestPolicy
+            Compress: true
+            ResponseHeadersPolicyId: !Ref CorsResponseHeadersPolicy
+
+        # DefaultCacheBehavior is intentionally a simple pass-through — it catches
+        # requests that don't match /v1/* and returns 403 via the WAF RequireAppToken
+        # rule (no valid token → blocked). Future backends can add their own behavior.
+        DefaultCacheBehavior:
+          TargetOriginId: LambdaFunctionUrl
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: !Ref ResolverCachePolicy
+          OriginRequestPolicyId: !Ref ResolverOriginRequestPolicy
+          Compress: true
+          ResponseHeadersPolicyId: !Ref CorsResponseHeadersPolicy
+
+        # Access logs
+        Logging:
+          Bucket: !Sub '${LogBucket}.s3.amazonaws.com'
+          Prefix: resolver/
+          IncludeCookies: false
+
+  # ── CORS response headers policy (safety net) ─────────────────────────────
+  # The handler owns CORS (origin-based allowlist, same pattern as Odesli).
+  # This policy is a defence-in-depth fallback only: OriginOverride: false means
+  # it adds ACAO only when the handler response doesn't already include it
+  # (e.g. in error cases where the handler short-circuits before the cors check).
+  CorsResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: gp-resolver-cors-headers
+        Comment: Safety-net CORS headers — handler sets ACAO; this is fallback only
+        CorsConfig:
+          AccessControlAllowCredentials: false
+          AccessControlAllowHeaders:
+            Items:
+              - content-type
+              - x-gp-token
+          AccessControlAllowMethods:
+            Items:
+              - GET
+              - OPTIONS
+          AccessControlAllowOrigins:
+            Items:
+              - 'https://groovepede.gregolsky.pl'
+              - 'http://localhost:5173'
+          AccessControlMaxAgeSec: 86400
+          OriginOverride: false   # let Lambda's own ACAO through if present
+
+  # ── S3 bucket for CloudFront access logs ───────────────────────────────────
+  LogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'gp-resolver-logs-${AWS::AccountId}'
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldLogs
+            Status: Enabled
+            ExpirationInDays: 30
+
+  LogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontLogs
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${LogBucket.Arn}/resolver/*'
+            Condition:
+              StringEquals:
+                's3:x-amz-acl': bucket-owner-full-control
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+
+Outputs:
+
+  DistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref ResolverDistribution
+
+  DistributionArn:
+    Description: >
+      CloudFront distribution ARN — pass this to template-app.yaml as
+      CloudFrontDistributionArn to lock the Lambda invocation permission.
+    Value: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${ResolverDistribution}'
+
+  DistributionDomainName:
+    Description: >
+      CloudFront domain (e.g. d1234abcdef.cloudfront.net).
+      Create a CNAME (or Route 53 A-alias) from resolver.groovepede.gregolsky.pl
+      to this value.
+    Value: !GetAtt ResolverDistribution.DomainName
+
+  WafArn:
+    Description: WAF Web ACL ARN
+    Value: !GetAtt ResolverWaf.Arn

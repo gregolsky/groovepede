@@ -30,7 +30,7 @@ function makeOdesliResponse(overrides = {}) {
 }
 
 async function stubOdesliSuccess(context) {
-  await context.route('https://api.song.link/**', route =>
+  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -72,7 +72,7 @@ test('adds album from Spotify URL without being logged in', async ({ page, conte
 // ── Odesli error paths ────────────────────────────────────────────────────────
 
 test('Odesli 404 shows error and does not add card', async ({ page, context }) => {
-  await context.route('https://api.song.link/**', route =>
+  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   );
   await stubLastfm(context);
@@ -90,7 +90,7 @@ test('Odesli 404 shows error and does not add card', async ({ page, context }) =
 });
 
 test('Odesli 503 saves a pending card (retryable error)', async ({ page, context }) => {
-  await context.route('https://api.song.link/**', route =>
+  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
   );
   await stubLastfm(context);

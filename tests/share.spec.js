@@ -61,7 +61,7 @@ function stubApis(context) {
     route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ id: 'u1', display_name: 'Test User', images: [] }) })
   );
-  context.route('https://api.song.link/**', route =>
+  context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify(makeOdesliResponse()) })
   );

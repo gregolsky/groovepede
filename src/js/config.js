@@ -14,11 +14,18 @@ export const SYNC_PLAYLIST_KEY = 'gp_sync_playlist_id';
 export const SYNC_LAST_KEY     = 'gp_sync_last';
 export const SYNC_PENDING_KEY  = 'gp_sync_pending';
 export const PREF_SERVICE_KEY  = 'gp_pref_service';
-export const ODESLI_BASE       = 'https://api.song.link/v1-alpha.1';
-// Odesli: 60 req/min per IP (source: Odesli support). A registered API key
-// raises the per-key ceiling but does not change the IP-level limit.
-// Request a key: developers@song.link
-export const ODESLI_API_KEY    = '';
+
+// Resolver proxy — server-side Odesli proxy that bypasses the CORS block.
+// All resolution goes through this; ODESLI_BASE no longer points at Odesli directly.
+// See: specs/resolver-proxy.md, infra/resolver/
+export const ODESLI_BASE = 'https://api.groovepede.gregolsky.pl';
+// ECDSA-P256 private key (PKCS8 DER, base64) used to sign x-gp-token per request.
+// Injected at build time — never in source. Set VITE_GP_PRIVATE_KEY in .env.local
+// for dev, or as a GitHub Actions secret for CI. Ships in the bundle at runtime
+// (see specs/resolver-proxy.md § Security for the threat model).
+export const GP_PRIVATE_KEY = import.meta.env.VITE_GP_PRIVATE_KEY ?? '';
+// ODESLI_API_KEY is now handled server-side in the Lambda; unused from the client.
+export const ODESLI_API_KEY = '';
 
 export const MUSICBRAINZ_BASE  = 'https://musicbrainz.org/ws/2';
 export const COVERART_BASE     = 'https://coverartarchive.org';

@@ -194,7 +194,7 @@ test('adding an album with sync on triggers a push', async ({ page, context }) =
     // Stub Odesli — add flow now resolves via Odesli, not Spotify albums API
     const newId = '4aawyAB9vmqN3uQ7FjRGTy';
     const odesliId = `SPOTIFY_ALBUM::${newId}`;
-    await context.route('https://api.song.link/**', route => route.fulfill({
+    await context.route('https://api.groovepede.gregolsky.pl/**', route => route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({

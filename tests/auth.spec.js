@@ -34,7 +34,7 @@ function makeOdesliResponse() {
 }
 
 async function stubOdesliSuccess(context) {
-  await context.route('https://api.song.link/**', route =>
+  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -227,7 +227,7 @@ test('clears session when mid-session add fails with invalid_grant', async ({ pa
   });
   // Odesli call itself fails with a non-retryable code (simulate Odesli 404 so no add)
   // The invalid_grant should still fire from the firstTrackUri Spotify fetch
-  await context.route('https://api.song.link/**', async route => {
+  await context.route('https://api.groovepede.gregolsky.pl/**', async route => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

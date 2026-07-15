@@ -4,7 +4,7 @@ const KEYS = { TOKEN: 'gp_token', EXPIRY: 'gp_expiry', ALBUMS: 'gp_albums' };
 
 function stubOdesli(context) {
   const entityId = 'SPOTIFY_ALBUM::abc123def456ghi789jklm';
-  return context.route('https://api.song.link/**', route =>
+  return context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -142,7 +142,7 @@ test('importing a JSON backup from the hero populates the queue', async ({ page,
   await stubLastfm(context);
   // Stub Odesli so resolvePending can resolve the imported pending stub
   const importEntityId = 'SPOTIFY_ALBUM::imported1xxxxxxxxxxxx';
-  await context.route('https://api.song.link/**', route =>
+  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -203,7 +203,7 @@ test('importing falls back to MusicBrainz when Odesli is unavailable', async ({ 
 
   // Odesli returns 503 (server error) — non-retryable, triggers immediate MB fallback.
   // 429 retry/backoff timing is covered by unit tests; E2E just validates the MB path.
-  await context.route('https://api.song.link/**', route =>
+  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 503, contentType: 'application/json', body: '{"code":503}' })
   );
 
@@ -256,7 +256,7 @@ test('unresolvable import link is dropped and shown in the summary modal', async
   await stubLastfm(context);
 
   // Odesli returns a non-retryable 404 — album not found
-  await context.route('https://api.song.link/**', route =>
+  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 404, contentType: 'application/json', body: '{"code":404}' })
   );
   // MusicBrainz also returns not-found (relations array empty)
@@ -337,7 +337,7 @@ test('resolution resumes when user returns to tab (visibilitychange)', async ({ 
 
   // Odesli is unavailable; MB resolves on the second request (simulating resumed resolution)
   let mbCallCount = 0;
-  await context.route('https://api.song.link/**', route =>
+  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 503, contentType: 'application/json', body: '{"code":503}' })
   );
   await context.route('https://musicbrainz.org/**', route => {

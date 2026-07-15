@@ -3,6 +3,10 @@ dist/
 test-results/
 playwright-report/
 
+# Local env overrides — never commit (may contain secrets like VITE_GP_TOKEN)
+.env.local
+.env.*.local
+
 # Claude Code: user-local settings and scratch worktrees
 .claude/settings.local.json
 .claude/worktrees/

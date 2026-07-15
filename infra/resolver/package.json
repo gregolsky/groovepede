@@ -1,0 +1,17 @@
+{
+  "name": "gp-resolver",
+  "version": "1.0.0",
+  "description": "Groovepede Odesli resolver proxy — AWS Lambda (Node 20)",
+  "type": "module",
+  "main": "handler.mjs",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/.bin/vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}

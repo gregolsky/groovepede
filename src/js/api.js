@@ -1,4 +1,5 @@
 import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY, MUSICBRAINZ_BASE, COVERART_BASE, THROTTLE } from './config.js';
+import { signRequestToken } from './sign.js';
 import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
 import { ODESLI_KEY_MAP } from './services.js';
@@ -37,7 +38,9 @@ export async function resolveAlbum(inputUrl) {
   try {
     const params = new URLSearchParams({ url: inputUrl, userCountry: 'US' });
     if (ODESLI_API_KEY) params.set('key', ODESLI_API_KEY);
-    const res = await fetch(`${ODESLI_BASE}/links?${params}`);
+    const res = await fetch(`${ODESLI_BASE}/v1/resolve?${params}`, {
+      headers: { 'x-gp-token': await signRequestToken(inputUrl) },
+    });
     if (!res.ok) {
       if (res.status === 429) {
         const raw = res.headers?.get?.('retry-after');
