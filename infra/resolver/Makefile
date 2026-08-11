@@ -91,10 +91,16 @@ deploy-app: build
 
 # ── Edge stack (us-east-1): ACM + WAF + CloudFront ───────────────────────────
 
-# Requires: LAMBDA_FUNCTION_URL from `make outputs-app`
+# Requires: LAMBDA_FUNCTION_URL from `make outputs-app`, HOSTED_ZONE_ID for your
+# Route 53 zone (find it: aws route53 list-hosted-zones-by-name --dns-name gregolsky.pl).
+# `aws cloudformation deploy` never prompts for missing parameters — anything not
+# passed silently takes the template Default (''), which disables ACM's automatic
+# DNS validation and leaves the cert stuck PENDING_VALIDATION forever. So this is
+# a hard requirement here, not optional.
 # No secret parameters needed — the edge stack is secret-free.
 deploy-edge:
 	@test -n "$(LAMBDA_FUNCTION_URL)" || (echo "ERROR: set LAMBDA_FUNCTION_URL=<url from outputs-app>"; exit 1)
+	@test -n "$(HOSTED_ZONE_ID)" || (echo "ERROR: set HOSTED_ZONE_ID (aws route53 list-hosted-zones-by-name --dns-name gregolsky.pl)"; exit 1)
 	aws cloudformation deploy \
 	  --template-file template-edge.yaml \
 	  --stack-name $(EDGE_STACK) \
@@ -103,6 +109,7 @@ deploy-edge:
 	  --parameter-overrides \
 	    LambdaFunctionUrl="$(LAMBDA_FUNCTION_URL)" \
 	    LambdaFunctionArn="$(LAMBDA_FUNCTION_ARN)" \
+	    HostedZoneId="$(HOSTED_ZONE_ID)" \
 	  --tags $(STACK_TAGS) \
 	  --no-fail-on-empty-changeset
 

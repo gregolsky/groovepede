@@ -80,18 +80,31 @@ export LAMBDA_FUNCTION_ARN=<FunctionArn from outputs>
 
 ### 3. Deploy the edge stack (us-east-1)
 
-The edge stack needs no secret parameters — the WAF uses a regex format check, not
-the actual token value.
+The edge stack needs no *secret* parameters — the WAF uses a regex format check, not
+the actual token value — but `HOSTED_ZONE_ID` is required by `make deploy-edge`:
 
 ```bash
-make deploy-edge LAMBDA_FUNCTION_URL="$LAMBDA_FUNCTION_URL" LAMBDA_FUNCTION_ARN="$LAMBDA_FUNCTION_ARN"
+export HOSTED_ZONE_ID=$(aws route53 list-hosted-zones-by-name \
+  --dns-name gregolsky.pl --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||')
+
+make deploy-edge LAMBDA_FUNCTION_URL="$LAMBDA_FUNCTION_URL" LAMBDA_FUNCTION_ARN="$LAMBDA_FUNCTION_ARN" HOSTED_ZONE_ID="$HOSTED_ZONE_ID"
 ```
 
-When prompted, enter `HostedZoneId` (your Route 53 zone for `gregolsky.pl`).
-If you don't use Route 53, leave it empty and validate the ACM cert manually in the
-AWS console (Certificate Manager → pending cert → copy the DNS CNAME to your provider).
+> **Why this is required, not optional:** `aws cloudformation deploy --parameter-overrides`
+> never prompts for missing parameters — anything you don't pass silently takes the
+> template's `Default` (`''` for `HostedZoneId`). An empty `HostedZoneId` disables ACM's
+> automatic DNS validation entirely, and the stack will sit `CREATE_IN_PROGRESS` waiting
+> for a validation CNAME that nothing ever creates — indistinguishable from a hang until
+> you check `describe-stack-events` and see `ResolverCert` still `CREATE_IN_PROGRESS`
+> hours later. `make deploy-edge` now hard-fails if `HOSTED_ZONE_ID` is unset, specifically
+> to avoid this.
+>
+> If you genuinely don't use Route 53, call `aws cloudformation deploy` directly (bypass
+> the Makefile) and validate the ACM cert manually in the console (Certificate Manager →
+> pending cert → copy the DNS CNAME to your DNS provider).
 
-> **ACM cert validation can take up to 30 minutes.** The stack waits. Don't cancel.
+> **ACM cert validation can take up to 30 minutes** even with `HostedZoneId` set correctly.
+> The stack waits. Don't cancel.
 
 ```bash
 make outputs-edge
@@ -105,12 +118,8 @@ make lock-permission GP_PUBLIC_KEY="$GP_PUBLIC_KEY"
 
 ### 5. Set up DNS
 
-If you provided `HostedZoneId` in step 3, the Route 53 A-alias record was created
-automatically — nothing to do here.
-
-If you left `HostedZoneId` empty, create the record manually: add a CNAME (or A-alias
-if your provider supports it) from `api.groovepede.gregolsky.pl` to the
-`DistributionDomainName` from `make outputs-edge`.
+Nothing to do — the Route 53 A-alias record was created automatically as part of
+step 3 (it depends on `HostedZoneId`, same as the ACM validation).
 
 ### 6. Build and deploy the PWA
 

@@ -181,16 +181,20 @@ export GP_PUBLIC_KEY=<printed value>
 make deploy-app GP_PUBLIC_KEY="$GP_PUBLIC_KEY"
 
 # 3. Deploy edge stack (ACM + WAF + CloudFront) — us-east-1
+# HOSTED_ZONE_ID is required: `aws cloudformation deploy` never prompts for
+# missing parameters, so an unset HostedZoneId silently defaults to '' and
+# disables ACM's auto DNS validation — the cert then hangs PENDING_VALIDATION
+# indefinitely instead of failing loudly.
 export LAMBDA_FUNCTION_URL=<FunctionUrl from outputs-app>
 export LAMBDA_FUNCTION_ARN=<FunctionArn from outputs-app>
-make deploy-edge LAMBDA_FUNCTION_URL="$LAMBDA_FUNCTION_URL" LAMBDA_FUNCTION_ARN="$LAMBDA_FUNCTION_ARN"
+export HOSTED_ZONE_ID=<Route 53 zone ID for gregolsky.pl>
+make deploy-edge LAMBDA_FUNCTION_URL="$LAMBDA_FUNCTION_URL" LAMBDA_FUNCTION_ARN="$LAMBDA_FUNCTION_ARN" HOSTED_ZONE_ID="$HOSTED_ZONE_ID"
 
 # 4. Lock Lambda permission to the specific distribution
 make lock-permission GP_PUBLIC_KEY="$GP_PUBLIC_KEY"
 
-# 5. DNS — if HostedZoneId was provided, the Route 53 A-alias was created
-#    automatically by the edge stack. Otherwise add a CNAME manually:
-#    api.groovepede.gregolsky.pl → DistributionDomainName from outputs-edge
+# 5. DNS — the Route 53 A-alias was created automatically in step 3
+#    (same HostedZoneId dependency as the ACM validation)
 
 # 6. Build + deploy the PWA
 npm run build && npm test
