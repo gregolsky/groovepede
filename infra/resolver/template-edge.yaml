@@ -174,31 +174,27 @@ Resources:
   # Access-Control-Allow-Origin value per origin (same as Odesli's CORS pattern).
   # In practice there are only 2 origins (prod + localhost) so cache fragmentation
   # is negligible. x-gp-token is NOT in the key (all users share it).
+  # NOTE: unlike AWS::CloudFront::ResponseHeadersPolicy (below), the CachePolicy
+  # and OriginRequestPolicy resource schemas do NOT wrap QueryStrings/Headers in
+  # an { Items: [...] } object — the property itself IS the array.
   ResolverCachePolicy:
     Type: AWS::CloudFront::CachePolicy
     Properties:
       CachePolicyConfig:
         Name: gp-resolver-cache-policy
         Comment: Cache Odesli responses keyed on url + userCountry + Origin
-        DefaultTTL: 86400       # 1 day (DynamoDB TTL is 60 days; CF is shorter)
-        MaxTTL: 604800          # 7 days
+        DefaultTTL: 86400   # 1 day (DynamoDB TTL is 60 days; CF is shorter)
+        MaxTTL: 604800      # 7 days
         MinTTL: 0
         ParametersInCacheKeyAndForwardedToOrigin:
           EnableAcceptEncodingGzip: true
           EnableAcceptEncodingBrotli: true
           QueryStringsConfig:
             QueryStringBehavior: whitelist
-            QueryStrings:
-              Items:
-                - url
-                - userCountry
+            QueryStrings: [url, userCountry]
           HeadersConfig:
             HeaderBehavior: whitelist
-            Headers:
-              Items:
-                - Origin                          # drives ACAO in handler response
-                - Access-Control-Request-Method   # for OPTIONS preflight caching
-                - Access-Control-Request-Headers
+            Headers: [Origin, Access-Control-Request-Method, Access-Control-Request-Headers]
           CookiesConfig:
             CookieBehavior: none
 
@@ -213,17 +209,10 @@ Resources:
         Comment: Forward url + userCountry + Origin to the Lambda origin
         QueryStringsConfig:
           QueryStringBehavior: whitelist
-          QueryStrings:
-            Items:
-              - url
-              - userCountry
+          QueryStrings: [url, userCountry]
         HeadersConfig:
           HeaderBehavior: whitelist
-          Headers:
-            Items:
-              - Origin
-              - Access-Control-Request-Method
-              - Access-Control-Request-Headers
+          Headers: [Origin, Access-Control-Request-Method, Access-Control-Request-Headers]
         CookiesConfig:
           CookieBehavior: none
 
@@ -315,17 +304,11 @@ Resources:
         CorsConfig:
           AccessControlAllowCredentials: false
           AccessControlAllowHeaders:
-            Items:
-              - content-type
-              - x-gp-token
+            Items: [content-type, x-gp-token]
           AccessControlAllowMethods:
-            Items:
-              - GET
-              - OPTIONS
+            Items: [GET, OPTIONS]
           AccessControlAllowOrigins:
-            Items:
-              - 'https://groovepede.gregolsky.pl'
-              - 'http://localhost:5173'
+            Items: ['https://groovepede.gregolsky.pl', 'http://localhost:5173']
           AccessControlMaxAgeSec: 86400
           OriginOverride: false   # let Lambda's own ACAO through if present
 
