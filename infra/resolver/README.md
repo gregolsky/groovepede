@@ -174,7 +174,22 @@ make deploy-edge LAMBDA_FUNCTION_URL=<url> LAMBDA_FUNCTION_ARN=<arn>
 | DynamoDB | ~$0 (PAY_PER_REQUEST + aggressive cache) |
 | **Total** | **~$8–10/mo** |
 
-An AWS Budgets alarm is configured at $5/mo (80% of expected).
+**No AWS Budgets alarm is deployed yet** — this is a planned follow-up, not yet built.
+
+### Cost tracking via tags
+
+Every resource in both stacks that supports tagging carries `App=groovepede-resolver`
+(set via `--tags` on `aws cloudformation deploy` in the Makefile — CloudFormation
+propagates stack-level tags automatically, no per-resource `Tags:` needed).
+
+Before a tag-scoped Budget can filter by it, the tag must be **activated as a cost
+allocation tag** (one-time, manual):
+1. Deploy at least once so the tag appears on billed resources
+2. Wait ~24h for it to show up in Cost Explorer
+3. Billing console → Cost Allocation Tags → activate `App`, or:
+   `aws ce update-cost-allocation-tags-status --cost-allocation-tags-status Key=App,Status=Active`
+
+Until that's done, a Budget can only track the whole account, not just this project.
 
 ---
 

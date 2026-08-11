@@ -6,6 +6,15 @@ EDGE_REGION  := us-east-1
 APP_STACK    := gp-resolver-app
 EDGE_STACK   := gp-resolver-edge
 
+# Applied to both stacks so every taggable resource (DynamoDB, Lambda, Logs,
+# ACM, WAF, CloudFront, S3) carries the same tag — lets a Budget query scope
+# to just this project's spend instead of the whole AWS account.
+# CloudFormation propagates stack-level tags to supported resources automatically;
+# untaggable resources (Function URL, permissions, IAM role, OAC/cache/origin-
+# request/response-headers policies, Route 53 record) are free or bundled into
+# a taggable parent's cost line, so nothing billable is missed.
+STACK_TAGS := App=groovepede-resolver
+
 # Before deploying, generate a key pair (one-time):
 #   make keygen
 # Then set:
@@ -77,6 +86,7 @@ deploy-app: build
 	    GpPublicKey="$(GP_PUBLIC_KEY)" \
 	    OdesliKey="$(ODESLI_KEY)" \
 	    CloudFrontDistributionArn="$(DISTRIBUTION_ARN)" \
+	  --tags $(STACK_TAGS) \
 	  --no-fail-on-empty-changeset
 
 # ── Edge stack (us-east-1): ACM + WAF + CloudFront ───────────────────────────
@@ -93,6 +103,7 @@ deploy-edge:
 	  --parameter-overrides \
 	    LambdaFunctionUrl="$(LAMBDA_FUNCTION_URL)" \
 	    LambdaFunctionArn="$(LAMBDA_FUNCTION_ARN)" \
+	  --tags $(STACK_TAGS) \
 	  --no-fail-on-empty-changeset
 
 # ── Lock the Lambda permission to the specific CloudFront distribution ─────────
