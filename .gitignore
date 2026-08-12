@@ -1,6 +1,8 @@
 node_modules/
 dist/
 infra/resolver/.build/
+infra/resolver-pi/data/
+infra/resolver-pi/.env
 test-results/
 playwright-report/
 

@@ -1,0 +1,62 @@
+# Groovepede resolver — self-hosted alternative to the AWS edge stack.
+# Run ./init-letsencrypt.sh once (obtains the cert), then: docker compose up -d
+#
+# Values come from .env (see .env.example). Build context is the parent infra/
+# dir so the image can include the shared resolver-core.mjs.
+
+services:
+  resolver:
+    build:
+      context: ..
+      dockerfile: resolver-pi/Dockerfile
+    image: gp-resolver-pi
+    environment:
+      GP_PUBLIC_KEY:   "${GP_PUBLIC_KEY:?set GP_PUBLIC_KEY in .env — from cd ../resolver && make keygen}"
+      ODESLI_KEY:      "${ODESLI_KEY:-}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-}"
+      PORT:            "8787"
+      DB_PATH:         /data/cache.db
+    volumes:
+      - ./data:/data
+    expose:
+      - "8787"          # reachable only inside the compose network; nginx fronts it
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - resolver
+    environment:
+      DOMAIN:           "${DOMAIN:?set DOMAIN in .env}"
+      RATE_LIMIT:       "${RATE_LIMIT:-10r/s}"
+      RATE_LIMIT_BURST: "${RATE_LIMIT_BURST:-20}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/app.conf.template:/etc/nginx/templates/app.conf.template:ro
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    restart: unless-stopped
+    # Reload every 6h so renewed certs are picked up without a restart.
+    command: >
+      sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done &
+             exec nginx -g 'daemon off;'"
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    restart: unless-stopped
+    # Attempt renewal every 12h (no-op until ~30 days before expiry).
+    entrypoint: >
+      sh -c "trap exit TERM; while :; do
+               certbot renew --webroot -w /var/www/certbot --quiet;
+               sleep 12h & wait $${!};
+             done"

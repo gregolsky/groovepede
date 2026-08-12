@@ -1,0 +1,52 @@
+# Rendered from this template at container start by the nginx image's
+# docker-entrypoint (envsubst). Only ${DOMAIN}, ${RATE_LIMIT}, ${RATE_LIMIT_BURST}
+# are env vars — nginx runtime vars ($host, $remote_addr, …) are left untouched.
+
+# Per-IP rate limiting — replaces AWS WAF's rate-based rule.
+limit_req_zone $binary_remote_addr zone=gp_rl:10m rate=${RATE_LIMIT};
+
+# ── HTTP :80 — ACME HTTP-01 challenge + redirect to HTTPS ───────────────────
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    # Let's Encrypt webroot challenge (served by certbot's shared volume).
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ── HTTPS :443 — TLS termination + proxy to the resolver ────────────────────
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    # Unauthenticated liveness check (no rate limit).
+    location = /healthz {
+        proxy_pass http://resolver:8787/healthz;
+    }
+
+    location / {
+        limit_req zone=gp_rl burst=${RATE_LIMIT_BURST} nodelay;
+        limit_req_status 429;
+
+        proxy_pass http://resolver:8787;
+        proxy_set_header Host              $host;
+        proxy_set_header Origin            $http_origin;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 10s;
+    }
+}
