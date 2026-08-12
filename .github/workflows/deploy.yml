@@ -24,6 +24,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          # Vite inlines this into the bundle at build time; without it the app
+          # signs empty resolver tokens and every request 403s. Add it under
+          # Settings → Secrets and variables → Actions → New repository secret.
+          VITE_GP_PRIVATE_KEY: ${{ secrets.VITE_GP_PRIVATE_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
