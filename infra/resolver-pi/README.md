@@ -55,6 +55,26 @@ docker compose up -d
 curl https://$DOMAIN/healthz          # → {"ok":true} with a valid cert
 ```
 
+## Deploy to the Pi
+
+`deploy.sh` rsyncs this stack (plus the shared `resolver-core.mjs`) to the Pi and
+builds/starts the containers over SSH. On first run — when no cert exists yet — it
+runs the Let's Encrypt bootstrap automatically.
+
+```bash
+cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. gregolsky@192.168.1.123)
+./deploy.sh                           # deploys to ~/groovepede-resolver on the Pi
+```
+
+- Config (`PI_SSH_TARGET`, `PI_REMOTE_DIR`) is read from the git-ignored `deploy.env`;
+  a CLI arg overrides it: `./deploy.sh pi@10.0.0.5`.
+- `./deploy.sh --init` forces re-running the cert bootstrap.
+- The Pi's `./data/` (SQLite cache + certs) is never overwritten by a redeploy.
+
+Prereqs on the Pi: Docker + Docker Compose, ports 80+443 forwarded, and the DNS A
+record for `$DOMAIN` pointing at your public IP (as in Prerequisites above). The
+resolver `.env` is synced to the Pi; `deploy.env` is not.
+
 ## Point the PWA at your Pi
 
 Build the PWA with `ODESLI_BASE` set to your Pi's hostname instead of the AWS edge.

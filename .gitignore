@@ -3,6 +3,7 @@ dist/
 infra/resolver/.build/
 infra/resolver-pi/data/
 infra/resolver-pi/.env
+infra/resolver-pi/deploy.env
 test-results/
 playwright-report/
 
