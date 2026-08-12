@@ -97,6 +97,12 @@ Resources:
         # The real signature check happens in the Lambda (on cache misses only).
         # This coarse regex filter rejects obviously malformed requests at the edge
         # before they can wake Lambda. Token format: "<10-digit-ts>.<86-char-b64url-sig>"
+        #
+        # IMPORTANT: CORS preflight (OPTIONS) requests carry NO custom headers — the
+        # browser sends x-gp-token only on the actual request, never the preflight.
+        # So OPTIONS must be exempt, or every preflight 403s and the browser blocks
+        # the real request. The Lambda answers OPTIONS natively with CORS headers.
+        # Block only when: method != OPTIONS AND the token doesn't match.
         - Name: RequireAppToken
           Priority: 0
           Action:
@@ -109,16 +115,28 @@ Resources:
             CloudWatchMetricsEnabled: true
             MetricName: RequireAppToken
           Statement:
-            NotStatement:
-              Statement:
-                RegexMatchStatement:
-                  RegexString: '^[0-9]{9,11}\.[A-Za-z0-9_-]{80,128}$'
-                  FieldToMatch:
-                    SingleHeader:
-                      Name: x-gp-token
-                  TextTransformations:
-                    - Priority: 0
-                      Type: NONE
+            AndStatement:
+              Statements:
+                - NotStatement:
+                    Statement:
+                      ByteMatchStatement:
+                        SearchString: OPTIONS
+                        FieldToMatch:
+                          Method: {}
+                        PositionalConstraint: EXACTLY
+                        TextTransformations:
+                          - Priority: 0
+                            Type: NONE
+                - NotStatement:
+                    Statement:
+                      RegexMatchStatement:
+                        RegexString: '^[0-9]{9,11}\.[A-Za-z0-9_-]{80,128}$'
+                        FieldToMatch:
+                          SingleHeader:
+                            Name: x-gp-token
+                        TextTransformations:
+                          - Priority: 0
+                            Type: NONE
 
         # Rule 2 — Per-IP rate limit.
         # Blocks any IP that fires more than RateLimitPerIp requests in 5 minutes.
