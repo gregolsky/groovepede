@@ -75,6 +75,20 @@ Prereqs on the Pi: Docker + Docker Compose, ports 80+443 forwarded, and the DNS 
 record for `$DOMAIN` pointing at your public IP (as in Prerequisites above). The
 resolver `.env` is synced to the Pi; `deploy.env` is not.
 
+### Custom host ports
+
+Set `HTTP_PORT` / `HTTPS_PORT` in `.env` to publish on non-default ports (nginx still
+listens on 80/443 inside the container):
+
+```
+HTTP_PORT=8080
+HTTPS_PORT=4433
+```
+
+Because Let's Encrypt HTTP-01 validates on public **:80** and browsers expect **:443**,
+your router must forward public `80 → HTTP_PORT` and `443 → HTTPS_PORT`. (The PWA's
+`ODESLI_BASE` stays `https://$DOMAIN` with no port — the router handles the mapping.)
+
 ## Point the PWA at your Pi
 
 Build the PWA with `ODESLI_BASE` set to your Pi's hostname instead of the AWS edge.

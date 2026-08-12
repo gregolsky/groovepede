@@ -35,9 +35,13 @@ services:
       DOMAIN:           "${DOMAIN:?set DOMAIN in .env}"
       RATE_LIMIT:       "${RATE_LIMIT:-10r/s}"
       RATE_LIMIT_BURST: "${RATE_LIMIT_BURST:-20}"
+    # Host ports are configurable (nginx still listens on 80/443 INSIDE the
+    # container). Defaults 80/443. If you change them, your router must forward
+    # public 80 → HTTP_PORT and 443 → HTTPS_PORT — Let's Encrypt HTTP-01 always
+    # validates on public port 80, and clients expect 443.
     ports:
-      - "80:80"
-      - "443:443"
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./nginx/app.conf.template:/etc/nginx/templates/app.conf.template:ro
       - ./data/certbot/conf:/etc/letsencrypt
