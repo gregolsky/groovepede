@@ -17,12 +17,23 @@ Parameters:
     Default: api.groovepede.gregolsky.pl
     Description: Custom domain for the CloudFront distribution.
 
+  CertificateArn:
+    Type: String
+    Description: >
+      ARN of a PRE-VALIDATED ACM certificate (us-east-1) for DomainName.
+      The stack does NOT create or manage the cert — request and validate it
+      separately (see README § Certificate), then pass its ARN here. This keeps
+      the slow/finicky cert lifecycle out of the stack, so a rollback can never
+      destroy a cert that takes ~30 min to re-issue, and repeated deploys don't
+      race the ACM DNS validation record.
+    AllowedPattern: '^arn:aws:acm:us-east-1:[0-9]{12}:certificate/.+$'
+
   HostedZoneId:
     Type: String
     Description: >
       Route 53 hosted zone ID for the domain (e.g. Z3DZXE0Q79N41H for
-      gregolsky.pl). Used for ACM DNS validation. Leave empty if you validate
-      the cert manually or via another DNS provider.
+      gregolsky.pl). Used only to auto-create the CloudFront A-alias DNS record.
+      Leave empty to manage that record manually / via another DNS provider.
     Default: ''
 
   LambdaFunctionUrl:
@@ -59,18 +70,12 @@ Conditions:
 Resources:
 
   # ── ACM Certificate ─────────────────────────────────────────────────────────
-  # DNS-validated. If HostedZoneId is set, SAM/CFN can auto-create the DNS record
-  # in Route 53. Otherwise validate manually in the ACM console.
-  ResolverCert:
-    Type: AWS::CertificateManager::Certificate
-    Properties:
-      DomainName: !Ref DomainName
-      ValidationMethod: DNS
-      DomainValidationOptions: !If
-        - HasHostedZone
-        - - DomainName:    !Ref DomainName
-            HostedZoneId:  !Ref HostedZoneId
-        - !Ref AWS::NoValue
+  # NOT created here — passed in as CertificateArn (pre-validated, us-east-1).
+  # Letting the stack own the cert caused repeated CREATE_FAILED loops: on each
+  # attempt the ACM resource raced the deterministic DNS validation record and
+  # flipped to FAILED fast, then rollback deleted the cert (but not the record),
+  # so the next attempt hit the same race. Managing the cert out-of-band fixes it
+  # and is the recommended pattern (cert lifecycle ≠ stack lifecycle).
 
   # ── WAF Web ACL ─────────────────────────────────────────────────────────────
   # scope: CLOUDFRONT — MUST be created in us-east-1.
@@ -228,7 +233,7 @@ Resources:
         Aliases:
           - !Ref DomainName
         ViewerCertificate:
-          AcmCertificateArn: !Ref ResolverCert
+          AcmCertificateArn: !Ref CertificateArn
           SslSupportMethod: sni-only
           MinimumProtocolVersion: TLSv1.2_2021
         WebACLId: !GetAtt ResolverWaf.Arn

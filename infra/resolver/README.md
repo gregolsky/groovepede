@@ -78,50 +78,85 @@ export LAMBDA_FUNCTION_URL=<FunctionUrl from outputs>
 export LAMBDA_FUNCTION_ARN=<FunctionArn from outputs>
 ```
 
-### 3. Deploy the edge stack (us-east-1)
+### 3. Request the ACM certificate (out-of-band, us-east-1)
 
-The edge stack needs no *secret* parameters — the WAF uses a regex format check, not
-the actual token value — but `HOSTED_ZONE_ID` is required by `make deploy-edge`:
+The stack does **not** create the cert — it takes a pre-validated ARN as a parameter.
+This is deliberate: letting CloudFormation own the cert caused repeated `CREATE_FAILED`
+loops (the ACM resource raced its own DNS validation record, flipped to `FAILED`, and
+rollback deleted the cert so the next attempt hit the same race). Managing the cert
+separately also means a stack rollback can never destroy a cert that takes time to
+re-issue.
+
+```bash
+CERT_ARN=$(aws acm request-certificate \
+  --domain-name api.groovepede.gregolsky.pl \
+  --validation-method DNS --region us-east-1 \
+  --query CertificateArn --output text)
+```
+
+**⚠ CAA gotcha (this domain specifically):** `groovepede.gregolsky.pl` is a CNAME to
+`gregolsky.github.io` (GitHub Pages). When ACM does its CAA check for
+`api.groovepede.gregolsky.pl`, the lookup walks up to `groovepede.gregolsky.pl`, follows
+that CNAME into `github.io`, and finds GitHub's CAA record — which authorizes only
+sectigo / digicert / letsencrypt, **not** Amazon. Result: `CAA_ERROR`, cert fails in
+seconds. Fix — add a CAA at the exact `api.` name authorizing Amazon (stops the walk at
+the leaf; does not affect the main site):
+
+```bash
+aws route53 change-resource-record-sets --hosted-zone-id "$HOSTED_ZONE_ID" --change-batch '{
+  "Changes": [{ "Action": "UPSERT", "ResourceRecordSet": {
+    "Name": "api.groovepede.gregolsky.pl", "Type": "CAA", "TTL": 300,
+    "ResourceRecords": [
+      {"Value": "0 issue \"amazon.com\""}, {"Value": "0 issue \"amazonaws.com\""},
+      {"Value": "0 issue \"amazontrust.com\""}, {"Value": "0 issue \"awstrust.com\""}
+    ] } }]
+}'
+```
+
+Add the validation CNAME (ACM's name is deterministic per-domain, so it persists across
+re-requests) and wait for issuance:
+
+```bash
+# The validation record — read it from the cert and UPSERT it into Route 53:
+aws acm describe-certificate --certificate-arn "$CERT_ARN" --region us-east-1 \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
+# (UPSERT that Name/Value as a CNAME in the zone, then:)
+aws acm wait certificate-validated --certificate-arn "$CERT_ARN" --region us-east-1 && echo ISSUED
+```
+
+### 4. Deploy the edge stack (us-east-1)
 
 ```bash
 export HOSTED_ZONE_ID=$(aws route53 list-hosted-zones-by-name \
   --dns-name gregolsky.pl --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||')
 
-make deploy-edge LAMBDA_FUNCTION_URL="$LAMBDA_FUNCTION_URL" LAMBDA_FUNCTION_ARN="$LAMBDA_FUNCTION_ARN" HOSTED_ZONE_ID="$HOSTED_ZONE_ID"
+make deploy-edge \
+  LAMBDA_FUNCTION_URL="$LAMBDA_FUNCTION_URL" \
+  LAMBDA_FUNCTION_ARN="$LAMBDA_FUNCTION_ARN" \
+  HOSTED_ZONE_ID="$HOSTED_ZONE_ID" \
+  CERT_ARN="$CERT_ARN"
 ```
 
-> **Why this is required, not optional:** `aws cloudformation deploy --parameter-overrides`
-> never prompts for missing parameters — anything you don't pass silently takes the
-> template's `Default` (`''` for `HostedZoneId`). An empty `HostedZoneId` disables ACM's
-> automatic DNS validation entirely, and the stack will sit `CREATE_IN_PROGRESS` waiting
-> for a validation CNAME that nothing ever creates — indistinguishable from a hang until
-> you check `describe-stack-events` and see `ResolverCert` still `CREATE_IN_PROGRESS`
-> hours later. `make deploy-edge` now hard-fails if `HOSTED_ZONE_ID` is unset, specifically
-> to avoid this.
->
-> If you genuinely don't use Route 53, call `aws cloudformation deploy` directly (bypass
-> the Makefile) and validate the ACM cert manually in the console (Certificate Manager →
-> pending cert → copy the DNS CNAME to your DNS provider).
-
-> **ACM cert validation can take up to 30 minutes** even with `HostedZoneId` set correctly.
-> The stack waits. Don't cancel.
+`make deploy-edge` hard-fails if any of `LAMBDA_FUNCTION_URL`, `HOSTED_ZONE_ID`, or
+`CERT_ARN` is unset — `aws cloudformation deploy` never prompts for missing parameters,
+it silently uses template defaults, so these are checked up front.
 
 ```bash
 make outputs-edge
 ```
 
-### 4. Lock the Lambda permission to the specific distribution
+### 5. Lock the Lambda permission to the specific distribution
 
 ```bash
 make lock-permission GP_PUBLIC_KEY="$GP_PUBLIC_KEY"
 ```
 
-### 5. Set up DNS
+### 6. DNS for the CloudFront distribution
 
-Nothing to do — the Route 53 A-alias record was created automatically as part of
-step 3 (it depends on `HostedZoneId`, same as the ACM validation).
+Nothing to do — the Route 53 A-alias (`api.groovepede.gregolsky.pl` → CloudFront) is
+created automatically by the edge stack (step 4), gated on `HostedZoneId`.
 
-### 6. Build and deploy the PWA
+### 7. Build and deploy the PWA
 
 ```bash
 # From project root:
@@ -138,7 +173,7 @@ For CI, add `VITE_GP_PRIVATE_KEY` as a GitHub Actions secret:
     VITE_GP_PRIVATE_KEY: ${{ secrets.VITE_GP_PRIVATE_KEY }}
 ```
 
-### 7. Smoke test
+### 8. Smoke test
 
 ```bash
 make smoke VITE_GP_PRIVATE_KEY="$VITE_GP_PRIVATE_KEY"
