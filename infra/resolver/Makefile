@@ -91,16 +91,20 @@ deploy-app: build
 
 # ── Edge stack (us-east-1): ACM + WAF + CloudFront ───────────────────────────
 
-# Requires: LAMBDA_FUNCTION_URL from `make outputs-app`, HOSTED_ZONE_ID for your
-# Route 53 zone (find it: aws route53 list-hosted-zones-by-name --dns-name gregolsky.pl).
+# Requires:
+#   LAMBDA_FUNCTION_URL  — from `make outputs-app`
+#   HOSTED_ZONE_ID       — Route 53 zone for gregolsky.pl (only used to auto-create
+#                          the CloudFront A-alias record)
+#   CERT_ARN             — a PRE-VALIDATED ACM cert (us-east-1) for the domain. The
+#                          stack no longer creates the cert (see README § Certificate):
+#                          request + validate it out-of-band, then pass the ARN here.
 # `aws cloudformation deploy` never prompts for missing parameters — anything not
-# passed silently takes the template Default (''), which disables ACM's automatic
-# DNS validation and leaves the cert stuck PENDING_VALIDATION forever. So this is
-# a hard requirement here, not optional.
+# passed silently takes the template Default — so these are hard-checked below.
 # No secret parameters needed — the edge stack is secret-free.
 deploy-edge:
 	@test -n "$(LAMBDA_FUNCTION_URL)" || (echo "ERROR: set LAMBDA_FUNCTION_URL=<url from outputs-app>"; exit 1)
 	@test -n "$(HOSTED_ZONE_ID)" || (echo "ERROR: set HOSTED_ZONE_ID (aws route53 list-hosted-zones-by-name --dns-name gregolsky.pl)"; exit 1)
+	@test -n "$(CERT_ARN)" || (echo "ERROR: set CERT_ARN (pre-validated us-east-1 ACM cert; see README § Certificate)"; exit 1)
 	aws cloudformation deploy \
 	  --template-file template-edge.yaml \
 	  --stack-name $(EDGE_STACK) \
@@ -110,6 +114,7 @@ deploy-edge:
 	    LambdaFunctionUrl="$(LAMBDA_FUNCTION_URL)" \
 	    LambdaFunctionArn="$(LAMBDA_FUNCTION_ARN)" \
 	    HostedZoneId="$(HOSTED_ZONE_ID)" \
+	    CertificateArn="$(CERT_ARN)" \
 	  --tags $(STACK_TAGS) \
 	  --no-fail-on-empty-changeset
 
@@ -144,16 +149,16 @@ outputs-edge:
 
 # Generates a real signed token using the private key and sends a test request.
 # Requires: VITE_GP_PRIVATE_KEY set in the shell environment.
+# Signs via Node crypto with dsaEncoding: ieee-p1363 — matching the browser's
+# WebCrypto output (raw r||s), which is what the Lambda verifies. (openssl's
+# `dgst -sign` emits ASN.1/DER instead and would fail verification.)
 smoke:
 	@test -n "$(VITE_GP_PRIVATE_KEY)" || (echo "ERROR: set VITE_GP_PRIVATE_KEY"; exit 1)
-	@TS=$$(date +%s); \
-	 SIG=$$(printf "%s\nhttps://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp" "$$TS" \
-	   | openssl dgst -sha256 -sign <(openssl pkcs8 -nocrypt -inform DER -in <(echo "$(VITE_GP_PRIVATE_KEY)" | base64 -d)) \
-	   | base64 -w0 | tr '+/' '-_' | tr -d '='); \
-	 TOKEN="$$TS.$$SIG"; \
+	@URL="https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp"; \
+	 TOKEN=$$(VITE_GP_PRIVATE_KEY="$(VITE_GP_PRIVATE_KEY)" GP_SMOKE_URL="$$URL" node -e 'const{createPrivateKey,sign}=require("crypto");const k=createPrivateKey({key:Buffer.from(process.env.VITE_GP_PRIVATE_KEY,"base64"),format:"der",type:"pkcs8"});const ts=Math.floor(Date.now()/1000);const s=sign("sha256",Buffer.from(ts+"\n"+process.env.GP_SMOKE_URL),{key:k,dsaEncoding:"ieee-p1363"});process.stdout.write(ts+"."+s.toString("base64").replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,""))'); \
 	 echo "Token: $$TOKEN"; \
 	 curl -si \
-	   "https://api.groovepede.gregolsky.pl/v1/resolve?url=https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp&userCountry=US" \
+	   "https://api.groovepede.gregolsky.pl/v1/resolve?url=$$URL&userCountry=US" \
 	   -H "Origin: https://groovepede.gregolsky.pl" \
 	   -H "x-gp-token: $$TOKEN" \
 	 | head -60
