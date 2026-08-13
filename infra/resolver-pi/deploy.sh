@@ -24,17 +24,18 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-usage() { echo "Usage: $0 [user@host] [remote-dir] [--init]   (or set PI_SSH_TARGET in deploy.env)" >&2; exit 1; }
+usage() { echo "Usage: $0 [user@host] [remote-dir] [--init] [--staging]   (or set PI_SSH_TARGET in deploy.env)" >&2; exit 1; }
 
 # ── Config: load deploy.env (git-ignored), CLI args override ────────────────
 [ -f deploy.env ] && { set -a; . ./deploy.env; set +a; }
 
-POSITIONAL=(); FORCE_INIT=false
+POSITIONAL=(); FORCE_INIT=false; STAGING=""
 for a in "$@"; do
   case "$a" in
-    --init) FORCE_INIT=true ;;
-    -*)     echo "unknown flag: $a" >&2; usage ;;
-    *)      POSITIONAL+=("$a") ;;
+    --init)    FORCE_INIT=true ;;
+    --staging) FORCE_INIT=true; STAGING="--staging" ;;   # LE staging: untrusted cert, generous rate limits
+    -*)        echo "unknown flag: $a" >&2; usage ;;
+    *)         POSITIONAL+=("$a") ;;
   esac
 done
 TARGET="${POSITIONAL[0]:-${PI_SSH_TARGET:-}}"
@@ -93,7 +94,7 @@ fi
 if $NEED_INIT; then
   echo "→ No cert for $DOMAIN yet — running init-letsencrypt.sh on the Pi…"
   echo "   (needs ports 80+443 forwarded to the Pi and DNS A record $DOMAIN → your public IP)"
-  ssh "${SSH_OPTS[@]}" -t "$TARGET" "cd '$REMOTE_PI' && chmod +x init-letsencrypt.sh && ./init-letsencrypt.sh"
+  ssh "${SSH_OPTS[@]}" -t "$TARGET" "cd '$REMOTE_PI' && chmod +x init-letsencrypt.sh && ./init-letsencrypt.sh $STAGING"
 fi
 
 # ── Build + start ───────────────────────────────────────────────────────────
