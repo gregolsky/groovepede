@@ -50,6 +50,16 @@ DOMAIN=$(envval DOMAIN)
 HTTPS_PORT=$(envval HTTPS_PORT); HTTPS_PORT="${HTTPS_PORT:-443}"
 [ -n "$DOMAIN" ] || { echo "ERROR: DOMAIN is empty in .env" >&2; exit 1; }
 
+# ── One shared SSH connection so you authenticate ONCE, not per command ──────
+# Without this, each ssh/rsync opens its own session → a password prompt each.
+# ControlMaster reuses a single connection for every call below.
+SSH_CTRL="${TMPDIR:-/tmp}/gp-deploy-$(printf '%s' "$TARGET" | tr -c 'A-Za-z0-9' _).sock"
+SSH_OPTS=(-o ControlMaster=auto -o ControlPath="$SSH_CTRL" -o ControlPersist=120)
+RSYNC_SSH="ssh -o ControlMaster=auto -o ControlPath=$SSH_CTRL -o ControlPersist=120"
+trap 'ssh -o ControlPath="$SSH_CTRL" -O exit "$TARGET" 2>/dev/null || true' EXIT
+echo "→ Opening SSH connection (enter your password/passphrase once if prompted)…"
+ssh "${SSH_OPTS[@]}" "$TARGET" true
+
 echo "→ Target:     $TARGET"
 echo "→ Remote dir: $REMOTE_DIR"
 echo "→ Domain:     $DOMAIN"
@@ -59,14 +69,14 @@ echo "→ Domain:     $DOMAIN"
 #   $REMOTE_DIR/resolver/resolver-core.mjs
 #   $REMOTE_DIR/resolver-pi/*
 echo "→ Syncing files…"
-ssh "$TARGET" "mkdir -p '$REMOTE_DIR/resolver' '$REMOTE_DIR/resolver-pi'"
+ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/resolver' '$REMOTE_DIR/resolver-pi'"
 
-rsync -az ../resolver/resolver-core.mjs "$TARGET:$REMOTE_DIR/resolver/resolver-core.mjs"
+rsync -az -e "$RSYNC_SSH" ../resolver/resolver-core.mjs "$TARGET:$REMOTE_DIR/resolver/resolver-core.mjs"
 
 # --delete keeps the remote in sync, but 'data/' (cache + certs) is excluded so
 # it is neither transferred nor deleted. deploy.env is deploy-only (holds the
 # SSH target) and must not land on the Pi.
-rsync -az --delete \
+rsync -az --delete -e "$RSYNC_SSH" \
   --exclude 'data/' --exclude '.git' --exclude 'deploy.env' \
   ./ "$TARGET:$REMOTE_DIR/resolver-pi/"
 
@@ -75,7 +85,7 @@ REMOTE_PI="$REMOTE_DIR/resolver-pi"
 # ── First-time cert bootstrap ───────────────────────────────────────────────
 NEED_INIT=$FORCE_INIT
 if ! $FORCE_INIT; then
-  if ssh "$TARGET" "[ ! -f '$REMOTE_PI/data/certbot/conf/live/$DOMAIN/fullchain.pem' ]"; then
+  if ssh "${SSH_OPTS[@]}" "$TARGET" "[ ! -f '$REMOTE_PI/data/certbot/conf/live/$DOMAIN/fullchain.pem' ]"; then
     NEED_INIT=true
   fi
 fi
@@ -83,18 +93,16 @@ fi
 if $NEED_INIT; then
   echo "→ No cert for $DOMAIN yet — running init-letsencrypt.sh on the Pi…"
   echo "   (needs ports 80+443 forwarded to the Pi and DNS A record $DOMAIN → your public IP)"
-  ssh -t "$TARGET" "cd '$REMOTE_PI' && chmod +x init-letsencrypt.sh && ./init-letsencrypt.sh"
+  ssh "${SSH_OPTS[@]}" -t "$TARGET" "cd '$REMOTE_PI' && chmod +x init-letsencrypt.sh && ./init-letsencrypt.sh"
 fi
 
 # ── Build + start ───────────────────────────────────────────────────────────
-echo "→ Building and starting containers on the Pi…"
-ssh "$TARGET" "cd '$REMOTE_PI' && docker compose up -d --build"
-
-echo "→ Container status:"
-ssh "$TARGET" "cd '$REMOTE_PI' && docker compose ps"
-
-echo "→ Health check (from the Pi, via nginx on :$HTTPS_PORT):"
-ssh "$TARGET" "curl -fsS -k -H 'Host: $DOMAIN' https://localhost:$HTTPS_PORT/healthz && echo || echo '  (local check failed — verify externally: curl https://$DOMAIN/healthz)'"
+echo "→ Building, starting, and health-checking on the Pi…"
+ssh "${SSH_OPTS[@]}" "$TARGET" "set -e; cd '$REMOTE_PI' \
+  && docker compose up -d --build \
+  && echo '--- status ---' && docker compose ps \
+  && echo '--- health ---' && (curl -fsS -k -H 'Host: $DOMAIN' https://localhost:$HTTPS_PORT/healthz && echo \
+       || echo '  (local check failed — verify externally: curl https://$DOMAIN/healthz)')"
 
 echo
 echo "✓ Deployed to $TARGET. Point the PWA ODESLI_BASE at https://$DOMAIN if you haven't."

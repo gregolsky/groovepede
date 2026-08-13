@@ -31,11 +31,11 @@ LIVE="$CONF/live/$DOMAIN"
 mkdir -p "$LIVE" "$WWW"
 
 echo "### [1/4] Writing a temporary self-signed cert so nginx can start..."
-docker run --rm -v "$PWD/$CONF:/etc/letsencrypt" certbot/certbot \
-  sh -c "openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
-    -keyout '/etc/letsencrypt/live/$DOMAIN/privkey.pem' \
-    -out    '/etc/letsencrypt/live/$DOMAIN/fullchain.pem' \
-    -subj   '/CN=$DOMAIN'"
+command -v openssl >/dev/null || { echo "ERROR: openssl not found on this host (apt install openssl)"; exit 1; }
+openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+  -keyout "$LIVE/privkey.pem" \
+  -out    "$LIVE/fullchain.pem" \
+  -subj   "/CN=$DOMAIN" 2>/dev/null
 
 echo "### [2/4] Starting nginx..."
 docker compose up -d nginx
