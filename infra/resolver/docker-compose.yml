@@ -31,7 +31,8 @@ services:
   nginx:
     image: nginx:1.27-alpine
     depends_on:
-      - resolver
+      resolver:
+        condition: service_healthy
     environment:
       DOMAIN:           "${DOMAIN:?set DOMAIN in .env}"
       RATE_LIMIT:       "${RATE_LIMIT:-10r/s}"

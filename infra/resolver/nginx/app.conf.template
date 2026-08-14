@@ -68,9 +68,21 @@ server {
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
 
+    # Resolve the resolver's hostname at REQUEST time via Docker's embedded
+    # DNS, not once at config-load time. A bare `proxy_pass http://resolver:…`
+    # fails config parsing outright ("host not found in upstream") if the
+    # resolver container's network isn't up yet at the moment nginx starts —
+    # which turned a brief Docker networking hiccup into hours of downtime,
+    # since nginx then refuses to start at all and just restart-loops forever.
+    # A $variable in proxy_pass defers resolution to request time and
+    # re-resolves per the `valid=` TTL, so nginx starts regardless and a dead
+    # upstream degrades to a 502 that self-heals instead of never starting.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $gp_upstream resolver;
+
     # Unauthenticated liveness check (no rate limit).
     location = /healthz {
-        proxy_pass http://resolver:8787/healthz;
+        proxy_pass http://$gp_upstream:8787/healthz;
     }
 
     location / {
@@ -82,7 +94,10 @@ server {
         limit_req zone=gp_rl burst=${RATE_LIMIT_BURST} nodelay;
         limit_req_status 429;
 
-        proxy_pass http://resolver:8787;
+        # $request_uri is required here: with a variable in proxy_pass (as
+        # opposed to a plain URL), nginx no longer appends the matched URI
+        # automatically, so it must be added back explicitly.
+        proxy_pass http://$gp_upstream:8787$request_uri;
         proxy_set_header Host              $host;
         proxy_set_header Origin            $http_origin;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;

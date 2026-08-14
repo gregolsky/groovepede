@@ -11,8 +11,13 @@
 # Prereqs: a public DNS A record for $DOMAIN → this host's public IP, and
 # ports 80 + 443 forwarded to this machine. Run once; renewals are automatic.
 #
-# Usage:  ./init-letsencrypt.sh            (real Let's Encrypt cert)
-#         ./init-letsencrypt.sh --staging  (LE staging — untrusted, avoids rate limits while testing)
+# Refuses to run if a cert for $DOMAIN already exists — issuing one burns one
+# of Let's Encrypt's 5-per-7-days duplicate-cert quota, and re-issuing when you
+# didn't mean to has locked this domain out before. Pass --force to override.
+#
+# Usage:  ./init-letsencrypt.sh              (real Let's Encrypt cert)
+#         ./init-letsencrypt.sh --staging    (LE staging — untrusted, avoids rate limits while testing)
+#         ./init-letsencrypt.sh --force      (replace an existing cert)
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -24,12 +29,31 @@ set -a; . ./.env; set +a
 [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "ERROR: DOMAIN has unexpected characters"; exit 1; }
 PUID="${PUID:-10001}"; PGID="${PGID:-10001}"
 
-STAGING_ARG=""
-[ "${1:-}" = "--staging" ] && STAGING_ARG="--staging" && echo "### Using Let's Encrypt STAGING (cert will be untrusted)"
+STAGING_ARG=""; FORCE=false
+for a in "$@"; do
+  case "$a" in
+    --staging) STAGING_ARG="--staging"; echo "### Using Let's Encrypt STAGING (cert will be untrusted)" ;;
+    --force)   FORCE=true ;;
+  esac
+done
 
 CONF=./data/certbot/conf
 WWW=./data/certbot/www
 LIVE="$CONF/live/$DOMAIN"
+
+# ── Refuse to replace a working cert unless --force ─────────────────────────
+if [ -d "$LIVE" ] || [ -f "$CONF/renewal/$DOMAIN.conf" ]; then
+  if ! $FORCE; then
+    EXPIRY=$(docker compose run --rm --entrypoint sh certbot -c \
+      "openssl x509 -enddate -noout -in /etc/letsencrypt/live/$DOMAIN/fullchain.pem 2>/dev/null" \
+      2>/dev/null | sed 's/^notAfter=//') || EXPIRY="(unknown)"
+    echo "### A certificate for $DOMAIN already exists (expires ${EXPIRY:-unknown})."
+    echo "### Refusing to re-issue — Let's Encrypt allows 5 duplicate certs per 7 days."
+    echo "### Pass --force if you really mean to replace it."
+    exit 0
+  fi
+  echo "### --force given — proceeding to replace the existing cert for $DOMAIN."
+fi
 
 # nginx/certbot in docker-compose.yml run as a fixed uid:gid PUID:PGID, not
 # root and not you — so everything under ./data/certbot must be owned by that
@@ -64,6 +88,11 @@ docker compose up -d nginx
 sleep 3
 
 echo "### [3/4] Removing dummy cert and requesting the real one via HTTP-01..."
+# Only ever deletes the throwaway self-signed cert written in [1/4] above —
+# the guard at the top of this script already exits before here if a real
+# lineage exists and --force wasn't given, so this can't destroy a working
+# cert. (It used to, when the guard didn't exist — that's the whole reason
+# the guard was added.)
 sudo rm -rf "$LIVE" "$CONF/archive/$DOMAIN" "$CONF/renewal/$DOMAIN.conf"
 docker compose run --rm --entrypoint certbot certbot \
   certonly --webroot -w /var/www/certbot \
@@ -71,7 +100,23 @@ docker compose run --rm --entrypoint certbot certbot \
     --agree-tos --no-eff-email --non-interactive $STAGING_ARG
 
 echo "### [4/4] Reloading nginx with the real cert..."
-docker compose exec nginx nginx -s reload
+# `nginx -s reload` via `exec` fails outright if the container isn't in a
+# running state (e.g. still restarting from an earlier problem) — recreate
+# instead, then actually wait for it to come up rather than assuming reload
+# succeeded.
+docker compose up -d --force-recreate nginx
+ok=false
+for i in $(seq 1 15); do
+  if curl -fsS -k -H "Host: $DOMAIN" "https://localhost:${HTTPS_PORT:-443}/healthz" >/dev/null; then
+    ok=true; break
+  fi
+  sleep 2
+done
+if ! $ok; then
+  echo "ERROR: nginx did not come up healthy after the cert reload" >&2
+  docker compose logs --tail=30 nginx >&2
+  exit 1
+fi
 
 echo
 echo "### Done. Bring up the full stack with:"

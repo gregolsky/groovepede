@@ -56,17 +56,32 @@ curl https://$DOMAIN/healthz          # → {"ok":true} with a valid cert
 ## Deploy to the Pi
 
 `deploy.sh` rsyncs this stack (plus the shared `resolver-core.mjs`) to the Pi and
-builds/starts the containers over SSH. On first run — when no cert exists yet — it
-runs the Let's Encrypt bootstrap automatically.
+builds/starts the containers over SSH.
 
 ```bash
 cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.123)
-./deploy.sh                           # deploys to ~/groovepede-resolver on the Pi
+./deploy.sh --init                    # first deploy only: bootstraps the LE cert
+./deploy.sh                           # every deploy after: deploys to ~/groovepede-resolver
 ```
 
 - Config (`PI_SSH_TARGET`, `PI_REMOTE_DIR`) is read from the git-ignored `deploy.env`;
   a CLI arg overrides it: `./deploy.sh pi@10.0.0.5`.
-- `./deploy.sh --init` forces re-running the cert bootstrap.
+- **`--init` is required for the first deploy** (or `--staging` to test against
+  Let's Encrypt's staging environment first). A plain `./deploy.sh` never
+  bootstraps a cert on its own — Let's Encrypt allows only 5 duplicate certs
+  per domain per 7 days, so issuance is opt-in, never inferred from "no cert
+  found." If you forget `--init` on a fresh Pi, `deploy.sh` exits with an
+  error telling you to add it, rather than guessing.
+- **Every deploy backs up the cert first**, to `/tmp/gp-cert-$DOMAIN-<timestamp>.tar.gz`
+  on both the Pi and your dev machine (last 10 kept on the Pi). This is
+  short-term insurance against a bad deploy, not a real archive — restore:
+  ```bash
+  cd ~/groovepede-resolver/resolver
+  docker run --rm -u 10001:10001 -v "$PWD/data/certbot/conf:/etc/letsencrypt" \
+    -v /tmp:/backup --entrypoint tar certbot/certbot \
+    -xzf /backup/gp-cert-<domain>-<timestamp>.tar.gz -C /etc/letsencrypt
+  docker compose up -d --force-recreate nginx
+  ```
 - The Pi's `./data/` (SQLite cache + certs) is never overwritten by a redeploy.
 
 > **Upgrading an existing Pi deployment:** two changes need a one-time manual
@@ -129,8 +144,15 @@ private key stays the same (`VITE_GP_PRIVATE_KEY`) — the Pi verifies with the 
 ## Certificates & renewal
 
 - `init-letsencrypt.sh` handles first issuance (self-signed bootstrap → real cert).
+  It **refuses to run if a cert for `$DOMAIN` already exists** — printing the
+  existing cert's expiry and exiting 0 without contacting Let's Encrypt — since
+  issuing is opt-in and the duplicate-cert quota is tight (5 per domain per 7
+  days). Pass `--force` if you deliberately want to replace a live cert.
 - The `certbot` container runs `certbot renew` every 12h; nginx reloads every 6h to
   pick up a renewed cert. No manual steps after setup.
+- `deploy.sh` backs up `data/certbot/conf` on every run (see Deploy to the Pi
+  above) — restore from that backup instead of re-issuing if a cert is ever
+  lost or corrupted.
 - **CAA note:** unlike the AWS/ACM path (where `groovepede.gregolsky.pl`'s CNAME to
   `gregolsky.github.io` inherits GitHub's CAA that excludes Amazon), Let's Encrypt is
   **authorized** by that same GitHub CAA (`letsencrypt.org`), and a plain A-record host
