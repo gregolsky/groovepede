@@ -1,0 +1,60 @@
+name: Deploy backend (Pi)
+
+# The Pi is behind a home router with no inbound SSH from the internet, so CI
+# can't push to it. Instead it publishes to a secret ntfy.sh topic; an ntfy
+# client on the Pi reacts by running backend/ansible/pull-deploy.sh, which
+# ansible-pulls this repo and redeploys. See backend/README.md § Pull deploys.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve commit
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Signal the Pi to pull
+        env:
+          TOPIC: ${{ secrets.NTFY_DEPLOY_TOPIC }}
+        run: |
+          if [ -z "$TOPIC" ]; then
+            echo "NTFY_DEPLOY_TOPIC is not set — add it under Settings → Secrets → Actions." >&2
+            exit 1
+          fi
+          # The body is informational only. The Pi's ntfy client runs a fixed
+          # command and never interpolates any part of this message, so a
+          # spoofed publish can at worst re-trigger a legitimate pull of main.
+          curl -fsS -H "Title: groovepede deploy" \
+               -d "deploy ${{ steps.sha.outputs.short }}" \
+               "https://ntfy.sh/$TOPIC" > /dev/null
+          echo "Signalled deploy of ${{ steps.sha.outputs.short }}"
+
+      - name: Wait for the Pi to report this commit
+        env:
+          WANT: ${{ steps.sha.outputs.short }}
+        run: |
+          # Confirms the deploy actually landed — a plain {"ok":true} would also
+          # come back from the *old* build, which is precisely the failure this
+          # is meant to catch.
+          for i in $(seq 1 30); do
+            got=$(curl -fsS --max-time 10 https://api.groovepede.gregolsky.pl/healthz 2>/dev/null \
+                  | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') || got=""
+            if [ "$got" = "$WANT" ]; then
+              echo "Pi is serving $got"
+              exit 0
+            fi
+            echo "attempt $i: serving '${got:-unreachable}', want '$WANT'"
+            sleep 10
+          done
+          echo "Pi never reported commit $WANT — check the ntfy client and ansible-pull on the Pi." >&2
+          exit 1

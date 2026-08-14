@@ -10,6 +10,8 @@ services:
       args:
         PUID: ${PUID:-10001}
         PGID: ${PGID:-10001}
+        # Set by deploy-local.sh; shows up in /healthz as `commit`.
+        GIT_SHA: ${GIT_SHA:-unknown}
     image: gp-resolver-pi
     environment:
       GP_PUBLIC_KEY:   "${GP_PUBLIC_KEY:?set GP_PUBLIC_KEY in .env — from make keygen}"

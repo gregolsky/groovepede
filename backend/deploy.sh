@@ -81,79 +81,30 @@ rsync -az --delete -e "$RSYNC_SSH" \
 
 REMOTE_PI="$REMOTE_DIR/resolver"
 
-# ── Cert backup (insurance) ──────────────────────────────────────────────────
-# Unconditional, before anything else touches data/certbot. The SSH user can't
-# read archive/ (0700, owned by PUID:PGID — see init-letsencrypt.sh), so the
-# tar runs inside the certbot image as that uid. Backs up live/ + archive/ +
-# renewal/ + accounts/: live/ alone is dangling symlinks without archive/, and
-# without renewal/ certbot can't renew a restored cert. Skips quietly if
-# data/certbot doesn't exist yet (legitimate first-run state).
-echo "→ Backing up Let's Encrypt cert…"
-STAMP=$(date +%Y%m%d-%H%M%S)
-BACKUP_NAME="gp-cert-$DOMAIN-$STAMP.tar.gz"
-if ssh "${SSH_OPTS[@]}" "$TARGET" "[ -d '$REMOTE_PI/data/certbot/conf' ]"; then
-  ssh "${SSH_OPTS[@]}" "$TARGET" "cd '$REMOTE_PI' && docker run --rm -u $PUID:$PGID \
-    -v \"\$PWD/data/certbot/conf:/etc/letsencrypt:ro\" -v /tmp:/backup \
-    --entrypoint tar certbot/certbot -czf /backup/$BACKUP_NAME -C /etc/letsencrypt . \
-    && ls -1t /tmp/gp-cert-$DOMAIN-*.tar.gz | tail -n +11 | xargs -r rm -f"
-  echo "   Pi:  $TARGET:/tmp/$BACKUP_NAME"
-  scp -o ControlMaster=auto -o ControlPath="$SSH_CTRL" -o ControlPersist=120 \
-    "$TARGET:/tmp/$BACKUP_NAME" "${TMPDIR:-/tmp}/$BACKUP_NAME"
-  echo "   Dev: ${TMPDIR:-/tmp}/$BACKUP_NAME"
-else
-  echo "   (no data/certbot on the Pi yet — nothing to back up)"
-fi
+# ── Everything on-Pi is deploy-local.sh's job ────────────────────────────────
+# Cert backup, the never-auto-issue guard, build/start, and the health check all
+# live in that one script so the push path (here) and the pull path
+# (ansible/site.yml, triggered by ntfy) can't drift apart. It runs in the stable
+# runtime directory, which is exactly where we just rsynced.
+GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-# ── Cert presence check ──────────────────────────────────────────────────────
-# live/$DOMAIN is 0755 and renewal/$DOMAIN.conf is 0644 in a traversable dir —
-# both readable by the SSH user without needing to descend into archive/
-# (0700, see above). Do NOT stat fullchain.pem directly: it's a symlink into
-# archive/, so a plain `-f` on it silently reports "missing" even when the
-# cert is right there — that bug is what caused this file to exist.
-HAVE_CERT=false
-if ssh "${SSH_OPTS[@]}" "$TARGET" "[ -d '$REMOTE_PI/data/certbot/conf/live/$DOMAIN' ] || [ -f '$REMOTE_PI/data/certbot/conf/renewal/$DOMAIN.conf' ]"; then
-  HAVE_CERT=true
-fi
-
-# ── First-time cert bootstrap — opt-in only, never inferred ────────────────
-# Issuing a cert costs one of Let's Encrypt's 5-per-7-days duplicate-cert
-# quota. A missing cert must never trigger issuance automatically — only an
-# explicit --init/--staging does that.
 if $FORCE_INIT; then
   echo "→ Running init-letsencrypt.sh on the Pi ($([ -n "$STAGING" ] && echo staging || echo real) cert)…"
   echo "   (needs ports 80+443 forwarded to the Pi and DNS A record $DOMAIN → your public IP)"
   ssh "${SSH_OPTS[@]}" -t "$TARGET" "cd '$REMOTE_PI' && chmod +x init-letsencrypt.sh && ./init-letsencrypt.sh $STAGING"
-elif ! $HAVE_CERT; then
-  echo "ERROR: no cert found for $DOMAIN on $TARGET." >&2
-  echo "       First-time setup? Run:  ./deploy.sh $TARGET --init" >&2
-  echo "       (or --staging first). Not doing it automatically — each run" >&2
-  echo "       consumes a Let's Encrypt issuance, and the duplicate-cert limit" >&2
-  echo "       is 5 per 7 days." >&2
-  exit 1
 fi
 
-# ── Build + start ───────────────────────────────────────────────────────────
-echo "→ Building, starting, and health-checking on the Pi…"
-ssh "${SSH_OPTS[@]}" "$TARGET" "set -e; cd '$REMOTE_PI' \
-  && docker compose up -d --build \
-  && echo '--- status ---' && docker compose ps \
-  && echo '--- health ---' \
-  && ok=false \
-  && for i in \$(seq 1 15); do \
-       if curl -fsS -k -H 'Host: $DOMAIN' https://localhost:$HTTPS_PORT/healthz; then echo; ok=true; break; fi; \
-       sleep 2; \
-     done \
-  && if ! \$ok; then \
-       echo 'ERROR: health check never passed after deploy' >&2; \
-       docker compose ps >&2; \
-       docker compose logs --tail=30 nginx >&2; \
-       exit 1; \
-     fi \
-  && if docker compose ps --format '{{.Names}} {{.State}}' | grep -qi restarting; then \
-       echo 'ERROR: a container is stuck restarting' >&2; \
-       docker compose ps >&2; \
-       exit 1; \
-     fi"
+echo "→ Deploying on the Pi…"
+ssh "${SSH_OPTS[@]}" "$TARGET" "cd '$REMOTE_PI' && chmod +x deploy-local.sh && GIT_SHA='$GIT_SHA' ./deploy-local.sh"
+
+# Pull the cert backup deploy-local.sh just wrote back to this machine — a
+# backup that only lives on the Pi doesn't survive the SD card dying.
+LATEST=$(ssh "${SSH_OPTS[@]}" "$TARGET" "ls -1t /tmp/gp-cert-$DOMAIN-*.tar.gz 2>/dev/null | head -1" || true)
+if [ -n "$LATEST" ]; then
+  scp -o ControlMaster=auto -o ControlPath="$SSH_CTRL" -o ControlPersist=120 \
+    "$TARGET:$LATEST" "${TMPDIR:-/tmp}/" >/dev/null && \
+    echo "→ Cert backup pulled to ${TMPDIR:-/tmp}/$(basename "$LATEST")"
+fi
 
 echo
 echo "✓ Deployed to $TARGET. Point the PWA ODESLI_BASE at https://$DOMAIN if you haven't."

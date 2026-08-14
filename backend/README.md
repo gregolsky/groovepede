@@ -55,6 +55,22 @@ curl https://$DOMAIN/healthz          # → {"ok":true} with a valid cert
 
 ## Deploy to the Pi
 
+Two paths, both ending in the same script:
+
+| Path | Trigger | Use |
+|---|---|---|
+| **push** — `deploy.sh` | you, over SSH | first-time `--init`, emergencies, working offline from CI |
+| **pull** — `ansible/pull-deploy.sh` | CI → ntfy.sh → the Pi | routine deploys of `backend/**` |
+
+Both rsync sources into the runtime directory and then run **`deploy-local.sh`**,
+which owns everything that touches live state: the cert backup, the
+never-auto-issue guard, `docker compose up -d --build`, and the health check.
+That logic lives in exactly one file on purpose — a second copy of it in Ansible
+YAML is how it would silently drift, and drift in this specific area already
+destroyed the production certificate once.
+
+### Push deploy
+
 `deploy.sh` rsyncs this stack (plus the shared `resolver-core.mjs`) to the Pi and
 builds/starts the containers over SSH.
 
@@ -140,6 +156,59 @@ export const ODESLI_BASE = 'https://pi.example.com';
 The path (`/v1/resolve`) and the signed `x-gp-token` header are unchanged, and the
 private key stays the same (`VITE_GP_PRIVATE_KEY`) — the Pi verifies with the matching
 `GP_PUBLIC_KEY`.
+
+### Pull deploys (ntfy.sh + ansible-pull)
+
+The Pi sits behind a home router with no inbound SSH, so CI can't push to it.
+Instead, a push to `main` touching `backend/**` runs
+`.github/workflows/deploy-backend.yml`, which publishes to a **secret ntfy.sh
+topic**. An `ntfy` client on the Pi reacts by running
+`backend/ansible/pull-deploy.sh`, which `ansible-pull`s this repo and applies
+`backend/ansible/site.yml`. CI then polls `/healthz` until it reports the
+commit it just pushed — a plain `{"ok":true}` would also come back from the
+*old* build, so matching `commit` is what actually proves the deploy landed.
+
+**The checkout is deliberately not the runtime directory.** `ansible-pull`
+resets its checkout on every run; if `.env`, `data/certbot` and the SQLite cache
+lived inside it, a routine pull would wipe the live certificate. So the checkout
+goes to `~/.ansible-pull/groovepede` and the playbook only ever rsyncs *out of*
+it into `~/groovepede-resolver/resolver`, excluding `data/` and `.env`.
+
+One-time setup on the Pi (already done on the live one):
+
+```bash
+sudo apt install ansible ntfy
+sudo install -d -m 0755 /etc/ntfy
+sudo tee /etc/ntfy/client.yml >/dev/null <<'YAML'
+default-host: https://ntfy.sh
+subscribe:
+  - topic: <the same secret value as the NTFY_DEPLOY_TOPIC repo secret>
+    command: 'curl -fsS https://raw.githubusercontent.com/gregolsky/groovepede/main/backend/ansible/pull-deploy.sh | bash'
+YAML
+sudo chmod 600 /etc/ntfy/client.yml     # the topic IS the credential
+sudo systemctl enable --now ntfy-client
+```
+
+Security notes, since the topic is the only thing guarding this:
+
+- **The command is a fixed string.** Nothing from the notification (title, body,
+  tags) is interpolated into it, so a spoofed publish on a leaked topic can at
+  worst re-trigger a legitimate pull of `main` — it cannot inject shell.
+- Treat the topic like a password: anyone who learns it can trigger deploys.
+  It is `chmod 600` on the Pi and a GitHub Actions secret in CI, never in git.
+- ntfy.sh is a public relay. The deploy signal carries only a short commit sha,
+  no secrets.
+
+Manual pull (what to run when debugging the unattended path):
+
+```bash
+~/.ansible-pull/groovepede/backend/ansible/pull-deploy.sh   # or the curl one-liner above
+journalctl -u ntfy-client -n 50                             # did the trigger fire?
+curl -s https://api.groovepede.gregolsky.pl/healthz          # {"ok":true,"commit":"<sha>"}
+```
+
+**Rollback:** `sudo systemctl disable --now ntfy-client` and use `./deploy.sh`.
+The push path is unchanged and always works — that's why it stays.
 
 ## Certificates & renewal
 

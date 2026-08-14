@@ -1,0 +1,71 @@
+---
+# Pull-deploy playbook, run by ansible-pull on the Pi itself.
+#
+# Deliberately thin: it syncs the checkout into the stable runtime directory and
+# then hands off to deploy-local.sh. All the cert-safety logic (backup, the
+# never-auto-issue guard, health check) stays in that one shell script, shared
+# with the push path in deploy.sh — reimplementing it in YAML would be exactly
+# the kind of drift that let a deploy destroy the live certificate once already.
+- name: Deploy the Groovepede resolver
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # ansible-pull runs the playbook from inside the checkout, so playbook_dir
+    # is <checkout>/backend/ansible.
+    src_dir: "{{ playbook_dir }}/.."
+    # lookup('env') rather than ansible_env — facts aren't gathered (nothing here
+    # needs them, and skipping them keeps the pull fast).
+    runtime_dir: "{{ lookup('env', 'GP_RUNTIME_DIR') | default(lookup('env', 'HOME') ~ '/groovepede-resolver/resolver', true) }}"
+
+  tasks:
+    - name: Ensure the runtime directory exists
+      ansible.builtin.file:
+        path: "{{ runtime_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Sync backend sources into the runtime directory
+      # --delete keeps the runtime dir honest, but data/ (certs + SQLite cache)
+      # and .env (secrets, never in git) are excluded so they are neither
+      # transferred nor deleted. These excludes are the single most important
+      # thing here: without them a pull would destroy the live certificate.
+      #
+      # Plain rsync via command rather than ansible.posix.synchronize — Debian's
+      # ansible package ships no ansible.posix collection, and requiring a
+      # galaxy install on the Pi would add a second thing that can break the
+      # unattended pull path.
+      ansible.builtin.command:
+        argv:
+          - rsync
+          - -a
+          - --delete
+          - --exclude=data/
+          - --exclude=.env
+          - --exclude=deploy.env
+          - --exclude=.git
+          - "{{ src_dir }}/"
+          - "{{ runtime_dir }}/"
+      register: gp_sync
+      changed_when: true
+
+    - name: Read the deployed commit
+      ansible.builtin.command:
+        cmd: git rev-parse --short HEAD
+        chdir: "{{ src_dir }}"
+      register: gp_commit
+      changed_when: false
+
+    - name: Run the shared deploy script
+      ansible.builtin.command:
+        cmd: ./deploy-local.sh
+        chdir: "{{ runtime_dir }}"
+      environment:
+        GIT_SHA: "{{ gp_commit.stdout }}"
+      register: gp_deploy
+      changed_when: true
+
+    - name: Show deploy output
+      ansible.builtin.debug:
+        var: gp_deploy.stdout_lines

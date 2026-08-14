@@ -15,6 +15,12 @@ ARG PUID=10001
 ARG PGID=10001
 RUN mkdir -p /data && chown -R ${PUID}:${PGID} /data /app
 
+# Surfaced by /healthz so a deploy can verify THIS build went live, rather than
+# just that some server answered. Last layer on purpose — it changes every
+# commit, so everything above it stays cached.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 USER ${PUID}:${PGID}
 EXPOSE 8787
 
