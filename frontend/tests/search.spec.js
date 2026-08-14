@@ -1,34 +1,10 @@
 import { test, expect } from '@playwright/test';
-
-const KEYS = {
-  TOKEN:  'gp_token',
-  EXPIRY: 'gp_expiry',
-  ALBUMS: 'gp_albums',
-};
-
-const ALBUMS = [
-  { id: 'a1', title: 'Kind of Blue', artist: 'Miles Davis',
-    url: '', cover: null, year: '1959', tags: ['jazz'], addedAt: new Date().toISOString() },
-  { id: 'a2', title: 'Blue Lines', artist: 'Massive Attack',
-    url: '', cover: null, year: '1991', tags: ['trip-hop'], addedAt: new Date().toISOString() },
-  { id: 'a3', title: 'Revolver', artist: 'The Beatles',
-    url: '', cover: null, year: '1966', tags: ['rock'], addedAt: new Date().toISOString() },
-];
+import { stubExternals, seedAlbums, loginAs, SAMPLE_ALBUMS as ALBUMS } from './helpers.js';
 
 async function seedWithAlbums(context, albums = ALBUMS) {
-  await context.addInitScript(({ keys, albums }) => {
-    localStorage.setItem(keys.TOKEN,  'valid_token');
-    localStorage.setItem(keys.EXPIRY, String(Date.now() + 3600000));
-    localStorage.setItem(keys.ALBUMS, JSON.stringify(albums));
-  }, { keys: KEYS, albums });
-
-  await context.route('https://api.spotify.com/v1/me', route =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ display_name: 'Test User', images: [] }),
-    })
-  );
+  await seedAlbums(context, albums);
+  await loginAs(context);
+  await stubExternals(context, { odesli: null });
 }
 
 // ── Search filtering ──────────────────────────────────────────────────────────

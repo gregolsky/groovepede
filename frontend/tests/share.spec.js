@@ -1,9 +1,5 @@
 import { test, expect } from '@playwright/test';
-
-const KEYS = {
-  TOKEN:  'gp_token',
-  EXPIRY: 'gp_expiry',
-};
+import { stubExternals, KEYS } from './helpers.js';
 
 const ALBUM_ID    = 'shareTestAlbum1xxxxxx'; // 22 chars for Spotify ID
 const SHARE_URL   = `https://open.spotify.com/album/${ALBUM_ID}`;
@@ -56,22 +52,15 @@ function fakeStandalone(context) {
   });
 }
 
-function stubApis(context) {
-  context.route('https://api.spotify.com/v1/me', route =>
+// This spec's Odesli fixture is its own (a distinct album id, so the share
+// target's dedupe path is exercised), but every other external comes from the
+// shared list.
+async function stubApis(context) {
+  await context.route('https://api.spotify.com/v1/me', route =>
     route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ id: 'u1', display_name: 'Test User', images: [] }) })
   );
-  context.route('https://api.groovepede.gregolsky.pl/**', route =>
-    route.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify(makeOdesliResponse()) })
-  );
-  context.route('https://www.theaudiodb.com/**', r =>
-    r.fulfill({ status: 200, contentType: 'application/json', body: '{"artists":null}' })
-  );
-
-  context.route('https://ws.audioscrobbler.com/**', r =>
-    r.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
-  );
+  await stubExternals(context, { odesli: makeOdesliResponse() });
 }
 
 // ── Share in standalone (PWA) mode shows overlay ───────────────────────────────
@@ -79,7 +68,7 @@ function stubApis(context) {
 test('share-target shows confirmation overlay in standalone mode', async ({ page, context }) => {
   await seedLoggedIn()({ context }, async () => {});
   await fakeStandalone(context);
-  stubApis(context);
+  await stubApis(context);
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
 
@@ -91,7 +80,7 @@ test('share-target shows confirmation overlay in standalone mode', async ({ page
 test('share-target overlay disappears and card is highlighted when window.close() does not close', async ({ page, context }) => {
   await seedLoggedIn()({ context }, async () => {});
   await fakeStandalone(context);
-  stubApis(context);
+  await stubApis(context);
   await context.addInitScript(() => { window.close = () => {}; });
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
@@ -106,7 +95,7 @@ test('share-target overlay disappears and card is highlighted when window.close(
 
 test('share-target in browser tab shows card highlight, not overlay', async ({ page, context }) => {
   await seedLoggedIn()({ context }, async () => {});
-  stubApis(context);
+  await stubApis(context);
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
 
@@ -118,7 +107,7 @@ test('share-target in browser tab shows card highlight, not overlay', async ({ p
 // ── Share works without Spotify login ─────────────────────────────────────────
 
 test('share-target works without being logged in', async ({ page, context }) => {
-  stubApis(context);
+  await stubApis(context);
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
 

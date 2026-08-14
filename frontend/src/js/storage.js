@@ -20,6 +20,21 @@ export function saveAlbums(a) { localStorage.setItem(STORAGE_KEY, JSON.stringify
 export function loadDone()    { return parseInt(localStorage.getItem(DONE_KEY) || '0'); }
 export function saveDone(n)   { localStorage.setItem(DONE_KEY, String(n)); }
 
+/**
+ * The album list the UI actually shows, after the tag filter and the search box.
+ *
+ * Single source of truth on purpose: every `data-index` in the rendered markup
+ * is an index into THIS list, and the click handlers resolve those indices
+ * against it. If the renderer and the handlers ever computed it separately and
+ * drifted, Done/Explore would silently act on the wrong album.
+ */
+export function filterAlbums(albums, activeFilter, searchQuery) {
+  let list = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
+  const q = (searchQuery || '').trim().toLowerCase();
+  if (q) list = list.filter(a => (a.title || '').toLowerCase().includes(q) || (a.artist || '').toLowerCase().includes(q));
+  return list;
+}
+
 export function extractAlbumId(url) {
   // Full URL: open.spotify.com/album/<id>
   const urlMatch = url.match(/spotify\.com\/album\/([a-zA-Z0-9]+)/);

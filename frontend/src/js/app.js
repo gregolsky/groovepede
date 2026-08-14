@@ -3,8 +3,8 @@ import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchArtistImage, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
+import { spotifyGet, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchArtistImage, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, escapeHtml } from './render.js';
 import * as sync from './sync.js';
 
@@ -29,11 +29,7 @@ const appEl  = document.getElementById('app');
 const authEl = document.getElementById('auth-area');
 
 function visibleAlbums() {
-  const albums = loadAlbums();
-  let list = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
-  const q = searchQuery.trim().toLowerCase();
-  if (q) list = list.filter(a => (a.title || '').toLowerCase().includes(q) || (a.artist || '').toLowerCase().includes(q));
-  return list;
+  return filterAlbums(loadAlbums(), activeFilter, searchQuery);
 }
 
 function getState() {
@@ -85,6 +81,28 @@ async function attachFirstTrackUri(rec) {
   if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
 }
 
+/**
+ * Persist a freshly resolved album and kick off its background enrichment.
+ *
+ * Shared by all three entry points (paste, share-target launch, pending retry)
+ * so the id-dedupe, the Spotify track lookup, the sync push and the Last.fm
+ * enrichment can't drift between them.
+ *
+ * Re-reads storage rather than trusting a caller-held array: resolving is async,
+ * and a share-target add or a pending retry can land in between.
+ */
+async function saveResolvedAlbum(rec) {
+  const albums = loadAlbums();
+  if (albums.find(a => a.id === rec.id)) return rec;  // already queued
+  await attachFirstTrackUri(rec);
+  const fresh = loadAlbums();
+  fresh.push(rec);
+  saveAlbums(fresh);
+  if (tokenValid()) sync.schedulePush();
+  enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
+  return rec;
+}
+
 function setFilter(tag) {
   activeFilter = tag;
   rerender();
@@ -125,19 +143,12 @@ async function handleAdd() {
     if (service && !hasExplicitPreferredService()) setPreferredService(service);
 
     // Success — dedup on resolved ID too (different URL, same album)
-    const fresh = loadAlbums();
-    if (!fresh.find(a => a.id === rec.id)) {
-      await attachFirstTrackUri(rec);
-      fresh.push(rec);
-      saveAlbums(fresh);
-      if (tokenValid()) sync.schedulePush();
-    }
+    await saveResolvedAlbum(rec);
     loadingAdd = false;
     addOpen = false;
     rerender();
     const inp = appEl.querySelector('#url-input');
     if (inp) inp.value = '';
-    enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
   } else if (isRetryableResolveError(rec._error)) {
     // Odesli is down / rate-limited — save a pending stub so the link isn't lost
     const fresh = loadAlbums();
@@ -158,20 +169,29 @@ async function handleAdd() {
   }
 }
 
-function markDone(visibleIdx, triggerEl) {
+/**
+ * Mark the album at a visible index as listened. Flashes the card first when it
+ * is on screen, so the removal has a beat of feedback.
+ *
+ * `explore` selects which card wraps the button and, after removal, keeps the
+ * explore view open on the album that slid into this slot (or closes it when
+ * the queue is empty). The list-view path just rerenders.
+ */
+function markDone(visibleIdx, triggerEl, { explore = false } = {}) {
   const album = visibleAlbums()[visibleIdx];
   if (!album) return;
-  const btn  = triggerEl || appEl.querySelector(`[data-action="done"][data-index="${visibleIdx}"]`);
-  const card = btn?.closest('.card');
+  const action = explore ? 'explore-done' : 'done';
+  const btn    = triggerEl || appEl.querySelector(`[data-action="${action}"][data-index="${visibleIdx}"]`);
+  const card   = btn?.closest(explore ? '.explore-album' : '.card');
   if (card) {
     card.classList.add('done-flash');
-    setTimeout(() => applyDone(album), 550);
+    setTimeout(() => applyDone(visibleIdx, album, explore), 550);
   } else {
-    applyDone(album);
+    applyDone(visibleIdx, album, explore);
   }
 }
 
-function applyDone(album) {
+function applyDone(visibleIdx, album, explore) {
   const albums = loadAlbums();
   const idx    = albums.findIndex(a => a.id === album.id);
   if (idx === -1) return;
@@ -179,36 +199,15 @@ function applyDone(album) {
   saveAlbums(albums);
   saveDone(loadDone() + 1);
   if (tokenValid()) sync.schedulePush();
-  rerender();
-}
 
-function markExploreDone(visibleIdx, triggerEl) {
-  const album = visibleAlbums()[visibleIdx];
-  if (!album) return;
-  const btn  = triggerEl || appEl.querySelector(`[data-action="explore-done"][data-index="${visibleIdx}"]`);
-  const card = btn?.closest('.explore-album');
-  if (card) {
-    card.classList.add('done-flash');
-    setTimeout(() => applyExploreDone(visibleIdx, album), 550);
-  } else {
-    applyExploreDone(visibleIdx, album);
-  }
-}
-
-function applyExploreDone(visibleIdx, album) {
-  const albums = loadAlbums();
-  const idx    = albums.findIndex(a => a.id === album.id);
-  if (idx === -1) return;
-  albums.splice(idx, 1);
-  saveAlbums(albums);
-  saveDone(loadDone() + 1);
-  if (tokenValid()) sync.schedulePush();
-  const newVisible = visibleAlbums();
-  if (newVisible.length === 0) {
-    exploreIndex = null;
-  } else {
-    exploreIndex = Math.min(visibleIdx, newVisible.length - 1);
-    prefetchExplore(newVisible[exploreIndex]);
+  if (explore) {
+    const newVisible = visibleAlbums();
+    if (newVisible.length === 0) {
+      exploreIndex = null;
+    } else {
+      exploreIndex = Math.min(visibleIdx, newVisible.length - 1);
+      prefetchExplore(newVisible[exploreIndex]);
+    }
   }
   rerender();
 }
@@ -395,8 +394,8 @@ document.body.addEventListener('click', e => {
     case 'close-explore': closeExplore();                       break;
     case 'explore-prev':  navigateExplore(-1);                  break;
     case 'explore-next':  navigateExplore(+1);                  break;
-    case 'done':          markDone(parseInt(index, 10), el);         break;
-    case 'explore-done':  markExploreDone(parseInt(index, 10), el);  break;
+    case 'done':          markDone(parseInt(index, 10), el);                       break;
+    case 'explore-done':  markDone(parseInt(index, 10), el, { explore: true });     break;
     case 'open-profile':  openProfile();                        break;
     case 'close-profile': closeProfile();                       break;
     case 'export-data':   exportData();                         break;
@@ -659,16 +658,9 @@ async function boot() {
       } else {
         const rec = await resolveAlbum(url);
         if (!rec._error) {
-          await attachFirstTrackUri(rec);
-          const fresh = loadAlbums();
-          if (!fresh.find(a => a.id === rec.id)) {
-            fresh.push(rec);
-            saveAlbums(fresh);
-            if (tokenValid()) sync.schedulePush();
-          }
+          await saveResolvedAlbum(rec);
           highlightId = rec.id;
           addedMeta = rec;
-          enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
         } else if (isRetryableResolveError(rec._error)) {
           // Odesli down — save pending stub so share isn't lost
           const stub = makePendingRecord(url, service);

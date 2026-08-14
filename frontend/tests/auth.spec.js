@@ -1,57 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { stubExternals, makeOdesliResponse, KEYS as STORAGE_KEYS } from './helpers.js';
 
-const STORAGE_KEYS = {
-  TOKEN:   'gp_token',
-  EXPIRY:  'gp_expiry',
-  REFRESH: 'gp_refresh',
-};
-
-// A realistic Odesli response for a Spotify album link
-function makeOdesliResponse() {
-  const entityId = 'SPOTIFY_ALBUM::abc123def456ghi789jklm';
-  return {
-    entityUniqueId: entityId,
-    userCountry: 'US',
-    entitiesByUniqueId: {
-      [entityId]: {
-        id: 'abc123def456ghi789jklm',
-        type: 'album',
-        title: 'Test Album',
-        artistName: 'Test Artist',
-        thumbnailUrl: 'https://example.com/cover.jpg',
-        apiProvider: 'spotify',
-        platforms: ['spotify'],
-      },
-    },
-    linksByPlatform: {
-      spotify: {
-        url: 'https://open.spotify.com/album/abc123def456ghi789jklm',
-        nativeAppUriMobile: 'spotify:album:abc123def456ghi789jklm',
-        entityUniqueId: entityId,
-      },
-    },
-  };
-}
-
-async function stubOdesliSuccess(context) {
-  await context.route('https://api.groovepede.gregolsky.pl/**', route =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(makeOdesliResponse()),
-    })
-  );
-}
-
-async function stubLastfm(context) {
-  await context.route('https://www.theaudiodb.com/**', route =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{"artists":null}' })
-  );
-
-  await context.route('https://ws.audioscrobbler.com/**', route =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
-  );
-}
+const stubOdesliSuccess = context => stubExternals(context, { odesli: makeOdesliResponse() });
+const stubLastfm        = context => stubExternals(context, { odesli: null });
 
 // ── Logged-out: app is accessible without Spotify ────────────────────────────
 

@@ -234,7 +234,6 @@ body::after {
 .hl { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; background: transparent; font-style: normal; }
 
 /* Add bar */
-.add-bar { display: flex; gap: 8px; margin-bottom: 16px; }
 .add-input {
   flex: 1;
   height: 40px;
@@ -491,7 +490,6 @@ body::after {
   flex-shrink: 0;
   border: 2px solid var(--border);
 }
-.explore-artist-image--placeholder { background: var(--surface); }
 /* Shown when no source has a photo for this artist. Deliberately looks like a
    designed avatar rather than a failed image — most artists in a niche queue
    have no photo anywhere, so this is a normal state, not an error. */
@@ -571,7 +569,7 @@ body::after {
 .explore-album-year { font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); letter-spacing: 0.04em; }
 .explore-album-actions { display: flex; justify-content: center; gap: 10px; margin-bottom: 24px; }
 
-.explore-tracklist { list-style: none; border-top: 1px solid #1f1c17; }
+.explore-tracklist { list-style: none; border-top: 1px solid #1f1c17; counter-reset: list-item; }
 .explore-track {
   display: flex;
   align-items: center;
@@ -590,7 +588,6 @@ body::after {
   text-align: right;
   flex-shrink: 0;
 }
-.explore-tracklist { counter-reset: list-item; }
 .explore-track-name { flex: 1; font-size: 13px; color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explore-track-dur { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
 .explore-loading { font-size: 13px; color: var(--text-faint); font-style: italic; }
@@ -961,7 +958,6 @@ body::after {
   .animate-in .landing-hero-visual { animation: rise-in .4s ease-out both; animation-delay: .14s; }
   .animate-in .landing-features   { animation: rise-in .4s ease-out both; animation-delay: .28s; }
   .animate-in .landing-steps      { animation: rise-in .4s ease-out both; animation-delay: .38s; }
-  .animate-in .landing-footer-links { animation: rise-in .4s ease-out both; animation-delay: .44s; }
 }
 
 /* ── Landing desktop responsive ──────────────────────────────────────────────── */
@@ -1020,7 +1016,6 @@ body::after {
   .landing-sub { margin-left: 0; margin-right: 0; max-width: 500px; }
   .landing-cta { margin: 0; }
   .landing-add-open { margin-left: 0; }
-  .landing-optional { justify-content: flex-start; }
   .landing-note { text-align: left; }
 }
 
@@ -1154,52 +1149,6 @@ body::after {
 .landing-add-open { max-width: 440px; margin: 0 auto 8px; width: 100%; }
 .landing-add-open .add-reveal { width: 100%; }
 .landing-add-open .add-error { margin-top: 6px; }
-
-/* ── Optional Spotify connect nudge in hero ──────────────────────────────────── */
-.landing-optional { margin-top: 18px; font-size: 12px; color: var(--text-dim); display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; line-height: 1.6; text-shadow: 0 1px 2px rgba(0,0,0,.55); }
-.landing-connect-link {
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  font-size: 12px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  transition: color .15s;
-  text-shadow: 0 1px 2px rgba(0,0,0,.55);
-}
-.landing-connect-link:hover { color: var(--text); }
-
-/* ── Import backup link at bottom of hero ────────────────────────────────────── */
-.landing-footer-links { text-align: center; margin-top: 32px; padding-bottom: 8px; }
-.landing-import-link {
-  background: transparent;
-  border: none;
-  color: var(--text-faint);
-  font-size: 12px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  padding: 0;
-  transition: color .15s;
-  opacity: 0.6;
-}
-.landing-import-link:hover { color: var(--text-dim); opacity: 1; }
-
-/* ── Login screen (legacy, kept for reference) ───────────────────────────────── */
-.login-screen { text-align: center; padding: 3.5rem 1rem 4rem; }
-.login-logo { width: 120px; height: 120px; display: block; margin: 0 auto 24px; filter: drop-shadow(0 4px 20px rgba(15,210,135,.25)); }
-.login-screen h2 { font-family: var(--font-display); font-size: 19px; font-weight: 700; margin-bottom: 10px; line-height: 1.35; max-width: 340px; margin-left: auto; margin-right: auto; }
-.login-screen p { font-size: 14px; color: var(--text-dim); line-height: 1.6; margin-bottom: 20px; max-width: 340px; margin-left: auto; margin-right: auto; }
-.login-features { list-style: none; text-align: left; max-width: 320px; margin: 0 auto 28px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.login-features li { position: relative; padding-left: 22px; font-size: 13.5px; color: var(--text-dim); line-height: 1.5; }
-.login-features li::before { content: ''; position: absolute; left: 0; top: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-.login-screen .auth-btn { margin: 0 auto; width: fit-content; font-size: 14px; height: 42px; padding: 0 24px; }
-.login-privacy { font-size: 12px; color: var(--text-faint); margin-top: 24px; margin-bottom: 0; line-height: 1.55; }
 
 /* ── Footer ──────────────────────────────────────────────────────────────────── */
 .footer { text-align: center; font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); margin-top: 40px; padding: 0 16px 8px; letter-spacing: 0.03em; }

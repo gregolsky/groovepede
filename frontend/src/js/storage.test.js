@@ -1,5 +1,54 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
+import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum, filterAlbums } from './storage.js';
+
+describe('filterAlbums', () => {
+  const albums = [
+    { id: '1', title: 'Kind of Blue', artist: 'Miles Davis',    tags: ['jazz', 'classic'] },
+    { id: '2', title: 'Blue Lines',   artist: 'Massive Attack', tags: ['trip hop'] },
+    { id: '3', title: 'Nevermind',    artist: 'Nirvana',        tags: ['grunge', 'classic'] },
+    { id: '4', title: 'Untagged',     artist: 'Nobody' },  // no tags key at all
+  ];
+  const ids = list => list.map(a => a.id);
+
+  it("returns everything for the 'all' filter and an empty query", () => {
+    expect(ids(filterAlbums(albums, 'all', ''))).toEqual(['1', '2', '3', '4']);
+  });
+
+  it('filters by tag', () => {
+    expect(ids(filterAlbums(albums, 'classic', ''))).toEqual(['1', '3']);
+  });
+
+  it('treats a missing tags key as no tags rather than throwing', () => {
+    expect(ids(filterAlbums(albums, 'jazz', ''))).toEqual(['1']);
+  });
+
+  it('searches title and artist case-insensitively', () => {
+    expect(ids(filterAlbums(albums, 'all', 'blue'))).toEqual(['1', '2']);   // title matches
+    expect(ids(filterAlbums(albums, 'all', 'NIRVANA'))).toEqual(['3']);     // artist matches
+  });
+
+  it('applies tag filter and search together', () => {
+    expect(ids(filterAlbums(albums, 'classic', 'blue'))).toEqual(['1']);
+  });
+
+  it('ignores a whitespace-only query', () => {
+    expect(ids(filterAlbums(albums, 'all', '   '))).toEqual(['1', '2', '3', '4']);
+  });
+
+  it('tolerates an undefined query', () => {
+    expect(ids(filterAlbums(albums, 'all', undefined))).toEqual(['1', '2', '3', '4']);
+  });
+
+  it('returns an empty list when nothing matches', () => {
+    expect(filterAlbums(albums, 'all', 'zzzz')).toEqual([]);
+  });
+
+  it('does not mutate the input array', () => {
+    const copy = albums.slice();
+    filterAlbums(albums, 'classic', 'blue');
+    expect(albums).toEqual(copy);
+  });
+});
 
 describe('extractAlbumId', () => {
   it('extracts id from full Spotify URL', () => {

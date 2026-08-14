@@ -24,8 +24,8 @@ export const ODESLI_BASE = 'https://api.groovepede.gregolsky.pl';
 // for dev, or as a GitHub Actions secret for CI. Ships in the bundle at runtime
 // (see specs/resolver-proxy.md § Security for the threat model).
 export const GP_PRIVATE_KEY = import.meta.env.VITE_GP_PRIVATE_KEY ?? '';
-// ODESLI_API_KEY is now handled server-side in the Lambda; unused from the client.
-export const ODESLI_API_KEY = '';
+// The Odesli API key lives server-side (ODESLI_KEY in backend/.env) and is never
+// exposed to the client — the resolver adds it to its own outbound call.
 
 export const MUSICBRAINZ_BASE  = 'https://musicbrainz.org/ws/2';
 export const COVERART_BASE     = 'https://coverartarchive.org';

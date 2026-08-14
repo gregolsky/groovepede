@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
-
-const KEYS = { TOKEN: 'gp_token', EXPIRY: 'gp_expiry', ALBUMS: 'gp_albums' };
+import { stubExternals, KEYS } from './helpers.js';
 
 function stubOdesli(context) {
   const entityId = 'SPOTIFY_ALBUM::abc123def456ghi789jklm';
@@ -25,16 +24,10 @@ function stubOdesli(context) {
   );
 }
 
-function stubLastfm(context) {
-  return Promise.all([
-    context.route('https://www.theaudiodb.com/**', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: '{"artists":null}' })
-    ),
-    context.route('https://ws.audioscrobbler.com/**', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
-    ),
-  ]);
-}
+// Externals only — the resolver is left unstubbed here because most tests in
+// this file register their own resolver route (a specific status or payload)
+// and Playwright resolves the last-registered route first.
+const stubLastfm = context => stubExternals(context, { odesli: null });
 
 const SPOTIFY_URL = 'https://open.spotify.com/album/abc123def456ghi789jklm';
 

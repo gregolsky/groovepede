@@ -7,7 +7,9 @@ on:
     branches: [main]
 
 jobs:
-  playwright:
+  frontend:
+    # `npm test` = vitest + playwright. Running only playwright here meant the
+    # unit suite never ran in CI at all.
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -21,7 +23,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npx playwright install chromium --with-deps
-      - run: npx playwright test
+      - run: npm test
 
   resolver:
     # The resolver's own unit tests — token verification, CORS, host allowlist,

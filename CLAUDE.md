@@ -26,8 +26,11 @@ Two top-level workspaces:
 - **`frontend/src/js/auth.js`** — Spotify OAuth PKCE flow (no backend); login is optional
 - **`frontend/src/js/api.js`** — Odesli (universal link resolver) + Spotify Web API + Last.fm API
 - **`frontend/src/js/render.js`** — pure HTML string rendering (no virtual DOM, no templates)
-- **`frontend/src/js/storage.js`** — localStorage read/write for albums, listen count, preferred service
-- **`frontend/src/js/config.js`** — API keys, storage keys, OAuth config, Odesli base URL
+- **`frontend/src/js/storage.js`** — localStorage read/write for albums, listen count, preferred service; link parsing, backup (de)serialisation, and `filterAlbums` (the visible-list source of truth)
+- **`frontend/src/js/services.js`** — the supported-service registry; `ODESLI_KEY_MAP`, service labels and per-host album matching all derive from it
+- **`frontend/src/js/sign.js`** — ECDSA-P256 request signing for the resolver's `x-gp-token`
+- **`frontend/src/js/throttle.js`** — per-service pacing + 429 cooldown used by every outbound API call
+- **`frontend/src/js/config.js`** — API keys, storage keys, OAuth config, resolver base URL, throttle policy
 - **`frontend/src/js/sync.js`** — optional Spotify playlist sync (only active when user is logged in)
 - **`frontend/public/sw.js`** — service worker for offline/PWA support (copied verbatim to dist)
 - **`frontend/public/manifest.json`** — PWA manifest
@@ -71,10 +74,13 @@ For local dev, update `REDIRECT` in `frontend/src/js/config.js` to `http://local
 ## Testing
 
 - **Unit tests** use Vitest (`npm run test:unit`). Test files are co-located as `frontend/src/js/*.test.js`.
-  - Target pure/business-logic functions: `parseMusicLink`, `resolveAlbum`, `pickListenUrl`, `cleanTags`, `timeAgo`, `fmtDuration`, `attr`, `allTags`
+  - Target pure/business-logic functions: `parseMusicLink`, `filterAlbums`, `resolveAlbum`, `pickListenUrl`, `timeAgo`, `tagsByFrequency`, `artistInitials`, `normalizeAlbumStr`
   - All new pure functions with business logic must have unit tests
 - **E2E tests** use Playwright (`npm run test:e2e`). Test files live in `frontend/tests/`.
-  - Use `context.route()` to stub `api.song.link/**` (Odesli), Spotify, and Last.fm API responses
+  - Stub third-party APIs via `stubExternals()` in `frontend/tests/helpers.js` — add
+    any newly-called external host **there**, not per spec file, or the suite
+    starts hitting the real network. Per-test overrides still work: Playwright
+    resolves the last-registered route first.
   - Cover auth flows and key user interactions; Spotify login is optional so logged-out paths must be covered too
 
 ## Pre-push checklist

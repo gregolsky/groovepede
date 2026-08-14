@@ -1,5 +1,5 @@
-import { tokenValid, hasSession } from './auth.js';
-import { loadAlbums, loadDone, getPreferredService } from './storage.js';
+import { hasSession } from './auth.js';
+import { loadAlbums, loadDone, filterAlbums } from './storage.js';
 import { isSyncEnabled, getSyncStatus, getPlaylistId } from './sync.js';
 import { serviceLabel } from './services.js';
 
@@ -41,12 +41,6 @@ export function timeAgo(iso) {
 function fmtDuration(ms) {
   const s = Math.round(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function allTags(albums) {
-  const s = new Set();
-  albums.forEach(a => (a.tags || []).forEach(t => s.add(t)));
-  return [...s].sort();
 }
 
 export function tagsByFrequency(albums) {
@@ -156,16 +150,25 @@ export function renderAuthArea(el, userProfile) {
 
 // ── Empty-state hero (shown when queue has 0 albums) ─────────────────────────
 
+/**
+ * The paste-a-link form. Rendered in two places — the empty-queue hero and the
+ * populated queue's toolbar — which differ only in placeholder text and wrapper.
+ */
+function renderAddForm({ loadingAdd, addError, placeholder }) {
+  return `
+    <div class="add-reveal">
+      <input class="add-input" id="url-input" placeholder="${attr(placeholder)}">
+      <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
+        ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
+      </button>
+    </div>
+    ${addError ? `<div class="add-error">${addError}</div>` : ''}`;
+}
+
 function renderHero({ loadingAdd, addError, addOpen }) {
   const addSection = addOpen ? `
     <div class="landing-add-open">
-      <div class="add-reveal">
-        <input class="add-input" id="url-input" placeholder="Paste a music album link from Spotify, Apple Music, YouTube…">
-        <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
-          ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
-        </button>
-      </div>
-      ${addError ? `<div class="add-error">${addError}</div>` : ''}
+      ${renderAddForm({ loadingAdd, addError, placeholder: 'Paste a music album link from Spotify, Apple Music, YouTube…' })}
     </div>` : `
     <button class="auth-btn landing-cta" data-action="toggle-add">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
@@ -330,7 +333,7 @@ function renderProfile(userProfile, prefService) {
   const name   = userProfile?.display_name || '';
   const id     = userProfile?.id || '';
   const albums = loadAlbums();
-  const tags   = allTags(albums);
+  const tags   = tagsByFrequency(albums);
   return `
     <div class="profile">
       <div class="profile-nav">
@@ -403,9 +406,8 @@ function renderImportSummaryModal({ added, failed }) {
 
 export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary, refreshingId }) {
   const albums  = loadAlbums();
-  let visible = activeFilter === 'all' ? albums : albums.filter(a => (a.tags || []).includes(activeFilter));
-  const q = searchQuery?.trim().toLowerCase();
-  if (q) visible = visible.filter(a => (a.title || '').toLowerCase().includes(q) || (a.artist || '').toLowerCase().includes(q));
+  // Same helper app.js resolves data-index against — see filterAlbums's comment.
+  const visible = filterAlbums(albums, activeFilter, searchQuery);
 
   if (profileOpen) {
     el.innerHTML = renderProfile(userProfile, prefService);
@@ -447,14 +449,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
       </div>
       <button class="add-toggle${addOpen ? ' active' : ''}" data-action="toggle-add" aria-expanded="${addOpen}">+ Add</button>
     </div>
-    ${addOpen ? `
-    <div class="add-reveal">
-      <input class="add-input" id="url-input" placeholder="Paste an album link from Spotify, Apple Music, YouTube…">
-      <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
-        ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
-      </button>
-    </div>
-    ${addError ? `<div class="add-error">${addError}</div>` : ''}` : ''}`;
+    ${addOpen ? renderAddForm({ loadingAdd, addError, placeholder: 'Paste an album link from Spotify, Apple Music, YouTube…' }) : ''}`;
 
   if (importProgress) {
     const pct      = importProgress.total > 0 ? (importProgress.done / importProgress.total * 100) : 0;
@@ -602,7 +597,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
   const loading = !cached;
 
   const image      = cached?.image     || null;
-  const fullBio    = cached?.fullBio   || '';
+  const bio        = cached?.bio       || '';
   const similar    = cached?.similar   || [];
   const tags       = cached?.tags      || [];
   const genres     = cached?.genres    || [];
@@ -610,9 +605,9 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
   const lastfmUrl  = cached?.lastfmUrl  || null;
   const mergedTags = [...new Set([...genres, ...tags])];
 
-  const links = [
-    lastfmUrl  ? `<a class="explore-link explore-link--lastfm" href="${attr(lastfmUrl)}" target="_blank">${lastfmIcon(12, 12)} Last.fm</a>` : '',
-  ].filter(Boolean).join('');
+  const lastfmLink = lastfmUrl
+    ? `<a class="explore-link explore-link--lastfm" href="${attr(lastfmUrl)}" target="_blank">${lastfmIcon(12, 12)} Last.fm</a>`
+    : '';
 
   const tracklistHtml = tracks === null
     ? `<div class="explore-loading">Loading tracks…</div>`
@@ -662,11 +657,11 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
             ${mergedTags.length ? `<div class="explore-tags">${mergedTags.map(t => `<span class="tag genre">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
             <div class="explore-links">
               ${spotifyUrl ? `<a class="explore-link explore-link--spotify" href="${attr(spotifyUrl)}" target="_blank">${spotifyIcon(12, 12)} Follow on Spotify</a>` : ''}
-              ${links}
+              ${lastfmLink}
             </div>
           </div>
         </div>
-        ${fullBio ? `<p class="explore-bio">${fullBio}</p>` : ''}
+        ${bio ? `<p class="explore-bio">${escapeHtml(bio)}</p>` : ''}
         ${similar.length ? `
           <div class="explore-section-label">Similar artists</div>
           <div class="similar-list">

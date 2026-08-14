@@ -1,10 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { stubExternals, KEYS as BASE_KEYS } from './helpers.js';
 
 const KEYS = {
-  TOKEN:    'gp_token',
-  EXPIRY:   'gp_expiry',
-  REFRESH:  'gp_refresh',
-  ALBUMS:   'gp_albums',
+  ...BASE_KEYS,
   SYNC_ON:  'gp_sync_enabled',
   SYNC_PL:  'gp_sync_playlist_id',
 };
@@ -84,16 +82,8 @@ function stubSpotify(context) {
   });
 }
 
-function stubLastfm(context) {
-  return Promise.all([
-    context.route('https://www.theaudiodb.com/**', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: '{"artists":null}' })
-    ),
-    context.route('https://ws.audioscrobbler.com/**', route =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
-    ),
-  ]);
-}
+// Resolver left unstubbed — the tests here that add an album register their own.
+const stubLastfm = context => stubExternals(context, { odesli: null });
 
 // ── Logged-out sync isolation ─────────────────────────────────────────────────
 

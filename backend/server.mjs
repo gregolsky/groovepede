@@ -10,7 +10,7 @@
 
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { resolveRequest, artistRequest, TTL_S } from './resolver-core.mjs';
+import { resolveRequest, artistRequest } from './resolver-core.mjs';
 
 const PORT    = parseInt(process.env.PORT || '8787', 10);
 const DB_PATH = process.env.DB_PATH || '/data/cache.db';
@@ -78,8 +78,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // Match the same endpoint the PWA calls (/v1/resolve); keep /links as an alias.
-    if (u.pathname !== '/v1/resolve' && u.pathname !== '/links') {
+    // The only resolve endpoint — matches what the PWA calls.
+    if (u.pathname !== '/v1/resolve') {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end('{"_error":"not found"}');
       return;

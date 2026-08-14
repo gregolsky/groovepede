@@ -47,11 +47,9 @@ REMOTE_DIR="${POSITIONAL[1]:-${PI_REMOTE_DIR:-groovepede-resolver}}"
 command -v rsync >/dev/null || { echo "ERROR: rsync not found locally" >&2; exit 1; }
 [ -f .env ] || { echo "ERROR: .env not found — cp .env.example .env and fill it in" >&2; exit 1; }
 
-envval() { grep "^$1=" .env | head -1 | sed -E "s/^$1=//; s/[\" \r]//g"; }
-DOMAIN=$(envval DOMAIN)
-HTTPS_PORT=$(envval HTTPS_PORT); HTTPS_PORT="${HTTPS_PORT:-443}"
-PUID=$(envval PUID); PUID="${PUID:-10001}"
-PGID=$(envval PGID); PGID="${PGID:-10001}"
+# Only DOMAIN is needed here (for the cert-backup filename and the closing
+# message); everything else in .env is read on the Pi by deploy-local.sh.
+DOMAIN=$(grep "^DOMAIN=" .env | head -1 | sed -E 's/^DOMAIN=//; s/[" \r]//g')
 [ -n "$DOMAIN" ] || { echo "ERROR: DOMAIN is empty in .env" >&2; exit 1; }
 
 # ── One shared SSH connection so you authenticate ONCE, not per command ──────

@@ -74,28 +74,51 @@ Records with an existing `links` key are passed through unchanged (idempotent).
 | `gp_sync_enabled` | boolean string | Spotify sync on/off |
 | `gp_sync_playlist_id` | string | Spotify playlist ID for sync |
 | `gp_sync_last` | number string | Timestamp of last sync |
-| `gp_sync_pending` | boolean string | Sync needed flag |
-| `gp_cv` | string | Spotify OAuth code verifier |
-| `gp_token` | JSON | Spotify access/refresh token |
+| `gp_sync_pending` | boolean string | Re-enable sync after the scope re-auth round trip |
+| `gp_token` | string | Spotify access token |
+| `gp_expiry` | number string | Access token expiry (epoch ms) |
+| `gp_refresh` | string | Spotify refresh token |
+| `gp_verifier` | string | PKCE code verifier (removed after the code exchange) |
+
+All keys are defined in `frontend/src/js/config.js`.
 
 ---
 
 ## API integrations
 
-### Odesli / Songlink
+### Odesli / Songlink — via the resolver
 
-- **Base**: `https://api.song.link/v1-alpha.1`
-- **Endpoint**: `GET /links?url=<encoded>&userCountry=US[&key=<key>]`
-- **Auth**: optional API key (`ODESLI_API_KEY` in config.js, blank = anonymous)
-- **Rate limit**: 10 req/min (free tier); cached indefinitely in localStorage after add
+The browser never calls Odesli directly: `api.song.link` sends no CORS header for
+our origin. All resolution goes through the self-hosted resolver.
+
+- **Base**: `https://api.groovepede.gregolsky.pl` (`ODESLI_BASE` in config.js)
+- **Endpoint**: `GET /v1/resolve?url=<encoded>&userCountry=US`
+- **Auth**: `x-gp-token`, an ECDSA-P256 signature over `"<ts>\n<url>"` (see `sign.js`)
+- **Odesli API key**: server-side only (`ODESLI_KEY` in `backend/.env`)
+- **Caching**: 60 days in the resolver's SQLite cache; resolved records then live
+  in localStorage
 - **Returns**: `{ entityUniqueId, entitiesByUniqueId, linksByPlatform }` — see `resolveAlbum()` in `api.js`
 - **Error handling**: non-200 → `{ _error: statusCode }`; network failure → `{ _error: 'network' }`
+- **Fallback**: `resolveAlbumResilient()` falls back to MusicBrainz (client-side,
+  throttled) when Odesli errors or is in rate-limit cooldown
+- See `specs/resolver-proxy.md` and `backend/README.md`
 
 ### Last.fm
 
-- **Endpoints used**: `album.getinfo` (tags, year), `artist.getinfo` (bio, similar)
+- **Endpoints used**: `album.getinfo` and `artist.gettoptags` (tags),
+  `artist.getinfo` (bio), `artist.getsimilar` (similar artists + tag fallback)
 - **Auth**: API key only (`LASTFM_KEY` in config.js)
-- **Called after** Odesli resolve; enriches `tags` and `year` in place
+- **Called after** resolve; enriches `tags` in place (`year` comes from the
+  resolver/MusicBrainz, not Last.fm)
+- **Not used for artist images** — Last.fm has served the same placeholder for
+  every artist since 2019; see the artist-image section below
+
+### Artist images
+
+Chain, first hit wins: Spotify (only when connected) → TheAudioDB
+(browser-direct, CORS-enabled) → Deezer via the resolver's `/v1/artist`
+(`api.deezer.com` sends no CORS header) → initials avatar. Only image URLs are
+handled; the browser loads the image from the source's own CDN.
 
 ### Spotify (optional)
 
@@ -116,11 +139,17 @@ Parses raw user input. Returns one of:
 
 ### `resolveAlbum(url)` — `api.js`
 
-Calls Odesli. Returns a full album record (see schema above) or `{ _error }` on failure.
+Calls the resolver. Returns a full album record (see schema above) or `{ _error }` on failure.
 
 ### `upgradeAlbumRecord(rec)` — `storage.js`
 
 Converts legacy Spotify-only record to universal shape. Idempotent.
+
+### `filterAlbums(albums, activeFilter, searchQuery)` — `storage.js`
+
+The visible album list, after the tag filter and the search box. Single source of
+truth: every `data-index` in the rendered markup is an index into this list, and
+`app.js`'s click handlers resolve those indices against the same function.
 
 ### `pickListenUrl(album, prefService)` — `render.js`
 
@@ -131,24 +160,28 @@ Resolves the best URL to open for Listen, given the user's preferred service:
 4. First available `url` across all services
 5. `album.sourceUrl` (last resort)
 
-### `serviceLabel(service)` — `render.js`
+### `serviceLabel(service)` — `services.js`
 
 Returns human-readable name for a service slug (e.g., `'apple'` → `'Apple Music'`).
+Re-exported from `render.js` for convenience.
 
 ---
 
-## Add flow (Phase 3 target)
+## Add flow
 
 ```
 user input
   → parseMusicLink()       // validate + normalize
-  → resolveAlbum(url)      // Odesli: get cross-service links + metadata
-  → enrichWithLastfm()     // async: fill tags + year
-  → saveAlbums()           // persist
+  → resolveAlbum(url)      // resolver: cross-service links + metadata
+  → saveResolvedAlbum()    // dedupe by id, persist, schedule sync, enrich
+      → attachFirstTrackUri()  // Spotify only, when logged in
+      → enrichWithLastfm()     // async: fill tags
   → rerender()
 ```
 
-No Spotify API call required. Spotify sync (`schedulePush`) fires only if `tokenValid()`.
+No Spotify API call required. Spotify sync (`schedulePush`) fires only if
+`tokenValid()`. When the resolver is unreachable with a retryable error, a
+pending stub is saved instead and retried by `resolvePending()` on next open.
 
 ---
 
@@ -163,21 +196,18 @@ No Spotify API call required. Spotify sync (`schedulePush`) fires only if `token
 ## Backup format
 
 ```json
-{ "version": 2, "exportedAt": "<ISO>", "albums": [...], "done": 42 }
+{ "version": 4, "exportedAt": "<ISO>", "albums": [...], "done": 42 }
 ```
 
-Version 1 backups (pre-pivot Spotify-only) are accepted and migrated on import.
+Exports carry the full album record (cover, links, tags, `firstTrackUri`), so an
+import restores instantly with no re-resolution.
 
----
+Versions 1–4 are accepted on import:
 
-## Phases
+| Version | On import |
+|---|---|
+| 1, 2 | Legacy Spotify-only records — migrated by `upgradeAlbumRecord`, restored directly |
+| 3 | Lean export (`sourceUrl` only) — saved as pending stubs and re-resolved |
+| 4 | Current — restored directly |
 
-| # | Name | Status |
-|---|---|---|
-| 0 | Odesli client + universal link parser | Done |
-| 1 | Album record migration | Done |
-| 2 | Preferred service setting + Listen button rewrite | In progress |
-| 3 | Add flow via Odesli (no Spotify auth) | Pending |
-| 4 | Decouple boot from Spotify auth | Pending |
-| 5 | Sync isolation (hide when logged out) | Pending |
-| 6 | Copy, manifest, doc cleanup | Pending |
+Entries with no title/artist fall back to a pending stub regardless of version.

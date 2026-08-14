@@ -1,8 +1,13 @@
 # Groovepede Resolver Proxy — Spec
 
-**Status:** planned / in implementation  
-**Owner:** `backend/`  
-**Related plan:** `~/.claude/plans/i-ve-added-2-new-jazzy-donut.md`
+**Status:** shipped  
+**Owner:** `backend/`
+
+> This spec originally described an AWS Lambda + CloudFront + WAF + DynamoDB
+> deployment. That stack was removed in `1c07ecc`; the resolver is now
+> self-hosted on a Raspberry Pi. The problem, the handler contract and the
+> security model below are unchanged and still current — for how the Pi
+> deployment is built, run and deployed, see `backend/README.md`.
 
 ---
 
@@ -15,8 +20,8 @@ browser blocks the response. The app catches the TypeError as
 `{ _error: 'network' }`, which is retryable — so pending stubs retry forever and
 never resolve.
 
-This affects every album added via any service (not just Spotify), because all
-resolution goes through Odesli. The legacy Spotify-direct path is being dropped.
+This affects every album added via any service, because all resolution goes
+through Odesli.
 
 An Odesli API key does **not** fix the problem — CORS is origin-based, not
 key-based.
@@ -25,66 +30,56 @@ key-based.
 
 ## Solution
 
-A server-side Lambda proxy calls Odesli without an `Origin` header, with a named
-`User-Agent`, and re-emits the JSON with the correct ACAO header. All resolution
-is routed through the proxy. The app's existing Odesli response shape is preserved
-exactly, so no client data-model changes are needed.
-
----
-
-## Architecture
+A server-side proxy calls Odesli without an `Origin` header, with a named
+`User-Agent`, and re-emits the JSON with the correct ACAO header. Odesli's
+response shape is preserved verbatim, so the client data model is unchanged.
 
 ```
 Browser (Origin: https://groovepede.gregolsky.pl)
   │  GET /v1/resolve?url=…&userCountry=US
   │  Header: x-gp-token: <signed token>
   ▼
-CloudFront  (custom domain: api.groovepede.gregolsky.pl)
-  │  ACM cert (us-east-1) · /v1/* CacheBehavior (keyed on url + userCountry + Origin)
+nginx on the Pi  (api.groovepede.gregolsky.pl)
+  │  TLS (Let's Encrypt) · per-IP rate limit · fail2ban
   ▼
-AWS WAF Web ACL  (scope: CLOUDFRONT, region: us-east-1)
-  ├─ Rule 1: block unless x-gp-token == expected value  → 403 at edge
-  ├─ Rule 2: per-IP rate limit (100 req / 5 min)        → 429 at edge
-  └─ Rule 3: AWS managed IP reputation list             → 403 at edge
-  ▼
-CloudFront OAC (SigV4-signs origin request)
-  ▼
-Lambda Function URL  (AuthType: AWS_IAM — only CloudFront OAC can invoke)
-  ▼
-Lambda gp-resolver  (Node 22, 128 MB, 3 s timeout, concurrency: 3)
-  ├─ Input validation: url present + host in allowlist
-  ├─ DynamoDB cache check (TTL 60 days)
+resolver (node:http)
+  ├─ token verify · origin allowlist · host allowlist
+  ├─ SQLite cache lookup (TTL 60 days)
   │   hit  → return cached body
   │   miss ↓
   ├─ fetch https://api.song.link/v1-alpha.1/links?…
   │   UA: Groovepede-Resolver/1.0 (+https://groovepede.gregolsky.pl)
   │   non-200 → passthrough error (app retry logic handles it)
-  └─ Write to DynamoDB · return body
-  ▼
-DynamoDB gp-resolve-cache  (PAY_PER_REQUEST, TTL on `exp`)
+  └─ write to SQLite · return body
 ```
 
 ---
 
 ## Handler contract
 
-**Endpoint:** `GET https://api.groovepede.gregolsky.pl/v1/resolve`  
-**Query params:** same as Odesli — `url` (required), `userCountry` (default `US`)  
-**Required header:** `x-gp-token: <ts>.<base64url-sig>` (ECDSA-P256 signed; 5-min window; URL-bound)  
+**Endpoints:** `GET https://api.groovepede.gregolsky.pl/v1/resolve` (album links)
+and `/v1/artist` (artist image URL); `/healthz` returns `{ ok, commit }`.  
+**Query params:** `/v1/resolve` mirrors Odesli — `url` (required),
+`userCountry` (default `US`). `/v1/artist` takes `name` (required) and an
+optional Deezer `albumId`.  
+**Required header:** `x-gp-token: <ts>.<base64url-sig>` (ECDSA-P256; 5-minute
+window; bound to the URL, or to `artist:<name>|<albumId>`)  
 **Response shape:** verbatim Odesli JSON on success; `{ "_error": <status> }` on
-failure  
-**CORS:** `Access-Control-Allow-Origin: https://groovepede.gregolsky.pl` (and
-`http://localhost:5173` for dev)
+failure. `/v1/artist` returns `{ image: string|null }` — a URL only, never image
+bytes.  
+**CORS:** explicit origin allowlist —
+`https://groovepede.gregolsky.pl` plus `http://localhost:5173` for dev,
+extendable via `ALLOWED_ORIGINS`. Never `*`.
 
-### Cache key
+### Cache keys
 
 ```
-k = "links:{userCountry}:{normalizedUrl}"
+links:{userCountry}:{normalizedUrl}      TTL 60 days
+artist:{normalizedArtistName}            TTL 30 days (negatives cached too)
 ```
 
-`normalizedUrl` = strip `?si=`, `?utm_*`, and other tracking params while
-preserving service-specific params (e.g. Apple Music `/album/name/id` path
-segments are path-based, not query-based — no change needed).
+`normalizedUrl` strips `si=` and `utm_*` while preserving service-specific
+params (Apple Music album ids are path segments, so they're unaffected).
 
 ### Input allowlist (SSRF hygiene)
 
@@ -101,56 +96,42 @@ The handler rejects any `url` whose host is not one of:
 | Pandora | `pandora.com`, `www.pandora.com` |
 | SoundCloud | `soundcloud.com`, `www.soundcloud.com` |
 
+`albumId` on `/v1/artist` is validated as digits-only before it reaches a URL
+path.
+
 ---
 
-## Security & cost controls
+## Security model
 
-| Control | Layer | Cost |
-|---|---|---|
-| WAF token rule (x-gp-token) | Edge (CloudFront) | ~$1/rule/mo |
-| WAF per-IP rate rule | Edge (CloudFront) | ~$1/rule/mo |
-| WAF WebACL baseline | Edge | ~$5/WebACL/mo |
-| Lambda Function URL AuthType: AWS_IAM | Origin | free |
-| CloudFront OAC | Origin | free |
-| Reserved concurrency = 3 | Lambda | free |
-| 3 s timeout · 128 MB | Lambda | free |
-| DynamoDB PAY_PER_REQUEST + TTL | Cache | ~$0 |
-| AWS Budgets alarm ($5/mo threshold) | Account | free |
-
-**Total expected cost: ~$7–10/mo** (WAF-dominated).
+| Control | Layer |
+|---|---|
+| `x-gp-token` signature + 5-min replay window | resolver |
+| Origin allowlist (CORS) | resolver |
+| Host allowlist (SSRF) | resolver |
+| Per-IP rate limit (`limit_req`) | nginx |
+| Ban on repeated 404s / blocked UAs | fail2ban |
 
 **Token caveat:** `VITE_GP_PRIVATE_KEY` ships in the public PWA bundle, so a
-determined attacker can mint valid tokens — this is a stronger deterrent than a
-static shared secret, but not airtight auth. Tokens sniffed from the wire expire
-in 5 min and are URL-bound. The actual hard limits are the WAF rate rule +
-reserved concurrency + Budgets.
+determined attacker can mint valid tokens. It is a stronger deterrent than a
+static shared secret, not airtight auth — tokens sniffed from the wire expire in
+5 minutes and are bound to one URL. The hard limits are nginx's rate limit and
+fail2ban.
+
+**What CORS does and doesn't do here:** it is browser-enforced. It stops another
+*website* from reading a response in the user's browser; it does not stop a
+direct `curl` carrying a valid token. See `backend/README.md` § Security posture.
 
 ---
 
-## Client changes (`src/`)
+## Client integration
 
-### `src/js/config.js`
-```js
-export const ODESLI_BASE    = 'https://api.groovepede.gregolsky.pl';
-export const GP_PRIVATE_KEY = import.meta.env.VITE_GP_PRIVATE_KEY ?? '';
-// Private key: ECDSA-P256 PKCS8 DER, base64-encoded.
-// Generate once with: cd backend && make keygen
-// Set in .env.local for dev; VITE_GP_PRIVATE_KEY GitHub Actions secret for CI.
-```
-
-### `src/js/sign.js` (new)
-Signs each request: `import { signRequestToken } from './sign.js'`  
-Returns `"<ts>.<base64url(ECDSA-SHA256 sig over '${ts}\n${url}')>"`.
-
-### `src/js/api.js` — `resolveAlbum` (line ~41)
-```js
-const res = await fetch(`${ODESLI_BASE}/v1/resolve?${params}`, {
-  headers: { 'x-gp-token': await signRequestToken(inputUrl) },
-});
-```
-
-All four call sites (`resolvePending`, `handleAdd`, boot-share, per-entry refresh)
-go through `resolveAlbum` — one change covers them all.
+- `frontend/src/js/config.js` — `ODESLI_BASE` points at the resolver;
+  `GP_PRIVATE_KEY` comes from `VITE_GP_PRIVATE_KEY` (`.env.local` for dev, a
+  GitHub Actions secret for CI). Generate the pair with `cd backend && make keygen`.
+- `frontend/src/js/sign.js` — `signRequestToken(payload)` returns
+  `"<ts>.<base64url(ECDSA-SHA256 over '${ts}\n${payload}')>"`.
+- `frontend/src/js/api.js` — `resolveAlbum` and `fetchDeezerArtistImage` are the
+  only callers; every add path funnels through `resolveAlbum`.
 
 ---
 
@@ -169,81 +150,39 @@ backend/
 └── Makefile             — keygen
 ```
 
-> The AWS Lambda/CloudFront deployment this spec originally described was
-> removed in `1c07ecc`; the resolver is now self-hosted on a Raspberry Pi.
-> See `backend/README.md` for the current architecture.
-
 ---
 
-## Deploy sequence
+## Layer 2 (future — UPC-based fallback resolver)
 
-```
-# 1. Generate key pair (one-time)
-cd backend
-make keygen
-# → prints VITE_GP_PRIVATE_KEY (add to .env.local + CI secret)
-# → prints GP_PUBLIC_KEY (pass to deploy-app)
-export GP_PUBLIC_KEY=<printed value>
+When Odesli is unreachable, the resolver could fan out by UPC:
 
-# 2. Deploy app stack (Lambda + DynamoDB) — eu-central-1
-make deploy-app GP_PUBLIC_KEY="$GP_PUBLIC_KEY"
-
-# 3. Deploy edge stack (ACM + WAF + CloudFront) — us-east-1
-# HOSTED_ZONE_ID is required: `aws cloudformation deploy` never prompts for
-# missing parameters, so an unset HostedZoneId silently defaults to '' and
-# disables ACM's auto DNS validation — the cert then hangs PENDING_VALIDATION
-# indefinitely instead of failing loudly.
-export LAMBDA_FUNCTION_URL=<FunctionUrl from outputs-app>
-export LAMBDA_FUNCTION_ARN=<FunctionArn from outputs-app>
-export HOSTED_ZONE_ID=<Route 53 zone ID for gregolsky.pl>
-make deploy-edge LAMBDA_FUNCTION_URL="$LAMBDA_FUNCTION_URL" LAMBDA_FUNCTION_ARN="$LAMBDA_FUNCTION_ARN" HOSTED_ZONE_ID="$HOSTED_ZONE_ID"
-
-# 4. Lock Lambda permission to the specific distribution
-make lock-permission GP_PUBLIC_KEY="$GP_PUBLIC_KEY"
-
-# 5. DNS — the Route 53 A-alias was created automatically in step 3
-#    (same HostedZoneId dependency as the ACM validation)
-
-# 6. Build + deploy the PWA
-npm run build && npm test
-```
-
----
-
-## Layer 2 (future — UPC-based self-hosted resolver)
-
-When Odesli is unreachable, extend the same Lambda to fan out by UPC:
-
-1. Retrieve UPC from the source service (Spotify `/v1/albums/{id}` → `external_ids.upc`; Spotify app token cached in DynamoDB)
-2. Fan out: Deezer `GET /album/upc:{upc}`, iTunes `GET /lookup?upc={upc}`, Spotify `GET /search?q=upc:{upc}`
+1. Retrieve UPC from the source service (Spotify `/v1/albums/{id}` →
+   `external_ids.upc`)
+2. Fan out: Deezer `GET /album/upc:{upc}`, iTunes `GET /lookup?upc={upc}`,
+   Spotify `GET /search?q=upc:{upc}`
 3. Emit `linksByPlatform` keyed to match `services.js` `odesliKeys`
 
-Gaps: YouTube Music (no UPC lookup), Tidal (needs partner OAuth) — stay Odesli-only.
-Not in current scope.
+Gaps: YouTube Music (no UPC lookup), Tidal (needs partner OAuth) — stay
+Odesli-only. Not in current scope; today's fallback is MusicBrainz, client-side.
 
 ---
 
 ## Tests
 
-### Backend (unit)
-File: `backend/resolver-core.test.mjs`
+**Backend unit** — `backend/resolver-core.test.mjs`, run with
+`node --test backend/resolver-core.test.mjs` (and in CI):
 
 - Cache miss → calls Odesli with app UA + optional key, caches body, returns it
-- Cache hit → no Odesli call, returns cached body
-- Unknown host in `url` → 400 before any outbound call
+- Cache hit → no Odesli call
+- Unknown host → 400 before any outbound call
 - Odesli non-200 → passthrough (same status, `{ _error: status }`)
-- Missing `url` param → 400
+- Missing `url` → 400
+- Artist lookup: exact album-id hit, strict name match, mismatch rejection,
+  blank-placeholder handling
 
-### App (existing suite — retargeting)
-- `src/js/api.test.js`: stub the proxy URL (instead of `api.song.link/**`); confirm all
-  existing resolve tests pass
-- `tests/add.spec.js` / `tests/share.spec.js`: stub `api.groovepede.gregolsky.pl`
-  returning Odesli-shaped fixtures; assert full card renders
+**App** — `frontend/src/js/api.test.js` stubs the resolver URL;
+`frontend/tests/*.spec.js` stub it through `tests/helpers.js`.
 
-### Integration (post-deploy smoke)
-```bash
-cd backend
-make smoke VITE_GP_PRIVATE_KEY="$VITE_GP_PRIVATE_KEY"
-# Calls: GET https://api.groovepede.gregolsky.pl/v1/resolve?url=…
-# Expect: 200, access-control-allow-origin header, linksByPlatform in body
-```
+**Post-deploy smoke** — `cd frontend && npm run test:smoke` opens the deployed
+site and exercises a real resolve, which is what catches signing-key drift
+between `VITE_GP_PRIVATE_KEY` and the Pi's `GP_PUBLIC_KEY`.

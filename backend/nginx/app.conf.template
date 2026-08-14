@@ -5,11 +5,19 @@
 # Per-IP rate limiting — replaces AWS WAF's rate-based rule.
 limit_req_zone $binary_remote_addr zone=gp_rl:10m rate=${RATE_LIMIT};
 
-# Access log to a real file (not the image's default stdout symlink) so
-# fail2ban can tail it. Bind-mounted from ./data/nginx-logs — see
-# docker-compose.yml. `combined` puts $remote_addr first, which is the format
-# fail2ban's nginx filters expect.
-access_log /var/log/nginx/access.log combined;
+# NOTE: no access_log directive here on purpose.
+#
+# This template renders into conf.d/, which the stock image includes from inside
+# the http block — where nginx.conf has ALREADY declared
+#   access_log /var/log/nginx/access.log main;
+# Two access_log directives in the same context both fire, so adding one here
+# wrote every request to that file twice. fail2ban then counted each 404 twice
+# and banned at half the configured maxretry.
+#
+# The `main` format is `combined` plus $http_x_forwarded_for, and still starts
+# with $remote_addr, which is all the gp-scanner / gp-ai-crawler filters need.
+# The file is a real file rather than the image's stdout symlink because
+# docker-compose.yml bind-mounts ./data/nginx-logs over /var/log/nginx.
 
 # ── AI / LLM training crawlers ──────────────────────────────────────────────
 # Matched on User-Agent and dropped with 444 (close connection, no response) —

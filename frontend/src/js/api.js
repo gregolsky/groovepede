@@ -1,4 +1,4 @@
-import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
+import { LASTFM_KEY, ODESLI_BASE, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
 import { signRequestToken } from './sign.js';
 import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
@@ -17,6 +17,17 @@ const asArray = v => Array.isArray(v) ? v : v == null ? [] : [v];
 
 const is429        = r => r?._error === 429;
 const retryAfterMs = r => r?._retryAfter != null ? r._retryAfter * 1000 : null;
+
+/**
+ * The error shape every rate-limited response returns. `_retryAfter` (seconds,
+ * from the server's Retry-After header) is only present when the server sent a
+ * usable one — the throttler treats its absence as "escalate our own backoff".
+ */
+function rateLimitError(res) {
+  const raw = res.headers?.get?.('retry-after');
+  const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
+  return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
+}
 
 function makeThrottles() {
   return {
@@ -39,16 +50,11 @@ export function _setThrottles(t) { throttles = { ...throttles, ...t }; }
 export async function resolveAlbum(inputUrl) {
   try {
     const params = new URLSearchParams({ url: inputUrl, userCountry: 'US' });
-    if (ODESLI_API_KEY) params.set('key', ODESLI_API_KEY);
     const res = await fetch(`${ODESLI_BASE}/v1/resolve?${params}`, {
       headers: { 'x-gp-token': await signRequestToken(inputUrl) },
     });
     if (!res.ok) {
-      if (res.status === 429) {
-        const raw = res.headers?.get?.('retry-after');
-        const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
-        return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
-      }
+      if (res.status === 429) return rateLimitError(res);
       return { _error: res.status };
     }
     const data = await res.json();
@@ -160,79 +166,53 @@ export async function resolveAlbumResilient(sourceUrl, { service } = {}) {
 
 // ── Spotify ───────────────────────────────────────────────────────────────────
 
-async function _spotifyGet(path) {
-  const res = await fetch('https://api.spotify.com/v1' + path,
-    { headers: { Authorization: 'Bearer ' + getToken() } });
-  if (res.status === 401) {
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) return null;
-    const retry = await fetch('https://api.spotify.com/v1' + path,
-      { headers: { Authorization: 'Bearer ' + getToken() } });
-    if (!retry.ok) return { _error: retry.status };
-    return retry.json();
-  }
-  if (res.status === 429) {
-    const raw = res.headers?.get?.('retry-after');
-    const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
-    return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
-  }
-  if (!res.ok) return { _error: res.status };
-  return res.json();
-}
+const SPOTIFY_API = 'https://api.spotify.com/v1';
 
-export async function spotifyGet(path) {
-  return throttles.spotify.run(() => _spotifyGet(path));
-}
-
-async function _spotifyMutate(method, path, body) {
-  const makeReq = () => fetch('https://api.spotify.com/v1' + path, {
+/**
+ * One Spotify Web API call: sends the bearer token, refreshes it once on 401 and
+ * retries, and normalises every failure to `{ _error }`.
+ *
+ * Returns `null` — not an `_error` object — when the token could not be
+ * refreshed. Callers rely on that distinction: sync.js's handleErr() maps null
+ * to "Auth failed" and disables further pushes.
+ *
+ * A body is only sent when one is given, so GET requests carry no
+ * Content-Type header.
+ */
+async function _spotifyRequest(method, path, body) {
+  const makeReq = () => fetch(SPOTIFY_API + path, {
     method,
-    headers: { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    headers: {
+      Authorization: 'Bearer ' + getToken(),
+      ...(body !== undefined && { 'Content-Type': 'application/json' }),
+    },
+    ...(body !== undefined && { body: JSON.stringify(body) }),
   });
+
   let res = await makeReq();
   if (res.status === 401) {
     if (!await refreshAccessToken()) return null;
     res = await makeReq();
   }
-  if (res.status === 429) {
-    const raw = res.headers?.get?.('retry-after');
-    const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
-    return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
-  }
+  if (res.status === 429) return rateLimitError(res);
   if (!res.ok) return { _error: res.status };
+  if (method === 'GET') return res.json();
+
+  // Playlist mutations answer 200-with-empty-body and 204, which res.json()
+  // rejects on — so those go through text() and treat empty as {}.
   const text = await res.text();
   return text ? JSON.parse(text) : {};
 }
 
-async function spotifyMutate(method, path, body) {
-  return throttles.spotify.run(() => _spotifyMutate(method, path, body));
-}
+const spotifyRequest = (method, path, body) => throttles.spotify.run(() => _spotifyRequest(method, path, body));
 
-export async function spotifyPost(path, body) { return spotifyMutate('POST', path, body); }
-export async function spotifyPut(path, body)  { return spotifyMutate('PUT',  path, body); }
+export async function spotifyGet(path)        { return spotifyRequest('GET',  path); }
+export async function spotifyPost(path, body) { return spotifyRequest('POST', path, body); }
+export async function spotifyPut(path, body)  { return spotifyRequest('PUT',  path, body); }
 
 export async function fetchAlbumFirstTrack(albumId) {
   const data = await spotifyGet('/albums/' + albumId + '/tracks?limit=1');
   return data?.items?.[0]?.uri || null;
-}
-
-export async function fetchAlbumMeta(id) {
-  const data = await spotifyGet('/albums/' + id);
-  if (!data || data._error) return data ?? null;
-  const artists = data.artists || [];
-  return {
-    id,
-    url:           data.external_urls.spotify,
-    title:         data.name,
-    artist:        artists.map(a => a.name).join(', '),
-    artistId:      artists[0]?.id || null,
-    cover:         data.images?.[0]?.url || null,
-    year:          (data.release_date || '').slice(0, 4) || null,
-    tags:          [],
-    addedAt:       new Date().toISOString(),
-    firstTrackUri: data.tracks?.items?.[0]?.uri || null,
-  };
 }
 
 // Fetch Last.fm tags in the background and update the saved album.
@@ -290,6 +270,8 @@ export async function fetchLastfmAlbum(artist, album) {
   return { tags };
 }
 
+const BIO_MAX_CHARS = 900;
+
 const YEAR_RE = /^\d{4}s?$/;
 const JUNK_TAGS = new Set(['seen live', 'favorites', 'favourite', 'under 2000 listeners']);
 
@@ -312,13 +294,8 @@ async function fetchTagsFromSimilarArtists(artist) {
     simArtists.map(a => lfmGet({ method: 'artist.gettoptags', artist: a.name, autocorrect: '1' }))
   );
   for (const data of results) {
-    const tags = asArray(data?.toptags?.tag).filter(t => t.count >= 15).slice(0, 5);
-    for (const t of tags) {
-      const name = t.name.toLowerCase();
-      if (name.length > 1 && name.length <= 25 && !YEAR_RE.test(name) && !JUNK_TAGS.has(name)) {
-        counts[name] = (counts[name] || 0) + 1;
-      }
-    }
+    const tags = cleanTags(asArray(data?.toptags?.tag).filter(t => t.count >= 15).slice(0, 5));
+    for (const name of tags) counts[name] = (counts[name] || 0) + 1;
   }
   // Keep tags that appear in at least 2 similar artists
   return Object.entries(counts)
@@ -415,14 +392,15 @@ export async function fetchLastfmArtist(artistName) {
     fetchArtistTags(artistName),
   ]);
 
-  // Strip Last.fm "Read more" link
-  let fullBio = infoData?.artist?.bio?.content || infoData?.artist?.bio?.summary || '';
-  fullBio = fullBio.replace(/<a href="https:\/\/www\.last\.fm[^"]*"[^>]*>.*?<\/a>/gi, '').trim();
-  fullBio = fullBio.replace(/<[^>]+>/g, '').trim();
+  // Strip the Last.fm "Read more" link, then all remaining markup.
+  let bio = infoData?.artist?.bio?.content || infoData?.artist?.bio?.summary || '';
+  bio = bio.replace(/<a href="https:\/\/www\.last\.fm[^"]*"[^>]*>.*?<\/a>/gi, '').trim();
+  bio = bio.replace(/<[^>]+>/g, '').trim();
 
-  // Short version for the card panel
-  let bio = fullBio;
-  if (bio.length > 420) bio = bio.slice(0, 420).replace(/\s+\S*$/, '') + '…';
+  // Truncate for the explore panel. `content` is unbounded — Last.fm returns
+  // 62 000 characters for Miles Davis, which rendered as a 15 000 px wall of
+  // text before this was capped.
+  if (bio.length > BIO_MAX_CHARS) bio = bio.slice(0, BIO_MAX_CHARS).replace(/\s+\S*$/, '') + '…';
 
   const similar = asArray(similarData?.similarartists?.artist)
     .slice(0, 6)
@@ -430,7 +408,7 @@ export async function fetchLastfmArtist(artistName) {
 
   const lastfmUrl = infoData?.artist?.url || null;
 
-  return { bio, fullBio, similar, tags, lastfmUrl };
+  return { bio, similar, tags, lastfmUrl };
 }
 
 // ── Artist images ─────────────────────────────────────────────────────────────
@@ -487,14 +465,7 @@ export async function fetchDeezerArtistImage(artistName, albumId) {
       const res = await fetch(`${ODESLI_BASE}/v1/artist?${params}`, {
         headers: { 'x-gp-token': await signRequestToken(signed) },
       });
-      if (!res.ok) {
-        if (res.status === 429) {
-          const raw = res.headers?.get?.('retry-after');
-          const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
-          return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
-        }
-        return null;
-      }
+      if (!res.ok) return res.status === 429 ? rateLimitError(res) : null;
       const data = await res.json();
       return isBlankImage(data?.image) ? null : data.image;
     } catch { return null; }
