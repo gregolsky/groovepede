@@ -65,6 +65,24 @@ GIT_SHA="${GIT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 export GIT_SHA
 docker compose up -d --build
 
+# nginx's config and fail2ban's jails are bind-mounted, so compose sees no change
+# to the service definition and leaves those containers running — a config-only
+# deploy would silently not take effect. (nginx additionally renders
+# app.conf.template through envsubst at container START, so `nginx -s reload`
+# alone would not pick up template edits.) Hash the config trees and recreate
+# only when they actually changed, to keep the usual deploy downtime-free.
+CONF_HASH=$(cat $(find nginx fail2ban -type f | sort) | md5sum | cut -d' ' -f1)
+# Kept in $HOME, not in the deploy tree: data/ is owned by the container uid
+# (PUID, 0700 in places) so this user can't write there, and everything else in
+# the runtime dir is wiped by the rsync --delete on the next deploy.
+STAMP="$HOME/.gp-deploy-config-hash"
+if [ ! -f "$STAMP" ] || [ "$CONF_HASH" != "$(cat "$STAMP")" ]; then
+  echo "→ nginx/fail2ban config changed — recreating those containers…"
+  docker compose up -d --force-recreate nginx fail2ban
+  # Non-fatal: a missing stamp only costs an extra recreate next deploy.
+  printf '%s' "$CONF_HASH" > "$STAMP" || echo "   (could not write $STAMP — will recreate again next time)"
+fi
+
 echo "--- status ---"
 docker compose ps
 
