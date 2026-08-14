@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, serviceLabel, isOnPreferredService, timeAgo } from './render.js';
+import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, serviceLabel, isOnPreferredService, timeAgo, artistInitials } from './render.js';
 
 // ── isOnPreferredService ──────────────────────────────────────────────────────
 
@@ -255,5 +255,42 @@ describe('timeAgo', () => {
   it('returns years for 1+ years', () => {
     expect(timeAgo(isoAgo(400 * day))).toBe('1y ago');
     expect(timeAgo(isoAgo(730 * day))).toBe('2y ago');
+  });
+});
+
+// ── artistInitials ────────────────────────────────────────────────────────────
+
+describe('artistInitials', () => {
+  it('takes one letter per word, up to two', () => {
+    expect(artistInitials('Chelsea Wolfe')).toBe('CW');
+    expect(artistInitials('Boards of Canada')).toBe('BO');
+  });
+
+  it('takes a single letter for a one-word name', () => {
+    expect(artistInitials('Radiohead')).toBe('R');
+  });
+
+  it('uppercases accented letters without mangling them', () => {
+    expect(artistInitials('Bölzer')).toBe('B');
+    expect(artistInitials('Ärzte Band')).toBe('ÄB');
+  });
+
+  it('splits on commas as well as spaces (multi-artist credits)', () => {
+    expect(artistInitials('Neurosis, Jarboe')).toBe('NJ');
+  });
+
+  it('skips leading punctuation to find the first real character', () => {
+    expect(artistInitials('...And Oceans')).toBe('AO');
+  });
+
+  it('handles names starting with a digit', () => {
+    expect(artistInitials('65daysofstatic')).toBe('6');
+  });
+
+  it('falls back to a music note rather than an empty circle', () => {
+    expect(artistInitials('')).toBe('♪');
+    expect(artistInitials(null)).toBe('♪');
+    expect(artistInitials('   ')).toBe('♪');
+    expect(artistInitials('!!!')).toBe('♪');
   });
 });

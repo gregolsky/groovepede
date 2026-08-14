@@ -3,7 +3,7 @@ import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
+import { spotifyGet, fetchAlbumMeta, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchArtistImage, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, escapeHtml } from './render.js';
 import * as sync from './sync.js';
@@ -239,6 +239,17 @@ async function prefetchExplore(album) {
   if (fetches.length) {
     await Promise.all(fetches);
     if (exploreIndex !== null && visibleAlbums()[exploreIndex]?.id === id) rerender();
+  }
+
+  // Artist image: Spotify above only runs when logged in AND the record has an
+  // artistId, which is never true for albums added without connecting Spotify.
+  // Fall back to the login-free sources, keyed on the artist name.
+  if (!artistCache[artist]?.image) {
+    const image = await fetchArtistImage(album);
+    if (image) {
+      artistCache[artist] = { ...artistCache[artist], image };
+      if (exploreIndex !== null && visibleAlbums()[exploreIndex]?.id === id) rerender();
+    }
   }
 }
 

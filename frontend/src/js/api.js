@@ -1,4 +1,4 @@
-import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY, MUSICBRAINZ_BASE, COVERART_BASE, THROTTLE } from './config.js';
+import { LASTFM_KEY, ODESLI_BASE, ODESLI_API_KEY, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
 import { signRequestToken } from './sign.js';
 import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
@@ -24,6 +24,8 @@ function makeThrottles() {
     musicbrainz: createThrottle({ ...THROTTLE.musicbrainz, isRateLimited: is429, retryAfterOf: retryAfterMs }),
     lastfm:      createThrottle({ ...THROTTLE.lastfm }),  // rarely rate-limits; pace only
     spotify:     createThrottle({ ...THROTTLE.spotify,    isRateLimited: is429, retryAfterOf: retryAfterMs }),
+    audiodb:     createThrottle({ ...THROTTLE.audiodb }), // shared free key; pace only
+    deezer:      createThrottle({ ...THROTTLE.deezer,     isRateLimited: is429, retryAfterOf: retryAfterMs }),
   };
 }
 
@@ -429,4 +431,93 @@ export async function fetchLastfmArtist(artistName) {
   const lastfmUrl = infoData?.artist?.url || null;
 
   return { bio, fullBio, similar, tags, lastfmUrl };
+}
+
+// ── Artist images ─────────────────────────────────────────────────────────────
+// Deliberately NOT from Last.fm: artist.getinfo has returned the same
+// placeholder image for every artist since Last.fm dropped artist photos in
+// 2019 (album.getinfo images are still real — it's artist images specifically).
+// Odesli carries no artist imagery either, only album thumbnails.
+//
+// Order: Spotify (caller, when connected — explicitly licensed and already
+// attributed) → TheAudioDB (browser-direct, CORS-enabled, free) → Deezer via
+// our resolver (best coverage, but api.deezer.com sends no CORS header).
+// Only URLs are handled anywhere in this chain; the browser loads the image
+// itself straight from the source's CDN.
+
+/** Deezer's "no photo" placeholders, and TheAudioDB's empty values. */
+function isBlankImage(url) {
+  if (!url) return true;
+  return url.includes('/artist//') || url.includes('d41d8cd98f00b204e9800998ecf8427e');
+}
+
+/**
+ * TheAudioDB artist thumbnail, or null. Strict name match — their search is
+ * fuzzy and a wrong artist's face is worse than no face.
+ * Coverage skews mainstream; the Deezer fallback catches the long tail.
+ */
+export async function fetchAudiodbArtistImage(artistName) {
+  const data = await throttles.audiodb.run(async () => {
+    try {
+      const res = await fetch(`${AUDIODB_BASE}/search.php?s=${encodeURIComponent(artistName)}`);
+      if (!res.ok) return null;
+      return res.json();
+    } catch { return null; }
+  });
+  const want  = normalizeAlbumStr(artistName);
+  const match = (data?.artists || []).find(a => normalizeAlbumStr(a?.strArtist) === want);
+  // Their CDN serves https fine even though some records store an http:// URL,
+  // and a mixed-content image would be blocked outright on our https origin.
+  const img = (match?.strArtistThumb || match?.strArtistWideThumb || '').replace(/^http:/, 'https:');
+  return isBlankImage(img) ? null : img;
+}
+
+/**
+ * Deezer artist image via our resolver. `albumId` (Deezer's own album id, which
+ * Odesli hands us for free in links.deezer) makes the lookup exact; without it
+ * the resolver falls back to a strict name match.
+ */
+export async function fetchDeezerArtistImage(artistName, albumId) {
+  return throttles.deezer.run(async () => {
+    try {
+      const params = new URLSearchParams({ name: artistName });
+      if (albumId) params.set('albumId', albumId);
+      // Signed payload must match exactly what the resolver reconstructs.
+      const signed = `artist:${artistName}|${albumId || ''}`;
+      const res = await fetch(`${ODESLI_BASE}/v1/artist?${params}`, {
+        headers: { 'x-gp-token': await signRequestToken(signed) },
+      });
+      if (!res.ok) {
+        if (res.status === 429) {
+          const raw = res.headers?.get?.('retry-after');
+          const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
+          return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
+        }
+        return null;
+      }
+      const data = await res.json();
+      return isBlankImage(data?.image) ? null : data.image;
+    } catch { return null; }
+  });
+}
+
+/** Deezer's numeric album id out of a links.deezer url, or null. */
+export function deezerAlbumId(album) {
+  const url = album?.links?.deezer?.url;
+  return url ? (url.match(/\/album\/(\d+)/)?.[1] || null) : null;
+}
+
+/**
+ * Artist image for an album, trying the free browser-direct source first and
+ * only falling back to our resolver. Returns a URL or null.
+ */
+export async function fetchArtistImage(album) {
+  const artist = (album?.artist || '').split(',')[0].trim();
+  if (!artist) return null;
+
+  const fromAudiodb = await fetchAudiodbArtistImage(artist);
+  if (fromAudiodb) return fromAudiodb;
+
+  const fromDeezer = await fetchDeezerArtistImage(artist, deezerAlbumId(album));
+  return typeof fromDeezer === 'string' ? fromDeezer : null;
 }

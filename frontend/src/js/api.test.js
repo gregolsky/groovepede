@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, spotifyAlbumMatches, searchSpotifyAlbum, fetchLastfmAlbum, fetchLastfmArtist } from './api.js';
+import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, spotifyAlbumMatches, searchSpotifyAlbum, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistImage, deezerAlbumId, fetchArtistImage } from './api.js';
 
 // ── throttle helpers ──────────────────────────────────────────────────────────
 
@@ -15,6 +15,8 @@ function resetThrottles() {
     musicbrainz: noopThrottle(),
     lastfm:      noopThrottle(),
     spotify:     noopThrottle(),
+    audiodb:     noopThrottle(),
+    deezer:      noopThrottle(),
   });
 }
 
@@ -528,5 +530,156 @@ describe('fetchLastfmArtist — Last.fm single-object quirk', () => {
     ]);
     const { similar } = await fetchLastfmArtist('Mogwai');
     expect(similar).toEqual([{ name: 'Godspeed', url: 'https://last.fm/music/GY!BE' }]);
+  });
+});
+
+// ── artist images ─────────────────────────────────────────────────────────────
+
+const DZ_PIC = 'https://cdn-images.dzcdn.net/images/artist/09bbbb9b4f4cab65db1e69a7d4005aec/1000x1000-000000-80-0-0.jpg';
+const ADB_PIC = 'https://r2.theaudiodb.com/images/media/artist/thumb/blzer-566becc4435d3.jpg';
+
+const okJson = (body) => ({ ok: true, status: 200, json: async () => body });
+
+describe('deezerAlbumId', () => {
+  it('extracts the numeric id from a deezer album link', () => {
+    const album = { links: { deezer: { url: 'https://www.deezer.com/album/542142182' } } };
+    expect(deezerAlbumId(album)).toBe('542142182');
+  });
+
+  it('handles localised deezer paths', () => {
+    const album = { links: { deezer: { url: 'https://www.deezer.com/en/album/302127' } } };
+    expect(deezerAlbumId(album)).toBe('302127');
+  });
+
+  it('returns null when there is no deezer link', () => {
+    expect(deezerAlbumId({ links: { spotify: { url: 'x' } } })).toBeNull();
+    expect(deezerAlbumId({})).toBeNull();
+    expect(deezerAlbumId(null)).toBeNull();
+  });
+});
+
+describe('fetchAudiodbArtistImage', () => {
+  beforeEach(() => { resetThrottles(); vi.restoreAllMocks(); });
+
+  it('returns the thumb for an exact (normalised) name match', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      okJson({ artists: [{ strArtist: 'Bölzer', strArtistThumb: ADB_PIC }] }));
+    expect(await fetchAudiodbArtistImage('Bolzer')).toBe(ADB_PIC);
+  });
+
+  it('upgrades an http thumb to https (mixed content would be blocked)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      okJson({ artists: [{ strArtist: 'Bölzer', strArtistThumb: ADB_PIC.replace('https:', 'http:') }] }));
+    expect(await fetchAudiodbArtistImage('Bölzer')).toBe(ADB_PIC);
+  });
+
+  it('rejects a near-miss rather than returning the wrong artist', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      okJson({ artists: [{ strArtist: 'Black Bomb A', strArtistThumb: ADB_PIC }] }));
+    expect(await fetchAudiodbArtistImage('Black Limbo')).toBeNull();
+  });
+
+  it('returns null when the API has no artists or errors', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ artists: null }));
+    expect(await fetchAudiodbArtistImage('Nobody')).toBeNull();
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 500 });
+    expect(await fetchAudiodbArtistImage('Nobody')).toBeNull();
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
+    expect(await fetchAudiodbArtistImage('Nobody')).toBeNull();
+  });
+
+  it('returns null when the match has no usable image', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      okJson({ artists: [{ strArtist: 'Ghost', strArtistThumb: '' }] }));
+    expect(await fetchAudiodbArtistImage('Ghost')).toBeNull();
+  });
+});
+
+describe('fetchDeezerArtistImage', () => {
+  beforeEach(() => { resetThrottles(); vi.restoreAllMocks(); });
+
+  it('passes albumId through and returns the resolver image', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ image: DZ_PIC }));
+    expect(await fetchDeezerArtistImage('Witch Club Satan', '542142182')).toBe(DZ_PIC);
+    const url = spy.mock.calls[0][0];
+    expect(url).toContain('/v1/artist?');
+    expect(url).toContain('albumId=542142182');
+  });
+
+  it('omits albumId when there is none', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ image: DZ_PIC }));
+    await fetchDeezerArtistImage('Hamulec', null);
+    expect(spy.mock.calls[0][0]).not.toContain('albumId');
+  });
+
+  it('treats a Deezer placeholder as no image', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      okJson({ image: 'https://cdn-images.dzcdn.net/images/artist//1000x1000.jpg' }));
+    expect(await fetchDeezerArtistImage('Betwixt The Stars', null)).toBeNull();
+  });
+
+  it('surfaces 429 so the throttler can back off', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: false, status: 429, headers: { get: h => (h === 'retry-after' ? '12' : null) },
+    });
+    expect(await fetchDeezerArtistImage('X', null)).toEqual({ _error: 429, _retryAfter: 12 });
+  });
+
+  it('returns null on other errors and on network failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 403 });
+    expect(await fetchDeezerArtistImage('X', null)).toBeNull();
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
+    expect(await fetchDeezerArtistImage('X', null)).toBeNull();
+  });
+});
+
+describe('fetchArtistImage', () => {
+  beforeEach(() => { resetThrottles(); vi.restoreAllMocks(); });
+
+  it('uses TheAudioDB and never calls the resolver when it hits', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      okJson({ artists: [{ strArtist: 'Chelsea Wolfe', strArtistThumb: ADB_PIC }] }));
+    expect(await fetchArtistImage({ artist: 'Chelsea Wolfe' })).toBe(ADB_PIC);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the Deezer resolver when TheAudioDB misses', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(okJson({ artists: [] }))
+      .mockResolvedValueOnce(okJson({ image: DZ_PIC }));
+    expect(await fetchArtistImage({ artist: 'Hamulec' })).toBe(DZ_PIC);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses only the primary artist of a multi-artist credit', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      okJson({ artists: [{ strArtist: 'Neurosis', strArtistThumb: ADB_PIC }] }));
+    expect(await fetchArtistImage({ artist: 'Neurosis, Jarboe' })).toBe(ADB_PIC);
+    expect(spy.mock.calls[0][0]).toContain('Neurosis');
+    expect(spy.mock.calls[0][0]).not.toContain('Jarboe');
+  });
+
+  it('returns null when both sources miss', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(okJson({ artists: [] }))
+      .mockResolvedValueOnce(okJson({ image: null }));
+    expect(await fetchArtistImage({ artist: 'Betwixt The Stars' })).toBeNull();
+  });
+
+  it('returns null without any network call when the album has no artist', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    expect(await fetchArtistImage({ artist: '' })).toBeNull();
+    expect(await fetchArtistImage({})).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('does not return a 429 marker object as if it were an image url', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(okJson({ artists: [] }))
+      .mockResolvedValueOnce({ ok: false, status: 429, headers: { get: () => null } });
+    expect(await fetchArtistImage({ artist: 'X' })).toBeNull();
   });
 });

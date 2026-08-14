@@ -16,6 +16,9 @@ export const UA          = 'Groovepede-Resolver/1.0 (+https://groovepede.gregols
 export const TTL_S       = 60 * 60 * 24 * 60;              // 60 days
 export const ODESLI_BASE = 'https://api.song.link/v1-alpha.1';
 
+export const DEEZER_BASE   = 'https://api.deezer.com';
+export const ARTIST_TTL_S  = 60 * 60 * 24 * 30;            // 30 days — artist photos are near-static
+
 const TOKEN_WINDOW_S = 300; // 5-minute replay window
 
 // ── Token verification ──────────────────────────────────────────────────────
@@ -221,4 +224,140 @@ export async function resolveRequest({ method, origin, url, cc, token, cache, fe
   }
 
   return { statusCode: 200, headers: jsonHeaders, body: data };
+}
+
+// ── Artist images ───────────────────────────────────────────────────────────
+// Deezer is the only source with usable coverage for the long tail (Last.fm
+// serves one placeholder for every artist since 2019; Odesli carries no artist
+// imagery at all), but api.deezer.com sends no Access-Control-Allow-Origin, so
+// the browser can't call it — hence this endpoint.
+//
+// Only the image URL is ever returned. Image bytes are never fetched, stored,
+// or re-served here: the browser hotlinks Deezer's CDN directly, the same way
+// it already does for Odesli-supplied album covers.
+
+/**
+ * Normalise an artist name for exact matching: NFKD, strip diacritics, drop
+ * non-alphanumerics, collapse whitespace, lowercase. Mirrors normalizeAlbumStr
+ * in the frontend (frontend/src/js/api.js) — kept as its own small copy rather
+ * than shared, since this module has no build step and no frontend imports.
+ */
+export function normalizeArtist(s) {
+  if (!s) return '';
+  return s
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Deezer serves a generic blank for artists with no photo. Two forms observed:
+// an empty id segment, and the MD5 of the empty string.
+const DEEZER_BLANK = ['/artist//', 'd41d8cd98f00b204e9800998ecf8427e'];
+
+/** True when a Deezer picture URL is really Deezer's "no image" placeholder. */
+export function isBlankArtistImage(url) {
+  if (!url) return true;
+  return DEEZER_BLANK.some(marker => url.includes(marker));
+}
+
+/**
+ * Pick the artist image from a Deezer /search/artist response, accepting a
+ * candidate ONLY when its normalised name equals the normalised query.
+ * Deezer's search is fuzzy — "Black Limbo" returns "Black Bomb A" as the top
+ * hit — and showing the wrong artist's face is worse than showing none.
+ */
+export function pickArtistImage(candidates, name) {
+  const want = normalizeArtist(name);
+  if (!want) return null;
+  const match = (candidates || []).find(c => normalizeArtist(c?.name) === want);
+  const pic = match?.picture_xl || match?.picture_big || null;
+  return isBlankArtistImage(pic) ? null : pic;
+}
+
+/**
+ * Resolve an artist image URL. Same contract as resolveRequest: adapters pass
+ * parsed inputs plus a cache adapter and translate the return shape.
+ *
+ * Two-stage lookup:
+ *   1. albumId (a Deezer album id, which Odesli hands us for free on resolve)
+ *      → /album/{id} → artist.picture_xl. Exact — no name matching at all.
+ *   2. otherwise → /search/artist → strict normalised-name match.
+ *
+ * @returns {Promise<{statusCode:number, headers:object, body:any}>}
+ *          body is `{ image: string|null }`.
+ */
+export async function artistRequest({ method, origin, name, albumId, token, cache, fetchImpl = fetch }) {
+  const cors = corsHeaders(origin || '');
+
+  if (method === 'OPTIONS') {
+    return { statusCode: 204, headers: cors, body: null };
+  }
+
+  const jsonHeaders = { 'content-type': 'application/json', ...cors };
+
+  // Signature is bound to the same canonical string the client signed.
+  if (!verifyToken(token || '', `artist:${name || ''}|${albumId || ''}`)) {
+    return { statusCode: 403, headers: jsonHeaders, body: { _error: 'forbidden' } };
+  }
+
+  if (!name) {
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'missing name' } };
+  }
+  // albumId goes straight into a URL path; only ever a Deezer numeric id.
+  if (albumId && !/^\d+$/.test(albumId)) {
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'bad albumId' } };
+  }
+
+  const k = `artist:${normalizeArtist(name)}`;
+
+  try {
+    const hit = await cache.get(k);
+    if (hit) return { statusCode: 200, headers: jsonHeaders, body: hit };
+  } catch (err) {
+    console.warn('cache get error (non-fatal):', err.message);
+  }
+
+  const opts = { headers: { 'User-Agent': UA, 'Accept': 'application/json' } };
+  let image = null;
+
+  // Stage 1 — exact, via the Deezer album id.
+  if (albumId) {
+    try {
+      const res = await fetchImpl(`${DEEZER_BASE}/album/${albumId}`, opts);
+      if (res.ok) {
+        const data = await res.json();
+        const pic  = data?.artist?.picture_xl || data?.artist?.picture_big || null;
+        if (!isBlankArtistImage(pic)) image = pic;
+      }
+    } catch { /* fall through to search */ }
+  }
+
+  // Stage 2 — strict name match.
+  if (!image) {
+    try {
+      const q   = new URLSearchParams({ q: name, limit: '5' });
+      const res = await fetchImpl(`${DEEZER_BASE}/search/artist?${q}`, opts);
+      if (res.ok) {
+        const data = await res.json();
+        image = pickArtistImage(data?.data, name);
+      }
+    } catch {
+      return { statusCode: 503, headers: jsonHeaders, body: { _error: 'network' } };
+    }
+  }
+
+  const body = { image: image || null };
+
+  // Cache negatives too — an artist Deezer doesn't have won't appear next week
+  // either, and re-asking on every explore would be pure waste.
+  try {
+    await cache.put(k, body, ARTIST_TTL_S);
+  } catch (err) {
+    console.warn('cache put error (non-fatal):', err.message);
+  }
+
+  return { statusCode: 200, headers: jsonHeaders, body };
 }

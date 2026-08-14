@@ -85,9 +85,14 @@ function stubSpotify(context) {
 }
 
 function stubLastfm(context) {
-  return context.route('https://ws.audioscrobbler.com/**', route =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
-  );
+  return Promise.all([
+    context.route('https://www.theaudiodb.com/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"artists":null}' })
+    ),
+    context.route('https://ws.audioscrobbler.com/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+    ),
+  ]);
 }
 
 // ── Logged-out sync isolation ─────────────────────────────────────────────────
@@ -210,6 +215,9 @@ test('adding an album with sync on triggers a push', async ({ page, context }) =
       }),
     }));
 
+    await context.route('https://www.theaudiodb.com/**', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ artists: null }),
+    }));
     await context.route('https://ws.audioscrobbler.com/**', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({}),
     }));

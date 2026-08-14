@@ -26,9 +26,14 @@ function stubOdesli(context) {
 }
 
 function stubLastfm(context) {
-  return context.route('https://ws.audioscrobbler.com/**', route =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
-  );
+  return Promise.all([
+    context.route('https://www.theaudiodb.com/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"artists":null}' })
+    ),
+    context.route('https://ws.audioscrobbler.com/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+    ),
+  ]);
 }
 
 const SPOTIFY_URL = 'https://open.spotify.com/album/abc123def456ghi789jklm';

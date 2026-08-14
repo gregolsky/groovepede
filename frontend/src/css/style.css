@@ -492,6 +492,21 @@ body::after {
   border: 2px solid var(--border);
 }
 .explore-artist-image--placeholder { background: var(--surface); }
+/* Shown when no source has a photo for this artist. Deliberately looks like a
+   designed avatar rather than a failed image — most artists in a niche queue
+   have no photo anywhere, so this is a normal state, not an error. */
+.explore-artist-image--initials {
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 46px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-dim);
+  user-select: none;
+}
 .explore-artist-info { min-width: 0; }
 .explore-artist-name {
   font-family: var(--font-display);

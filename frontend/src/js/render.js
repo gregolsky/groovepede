@@ -578,6 +578,22 @@ function renderCards(visible, albums, searchQuery, prefService) {
   }).join('');
 }
 
+/**
+ * Up to two initials for an artist, for the fallback avatar when no photo is
+ * available from any source. Multi-word names give one letter per word
+ * ("Chelsea Wolfe" → CW); single words give the first letter ("Bölzer" → B).
+ * Falls back to '♪' rather than rendering an empty circle.
+ */
+export function artistInitials(name) {
+  const words = (name || '').split(/[\s,]+/).filter(Boolean);
+  const letters = words
+    .map(w => [...w].find(ch => /\p{L}|\p{N}/u.test(ch)) || '')
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('');
+  return letters ? letters.toUpperCase() : '♪';
+}
+
 // ── Explore card ──────────────────────────────────────────────────────────────
 
 function renderExploreCard(album, cached, tracks, index, total, prefService, refreshingId = null) {
@@ -640,7 +656,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
         <div class="explore-artist-hero">
           ${image
             ? `<img class="explore-artist-image" src="${attr(image)}" alt="${attr(album.artist)}">`
-            : `<div class="explore-artist-image explore-artist-image--placeholder"></div>`}
+            : `<div class="explore-artist-image explore-artist-image--initials" aria-hidden="true">${escapeHtml(artistInitials(album.artist))}</div>`}
           <div class="explore-artist-info">
             <h2 class="explore-artist-name">${escapeHtml(album.artist || '')}</h2>
             ${mergedTags.length ? `<div class="explore-tags">${mergedTags.map(t => `<span class="tag genre">${escapeHtml(t)}</span>`).join('')}</div>` : ''}

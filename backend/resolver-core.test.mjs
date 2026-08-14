@@ -13,7 +13,10 @@ const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256
 process.env.GP_PUBLIC_KEY = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
 
 const core = await import('./resolver-core.mjs');
-const { resolveRequest, verifyToken, normalizeUrl, corsHeaders, _resetPublicKey } = core;
+const {
+  resolveRequest, verifyToken, normalizeUrl, corsHeaders, _resetPublicKey,
+  artistRequest, normalizeArtist, isBlankArtistImage, pickArtistImage,
+} = core;
 _resetPublicKey(); // ensure the test key is the one loaded
 
 const b64url = (buf) =>
@@ -152,4 +155,143 @@ test('resolveRequest: Odesli network error → 503 network', async () => {
   });
   assert.equal(r.statusCode, 503);
   assert.deepEqual(r.body, { _error: 'network' });
+});
+
+// ── Artist images ───────────────────────────────────────────────────────────
+
+const PIC = 'https://cdn-images.dzcdn.net/images/artist/09bbbb9b4f4cab65db1e69a7d4005aec/1000x1000-000000-80-0-0.jpg';
+
+test('normalizeArtist folds diacritics, case and punctuation', () => {
+  assert.equal(normalizeArtist('Bölzer'), 'bolzer');
+  assert.equal(normalizeArtist('Vígundr'), 'vigundr');
+  assert.equal(normalizeArtist('Zeal & Ardor'), 'zeal ardor');
+  assert.equal(normalizeArtist('  MASTER  BOOT   RECORD '), 'master boot record');
+  assert.equal(normalizeArtist(''), '');
+});
+
+test('isBlankArtistImage: both Deezer placeholder forms are treated as absent', () => {
+  // Empty id segment, and the MD5 of the empty string — both observed live.
+  assert.equal(isBlankArtistImage('https://cdn-images.dzcdn.net/images/artist//1000x1000.jpg'), true);
+  assert.equal(isBlankArtistImage('https://cdn-images.dzcdn.net/images/artist/d41d8cd98f00b204e9800998ecf8427e/500x500.jpg'), true);
+  assert.equal(isBlankArtistImage(''), true);
+  assert.equal(isBlankArtistImage(null), true);
+  assert.equal(isBlankArtistImage(PIC), false);
+});
+
+test('pickArtistImage: exact normalised name match wins', () => {
+  const got = pickArtistImage([{ name: 'Bölzer', picture_xl: PIC }], 'Bolzer');
+  assert.equal(got, PIC);
+});
+
+test('pickArtistImage: rejects a near-miss rather than showing the wrong artist', () => {
+  // Deezer's real top hit for "Black Limbo" is "Black Bomb A".
+  const got = pickArtistImage([{ name: 'Black Bomb A', picture_xl: PIC }], 'Black Limbo');
+  assert.equal(got, null);
+});
+
+test('pickArtistImage: match with only a placeholder image → null', () => {
+  const blank = 'https://cdn-images.dzcdn.net/images/artist//1000x1000.jpg';
+  const got = pickArtistImage([{ name: 'Betwixt The Stars', picture_xl: blank }], 'Betwixt The Stars');
+  assert.equal(got, null);
+});
+
+const artistToken = (name, albumId = '') => makeToken(`artist:${name}|${albumId}`);
+
+test('artistRequest: missing/invalid token → 403', async () => {
+  const r = await artistRequest({
+    method: 'GET', origin: '', name: 'Bölzer', albumId: '',
+    token: '', cache: noCache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 403);
+});
+
+test('artistRequest: token bound to a different artist is rejected', async () => {
+  const r = await artistRequest({
+    method: 'GET', origin: '', name: 'Bölzer', albumId: '',
+    token: artistToken('Someone Else'), cache: noCache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 403);
+});
+
+test('artistRequest: non-numeric albumId → 400 (never reaches the URL path)', async () => {
+  const r = await artistRequest({
+    method: 'GET', origin: '', name: 'Bölzer', albumId: '../../evil',
+    token: artistToken('Bölzer', '../../evil'), cache: noCache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 400);
+  assert.deepEqual(r.body, { _error: 'bad albumId' });
+});
+
+test('artistRequest: albumId path is exact — no search call is made', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, json: async () => ({ artist: { picture_xl: PIC } }) };
+  };
+  const r = await artistRequest({
+    method: 'GET', origin: '', name: 'Witch Club Satan', albumId: '542142182',
+    token: artistToken('Witch Club Satan', '542142182'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { image: PIC });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /\/album\/542142182$/);
+});
+
+test('artistRequest: falls back to strict search when the album lookup yields nothing', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url.includes('/album/')) return { ok: true, status: 200, json: async () => ({ artist: {} }) };
+    return { ok: true, status: 200, json: async () => ({ data: [{ name: 'Hamulec', picture_xl: PIC }] }) };
+  };
+  const r = await artistRequest({
+    method: 'GET', origin: '', name: 'Hamulec', albumId: '1',
+    token: artistToken('Hamulec', '1'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { image: PIC });
+  assert.equal(calls.length, 2);
+});
+
+test('artistRequest: no match → image null, and the negative is cached', async () => {
+  let putKey = null, putBody = null;
+  const cache = { get: async () => null, put: async (k, b) => { putKey = k; putBody = b; } };
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ name: 'Black Bomb A', picture_xl: PIC }] }) });
+  const r = await artistRequest({
+    method: 'GET', origin: '', name: 'Black Limbo', albumId: '',
+    token: artistToken('Black Limbo'), cache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { image: null });
+  assert.equal(putKey, 'artist:black limbo');
+  assert.deepEqual(putBody, { image: null });
+});
+
+test('artistRequest: cache hit short-circuits the Deezer call', async () => {
+  const cache = { get: async () => ({ image: PIC }), put: async () => { throw new Error('no put on hit'); } };
+  const r = await artistRequest({
+    method: 'GET', origin: '', name: 'Bölzer', albumId: '',
+    token: artistToken('Bölzer'), cache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { image: PIC });
+});
+
+test('artistRequest: OPTIONS preflight → 204 with CORS, no token needed', async () => {
+  const r = await artistRequest({
+    method: 'OPTIONS', origin: 'https://groovepede.gregolsky.pl',
+    name: '', albumId: '', token: '', cache: noCache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 204);
+  assert.equal(r.headers['access-control-allow-origin'], 'https://groovepede.gregolsky.pl');
+});
+
+test('artistRequest: unknown origin gets no CORS headers', async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) });
+  const r = await artistRequest({
+    method: 'GET', origin: 'https://evil.example', name: 'Bölzer', albumId: '',
+    token: artistToken('Bölzer'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.headers['access-control-allow-origin'], undefined);
 });

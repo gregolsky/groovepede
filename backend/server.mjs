@@ -10,7 +10,7 @@
 
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { resolveRequest, TTL_S } from './resolver-core.mjs';
+import { resolveRequest, artistRequest, TTL_S } from './resolver-core.mjs';
 
 const PORT    = parseInt(process.env.PORT || '8787', 10);
 const DB_PATH = process.env.DB_PATH || '/data/cache.db';
@@ -57,8 +57,24 @@ const server = createServer(async (req, res) => {
     const u = new URL(req.url, `http://localhost:${PORT}`);
 
     if (u.pathname === '/healthz') {
+      // `commit` lets a deploy verify THIS build is live, not just that some
+      // server answered — see .github/workflows/deploy-backend.yml.
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end('{"ok":true}');
+      res.end(JSON.stringify({ ok: true, commit: process.env.GIT_SHA || 'unknown' }));
+      return;
+    }
+
+    if (u.pathname === '/v1/artist') {
+      const r = await artistRequest({
+        method:  req.method,
+        origin:  req.headers.origin || '',
+        name:    u.searchParams.get('name') || '',
+        albumId: u.searchParams.get('albumId') || '',
+        token:   req.headers['x-gp-token'] || '',
+        cache,
+      });
+      res.writeHead(r.statusCode, r.headers);
+      res.end(r.body == null ? '' : JSON.stringify(r.body));
       return;
     }
 

@@ -27,6 +27,10 @@ async function seedWithAlbums(context, albums = ALBUMS) {
     })
   );
 
+  await context.route('https://www.theaudiodb.com/**', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"artists":null}' })
+  );
+
   await context.route('https://ws.audioscrobbler.com/**', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
   );

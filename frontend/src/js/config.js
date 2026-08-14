@@ -41,4 +41,14 @@ export const THROTTLE = {
   lastfm:      { minIntervalMs:   200,  cooldownMs: 30_000, maxCooldownMs:  60_000 },
   // Spotify Web API: ~180/min sustained; Retry-After header honoured by throttler.
   spotify:     { minIntervalMs:   334,  cooldownMs: 30_000, maxCooldownMs: 300_000 },
+  // TheAudioDB free tier (key 123) is shared and rate-limited; pace politely.
+  audiodb:     { minIntervalMs: 1_000,  cooldownMs: 60_000, maxCooldownMs: 300_000 },
+  // Deezer via our own resolver — nginx allows 10r/s; 500 ms is well under.
+  deezer:      { minIntervalMs:   500,  cooldownMs: 30_000, maxCooldownMs: 300_000 },
 };
+
+// TheAudioDB — artist images, called directly from the browser (it sends
+// Access-Control-Allow-Origin: *). `123` is the free public key documented in
+// their API guide. Deezer has better coverage but sends no CORS header, so it
+// goes through the resolver instead (see fetchArtistImage in api.js).
+export const AUDIODB_BASE = 'https://www.theaudiodb.com/api/v1/json/123';

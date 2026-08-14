@@ -65,6 +65,10 @@ function stubApis(context) {
     route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify(makeOdesliResponse()) })
   );
+  context.route('https://www.theaudiodb.com/**', r =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: '{"artists":null}' })
+  );
+
   context.route('https://ws.audioscrobbler.com/**', r =>
     r.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
   );
