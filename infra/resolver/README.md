@@ -37,7 +37,7 @@ published to the host — only nginx exposes ports (80/443).
 ## Setup
 
 ```bash
-cd infra/resolver-pi
+cd infra/resolver
 cp .env.example .env
 #   edit .env: DOMAIN, LETSENCRYPT_EMAIL, GP_PUBLIC_KEY (+ optional ODESLI_KEY, rate limit)
 
@@ -69,10 +69,24 @@ cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.12
 - `./deploy.sh --init` forces re-running the cert bootstrap.
 - The Pi's `./data/` (SQLite cache + certs) is never overwritten by a redeploy.
 
-> **Upgrading an existing Pi deployment:** containers now run as fixed
-> `PUID:PGID` (default `10001:10001`, see `.env.example`) instead of uid 999.
-> Any `./data` from before this change is owned by root or 999 and needs a
-> one-time fix on the Pi: `sudo chown -R 10001:10001 ~/groovepede-resolver/resolver-pi/data`.
+> **Upgrading an existing Pi deployment:** two changes need a one-time manual
+> step on the Pi if you deployed before this update.
+>
+> 1. Containers now run as fixed `PUID:PGID` (default `10001:10001`, see
+>    `.env.example`) instead of uid 999. `./data` from before this change is
+>    owned by root or 999.
+> 2. The remote directory is now `resolver` instead of `resolver-pi` — a plain
+>    `./deploy.sh` will sync into a fresh `resolver/` next to the old one,
+>    leaving the old `resolver-pi/data` (cache + certs) behind.
+>
+> Fix both in one move — on the Pi:
+> ```bash
+> mv ~/groovepede-resolver/resolver-pi/data ~/groovepede-resolver/resolver-tmp-data
+> rm -rf ~/groovepede-resolver/resolver-pi
+> # after your next ./deploy.sh creates ~/groovepede-resolver/resolver/:
+> mv ~/groovepede-resolver/resolver-tmp-data ~/groovepede-resolver/resolver/data
+> sudo chown -R 10001:10001 ~/groovepede-resolver/resolver/data
+> ```
 
 Prereqs on the Pi: Docker + Docker Compose, ports 80+443 forwarded, and the DNS A
 record for `$DOMAIN` pointing at your public IP (as in Prerequisites above). The

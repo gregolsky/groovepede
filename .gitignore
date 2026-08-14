@@ -1,8 +1,8 @@
 node_modules/
 dist/
-infra/resolver-pi/data/
-infra/resolver-pi/.env
-infra/resolver-pi/deploy.env
+infra/resolver/data/
+infra/resolver/.env
+infra/resolver/deploy.env
 test-results/
 playwright-report/
 

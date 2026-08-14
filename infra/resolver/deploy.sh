@@ -66,16 +66,16 @@ echo "→ Domain:     $DOMAIN"
 
 # ── Sync ────────────────────────────────────────────────────────────────────
 echo "→ Syncing files…"
-ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/resolver-pi'"
+ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/resolver'"
 
 # --delete keeps the remote in sync, but 'data/' (cache + certs) is excluded so
 # it is neither transferred nor deleted. deploy.env is deploy-only (holds the
 # SSH target) and must not land on the Pi.
 rsync -az --delete -e "$RSYNC_SSH" \
   --exclude 'data/' --exclude '.git' --exclude 'deploy.env' \
-  ./ "$TARGET:$REMOTE_DIR/resolver-pi/"
+  ./ "$TARGET:$REMOTE_DIR/resolver/"
 
-REMOTE_PI="$REMOTE_DIR/resolver-pi"
+REMOTE_PI="$REMOTE_DIR/resolver"
 
 # ── First-time cert bootstrap ───────────────────────────────────────────────
 NEED_INIT=$FORCE_INIT
