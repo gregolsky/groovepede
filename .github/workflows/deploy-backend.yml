@@ -23,6 +23,18 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Record the commit the Pi is serving now
+        id: before
+        run: |
+          # Captured BEFORE signalling. If the Pi is already on the target
+          # commit, the wait step below cannot prove the trigger worked — it
+          # would pass on the pre-existing state. That false pass has already
+          # happened once and hid a topic mismatch, hence this check.
+          got=$(curl -fsS --max-time 10 https://api.groovepede.gregolsky.pl/healthz 2>/dev/null \
+                | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') || got=""
+          echo "commit=$got" >> "$GITHUB_OUTPUT"
+          echo "Pi currently serving: ${got:-unreachable}"
+
       - name: Signal the Pi to pull
         env:
           TOPIC: ${{ secrets.NTFY_DEPLOY_TOPIC }}
@@ -31,6 +43,9 @@ jobs:
             echo "NTFY_DEPLOY_TOPIC is not set — add it under Settings → Secrets → Actions." >&2
             exit 1
           fi
+          # NOTE: ntfy.sh returns 200 for ANY topic, including one nothing is
+          # subscribed to. A success here means "published", NOT "delivered" —
+          # only the wait step below can tell you the Pi actually reacted.
           # The body is informational only. The Pi's ntfy client runs a fixed
           # command and never interpolates any part of this message, so a
           # spoofed publish can at worst re-trigger a legitimate pull of main.
@@ -42,7 +57,14 @@ jobs:
       - name: Wait for the Pi to report this commit
         env:
           WANT: ${{ steps.sha.outputs.short }}
+          BEFORE: ${{ steps.before.outputs.commit }}
         run: |
+          if [ "$BEFORE" = "$WANT" ]; then
+            echo "::warning::Pi was already serving $WANT before this run, so a" \
+                 "passing check here does NOT prove the ntfy trigger reached it." \
+                 "Verify with: journalctl -u ntfy-client on the Pi."
+            exit 0
+          fi
           # Confirms the deploy actually landed — a plain {"ok":true} would also
           # come back from the *old* build, which is precisely the failure this
           # is meant to catch.
