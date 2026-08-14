@@ -1,7 +1,7 @@
 # Groovepede Resolver Proxy — Spec
 
 **Status:** planned / in implementation  
-**Owner:** backend (`infra/resolver/`)  
+**Owner:** `backend/`  
 **Related plan:** `~/.claude/plans/i-ve-added-2-new-jazzy-donut.md`
 
 ---
@@ -134,7 +134,7 @@ reserved concurrency + Budgets.
 export const ODESLI_BASE    = 'https://api.groovepede.gregolsky.pl';
 export const GP_PRIVATE_KEY = import.meta.env.VITE_GP_PRIVATE_KEY ?? '';
 // Private key: ECDSA-P256 PKCS8 DER, base64-encoded.
-// Generate once with: cd infra/resolver && make keygen
+// Generate once with: cd backend && make keygen
 // Set in .env.local for dev; VITE_GP_PRIVATE_KEY GitHub Actions secret for CI.
 ```
 
@@ -157,13 +157,21 @@ go through `resolveAlbum` — one change covers them all.
 ## Infrastructure layout
 
 ```
-infra/resolver/
-├── handler.mjs          — Lambda handler (Node 22 ESM)
-├── package.json         — declares @aws-sdk/* as external (runtime-provided)
-├── template-app.yaml    — SAM: Lambda + DynamoDB (deploy to app region)
-├── template-edge.yaml   — CFN: ACM + WAF + CloudFront (deploy to us-east-1)
-└── Makefile             — sam build/deploy shortcuts
+backend/
+├── resolver-core.mjs    — transport-agnostic core: token verify, CORS, allowlist, Odesli + artist lookup
+├── server.mjs           — node:http + node:sqlite adapter around the core
+├── Dockerfile           — arm64 image (Node 22, --experimental-sqlite)
+├── docker-compose.yml   — resolver + nginx + certbot + fail2ban
+├── deploy.sh            — push-deploy from a dev machine over SSH
+├── deploy-local.sh      — the on-Pi half (cert backup, guard, build, health check)
+├── ansible/             — pull-deploy triggered via ntfy.sh
+├── nginx/, fail2ban/    — TLS termination, rate limiting, ban rules
+└── Makefile             — keygen
 ```
+
+> The AWS Lambda/CloudFront deployment this spec originally described was
+> removed in `1c07ecc`; the resolver is now self-hosted on a Raspberry Pi.
+> See `backend/README.md` for the current architecture.
 
 ---
 
@@ -171,7 +179,7 @@ infra/resolver/
 
 ```
 # 1. Generate key pair (one-time)
-cd infra/resolver
+cd backend
 make keygen
 # → prints VITE_GP_PRIVATE_KEY (add to .env.local + CI secret)
 # → prints GP_PUBLIC_KEY (pass to deploy-app)
@@ -218,7 +226,7 @@ Not in current scope.
 ## Tests
 
 ### Backend (unit)
-File: `infra/resolver/handler.test.mjs`
+File: `backend/resolver-core.test.mjs`
 
 - Cache miss → calls Odesli with app UA + optional key, caches body, returns it
 - Cache hit → no Odesli call, returns cached body
@@ -234,7 +242,7 @@ File: `infra/resolver/handler.test.mjs`
 
 ### Integration (post-deploy smoke)
 ```bash
-cd infra/resolver
+cd backend
 make smoke VITE_GP_PRIVATE_KEY="$VITE_GP_PRIVATE_KEY"
 # Calls: GET https://api.groovepede.gregolsky.pl/v1/resolve?url=…
 # Expect: 200, access-control-allow-origin header, linksByPlatform in body

@@ -9,12 +9,27 @@ on:
 jobs:
   playwright:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npx playwright install chromium --with-deps
       - run: npx playwright test
+
+  resolver:
+    # The resolver's own unit tests — token verification, CORS, host allowlist,
+    # artist lookup. They need no npm install (node:test + node:assert only).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test backend/resolver-core.test.mjs

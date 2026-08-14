@@ -1,19 +1,6 @@
-node_modules/
-dist/
-infra/resolver/data/
-infra/resolver/.env
-infra/resolver/deploy.env
-test-results/
-playwright-report/
-playwright-report-smoke/
-
-# Local env overrides — never commit (may contain secrets like VITE_GP_TOKEN)
-.env.local
-.env.*.local
+# Repo-wide only. Frontend- and backend-specific ignores live in
+# frontend/.gitignore and backend/.gitignore, next to what they cover.
 
 # Claude Code: user-local settings and scratch worktrees
 .claude/settings.local.json
 .claude/worktrees/
-
-# Personal palette reference (not for the build)
-public/pallette.txt

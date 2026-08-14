@@ -17,7 +17,7 @@ export const PREF_SERVICE_KEY  = 'gp_pref_service';
 
 // Resolver proxy — server-side Odesli proxy that bypasses the CORS block.
 // All resolution goes through this; ODESLI_BASE no longer points at Odesli directly.
-// See: specs/resolver-proxy.md, infra/resolver/
+// See: specs/resolver-proxy.md, backend/
 export const ODESLI_BASE = 'https://api.groovepede.gregolsky.pl';
 // ECDSA-P256 private key (PKCS8 DER, base64) used to sign x-gp-token per request.
 // Injected at build time — never in source. Set VITE_GP_PRIVATE_KEY in .env.local

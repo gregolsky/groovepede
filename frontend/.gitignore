@@ -1,0 +1,12 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+playwright-report-smoke/
+
+# Local env overrides — never commit (holds VITE_GP_PRIVATE_KEY)
+.env.local
+.env.*.local
+
+# Personal palette reference (not for the build)
+public/pallette.txt

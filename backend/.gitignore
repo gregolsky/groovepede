@@ -1,0 +1,8 @@
+# SQLite cache + Let's Encrypt certs — never overwritten by a deploy.
+data/
+
+# Resolver runtime config (DOMAIN, GP_PUBLIC_KEY, ODESLI_KEY, …)
+.env
+
+# Deploy-only config (holds the SSH target); must not land on the Pi.
+deploy.env

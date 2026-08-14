@@ -1,4 +1,4 @@
-# ![Groovepede](public/favicon.png)
+# ![Groovepede](frontend/public/favicon.png)
 
 **Never lose a great album recommendation again.**
 
@@ -44,7 +44,7 @@ If you want to run your own instance:
 1. Fork this repo
 2. Enable GitHub Pages on the `main` branch
 3. Create a [Spotify Developer app](https://developer.spotify.com/dashboard) and set the redirect URI to your Pages URL
-4. Replace the `CLIENT_ID` value in `src/js/config.js` with your own
+4. Replace the `CLIENT_ID` value in `frontend/src/js/config.js` with your own
 5. Push — that's it
 
 ## Privacy

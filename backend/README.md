@@ -37,7 +37,7 @@ published to the host — only nginx exposes ports (80/443).
 ## Setup
 
 ```bash
-cd infra/resolver
+cd backend
 cp .env.example .env
 #   edit .env: DOMAIN, LETSENCRYPT_EMAIL, GP_PUBLIC_KEY (+ optional ODESLI_KEY, rate limit)
 
