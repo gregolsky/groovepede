@@ -29,8 +29,8 @@ published to the host — only nginx exposes ports (80/443).
 
 - A Raspberry Pi (or any arm64/amd64 host) with **Docker** + **Docker Compose v2**.
 - A **public DNS A record** for your chosen `DOMAIN` pointing at your home's public IP.
-  - This must be a **new hostname** (e.g. `pi.groovepede.gregolsky.pl`), *not*
-    `api.groovepede.gregolsky.pl` (that's the AWS CloudFront edge).
+  - This must be a **new hostname** (e.g. `pi.example.com`) distinct from your
+    existing AWS CloudFront edge hostname.
   - If your home IP is dynamic, use a DDNS updater to keep the A record current.
 - **Ports 80 and 443 forwarded** on your router to the Pi. Port 80 must be reachable
   from the internet on `DOMAIN` — Let's Encrypt's HTTP-01 challenge validates there.
@@ -62,7 +62,7 @@ builds/starts the containers over SSH. On first run — when no cert exists yet 
 runs the Let's Encrypt bootstrap automatically.
 
 ```bash
-cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. gregolsky@192.168.1.123)
+cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.123)
 ./deploy.sh                           # deploys to ~/groovepede-resolver on the Pi
 ```
 
@@ -70,6 +70,11 @@ cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. gregolsky@192.16
   a CLI arg overrides it: `./deploy.sh pi@10.0.0.5`.
 - `./deploy.sh --init` forces re-running the cert bootstrap.
 - The Pi's `./data/` (SQLite cache + certs) is never overwritten by a redeploy.
+
+> **Upgrading an existing Pi deployment:** containers now run as fixed
+> `PUID:PGID` (default `10001:10001`, see `.env.example`) instead of uid 999.
+> Any `./data` from before this change is owned by root or 999 and needs a
+> one-time fix on the Pi: `sudo chown -R 10001:10001 ~/groovepede-resolver/resolver-pi/data`.
 
 Prereqs on the Pi: Docker + Docker Compose, ports 80+443 forwarded, and the DNS A
 record for `$DOMAIN` pointing at your public IP (as in Prerequisites above). The
@@ -95,7 +100,7 @@ Build the PWA with `ODESLI_BASE` set to your Pi's hostname instead of the AWS ed
 In `src/js/config.js` (or via a build-time override):
 
 ```js
-export const ODESLI_BASE = 'https://pi.groovepede.gregolsky.pl';
+export const ODESLI_BASE = 'https://pi.example.com';
 ```
 
 The path (`/v1/resolve`) and the signed `x-gp-token` header are unchanged, and the

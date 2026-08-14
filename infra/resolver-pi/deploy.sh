@@ -15,8 +15,8 @@
 # Examples:
 #   cp deploy.env.example deploy.env   # set PI_SSH_TARGET, then:
 #   ./deploy.sh
-#   ./deploy.sh gregolsky@192.168.1.123            # override target ad-hoc
-#   ./deploy.sh gregolsky@192.168.1.123 --init     # force re-run the cert bootstrap
+#   ./deploy.sh you@192.168.1.123            # override target ad-hoc
+#   ./deploy.sh you@192.168.1.123 --init     # force re-run the cert bootstrap
 #
 # Prereqs: ssh + rsync locally; docker + docker compose on the Pi; a filled-in
 # .env here (DOMAIN, LETSENCRYPT_EMAIL, GP_PUBLIC_KEY, …).

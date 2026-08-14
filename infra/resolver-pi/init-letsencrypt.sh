@@ -21,6 +21,8 @@ cd "$(dirname "$0")"
 set -a; . ./.env; set +a
 : "${DOMAIN:?set DOMAIN in .env}"
 : "${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in .env}"
+[[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "ERROR: DOMAIN has unexpected characters"; exit 1; }
+PUID="${PUID:-10001}"; PGID="${PGID:-10001}"
 
 STAGING_ARG=""
 [ "${1:-}" = "--staging" ] && STAGING_ARG="--staging" && echo "### Using Let's Encrypt STAGING (cert will be untrusted)"
@@ -28,21 +30,35 @@ STAGING_ARG=""
 CONF=./data/certbot/conf
 WWW=./data/certbot/www
 LIVE="$CONF/live/$DOMAIN"
-mkdir -p "$LIVE" "$WWW"
+
+# nginx/certbot in docker-compose.yml run as a fixed uid:gid PUID:PGID, not
+# root and not you — so everything under ./data/certbot must be owned by that
+# id, and writing into it from the host (this script) needs sudo to act as it.
+command -v sudo >/dev/null || { echo "ERROR: sudo not found on this host (needed to write cert files as uid $PUID)"; exit 1; }
+sudo install -d -o "$PUID" -g "$PGID" -m 0755 "$LIVE" "$WWW"
 
 echo "### [1/4] Writing a temporary self-signed cert so nginx can start..."
 command -v openssl >/dev/null || { echo "ERROR: openssl not found on this host (apt install openssl)"; exit 1; }
-openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+# Write as root (some sudo builds don't support the `-u '#uid'` numeric-target
+# syntax — seen failing with "sudo: unknown user #999") then hand ownership to
+# PUID:PGID directly, rather than trying to run openssl itself as that uid.
+if ! err=$(sudo openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
   -keyout "$LIVE/privkey.pem" \
   -out    "$LIVE/fullchain.pem" \
-  -subj   "/CN=$DOMAIN" 2>/dev/null
+  -subj   "/CN=$DOMAIN" 2>&1 >/dev/null); then
+  echo "ERROR: openssl failed to write the dummy cert:" >&2
+  echo "$err" >&2
+  exit 1
+fi
+sudo chown "$PUID:$PGID" "$LIVE/privkey.pem" "$LIVE/fullchain.pem"
+sudo chmod 600 "$LIVE/privkey.pem"
 
 echo "### [2/4] Starting nginx..."
 docker compose up -d nginx
 sleep 3
 
 echo "### [3/4] Removing dummy cert and requesting the real one via HTTP-01..."
-rm -rf "$LIVE" "$CONF/archive/$DOMAIN" "$CONF/renewal/$DOMAIN.conf"
+sudo rm -rf "$LIVE" "$CONF/archive/$DOMAIN" "$CONF/renewal/$DOMAIN.conf"
 docker compose run --rm --entrypoint certbot certbot \
   certonly --webroot -w /var/www/certbot \
     -d "$DOMAIN" --email "$LETSENCRYPT_EMAIL" \
