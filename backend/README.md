@@ -185,7 +185,20 @@ subscribe:
   - topic: <the same secret value as the NTFY_DEPLOY_TOPIC repo secret>
     command: 'curl -fsS https://raw.githubusercontent.com/gregolsky/groovepede/main/backend/ansible/pull-deploy.sh | bash'
 YAML
+sudo chown "$USER:$USER" /etc/ntfy/client.yml
 sudo chmod 600 /etc/ntfy/client.yml     # the topic IS the credential
+
+# The packaged unit runs as _ntfy, which has no docker access and the wrong
+# HOME, so the deploy would fail. Run it as the account that already does
+# push-deploys and already owns the runtime dir — adding _ntfy to the docker
+# group would instead create a second root-equivalent account.
+sudo install -d -m 0755 /etc/systemd/system/ntfy-client.service.d
+sudo tee /etc/systemd/system/ntfy-client.service.d/override.conf >/dev/null <<CONF
+[Service]
+User=$USER
+Group=$USER
+CONF
+sudo systemctl daemon-reload
 sudo systemctl enable --now ntfy-client
 ```
 
