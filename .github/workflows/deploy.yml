@@ -39,6 +39,32 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  smoke:
+    # Opens the real deployed site and clicks through it — catches things
+    # stubbed E2E tests can't: signing-key drift (VITE_GP_PRIVATE_KEY vs the
+    # Pi's GP_PUBLIC_KEY) and the Pi resolver itself being unreachable.
+    # See tests-smoke/ and playwright.smoke.config.js.
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - run: npm run test:smoke
+        env:
+          SMOKE_BASE_URL: ${{ needs.deploy.outputs.page_url }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-report
+          path: playwright-report-smoke/

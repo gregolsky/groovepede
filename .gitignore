@@ -5,6 +5,7 @@ infra/resolver/.env
 infra/resolver/deploy.env
 test-results/
 playwright-report/
+playwright-report-smoke/
 
 # Local env overrides — never commit (may contain secrets like VITE_GP_TOKEN)
 .env.local
