@@ -60,6 +60,9 @@ services:
       - ./nginx/app.conf.template:/etc/nginx/templates/app.conf.template:ro
       - ./data/certbot/conf:/etc/letsencrypt
       - ./data/certbot/www:/var/www/certbot
+      # Real logfile (not the image's stdout symlink) so fail2ban can tail it.
+      # NOT a tmpfs — fail2ban reads it from another container.
+      - ./data/nginx-logs:/var/log/nginx
     restart: unless-stopped
     # We override the command for the reload loop, which makes the nginx image's
     # entrypoint SKIP its envsubst template step (it only templates when the
@@ -67,11 +70,16 @@ services:
     # default.conf, then run nginx + a 6h reload loop (to pick up renewed certs).
     # The explicit var list means only our vars are substituted; nginx runtime
     # vars ($host, $binary_remote_addr, …) are left intact.
+    # The 6h loop also caps the access log at 50MB (one generation kept), so
+    # scanner noise can't fill the Pi's SD card. `nginx -s reopen` after the
+    # rename is what makes nginx write to the new file instead of the renamed
+    # inode.
+    #
     # NOTE: single physical line on purpose — YAML folded scalars (`>`) only fold
     # a continuation line into the previous one when it's indented exactly the
     # same as the first content line; anything deeper is kept as a literal
     # newline. That previously split this into three broken commands.
-    command: sh -c "rm -f /etc/nginx/conf.d/default.conf; envsubst '$$DOMAIN $$RATE_LIMIT $$RATE_LIMIT_BURST' < /etc/nginx/templates/app.conf.template > /etc/nginx/conf.d/app.conf; while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec nginx -g 'daemon off;'"
+    command: sh -c "rm -f /etc/nginx/conf.d/default.conf; envsubst '$$DOMAIN $$RATE_LIMIT $$RATE_LIMIT_BURST' < /etc/nginx/templates/app.conf.template > /etc/nginx/conf.d/app.conf; while :; do sleep 6h & wait $${!}; if [ -f /var/log/nginx/access.log ] && [ $$(wc -c < /var/log/nginx/access.log) -gt 52428800 ]; then mv -f /var/log/nginx/access.log /var/log/nginx/access.log.1; nginx -s reopen; fi; nginx -s reload; done & exec nginx -g 'daemon off;'"
 
   certbot:
     image: certbot/certbot
@@ -93,3 +101,30 @@ services:
     # Attempt renewal every 12h (no-op until ~30 days before expiry).
     # Single physical line — see the nginx `command:` note above for why.
     entrypoint: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+
+  # Bans IPs that scan for wp-login/.env/.git etc, and AI crawlers that ignore
+  # the 444 from nginx's User-Agent map. Reads nginx's access log; writes
+  # iptables rules on the HOST.
+  #
+  # Deliberately NOT pinned to PUID:PGID like the other three services, and
+  # deliberately on host networking with NET_ADMIN — it manipulates the host's
+  # iptables, which is impossible from inside the compose network namespace and
+  # as an unprivileged user. This is the one privileged container in the stack;
+  # it runs no network listener of its own.
+  #
+  # See fail2ban/jail.d/gp-nginx.conf for why bans must target DOCKER-USER.
+  fail2ban:
+    image: crazymax/fail2ban:latest
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./data/nginx-logs:/var/log/nginx:ro
+      - ./fail2ban/jail.d:/data/jail.d:ro
+      - ./fail2ban/filter.d:/data/filter.d:ro
+      - ./data/fail2ban:/data/db
+    environment:
+      TZ: "${TZ:-Europe/Warsaw}"
+      F2B_DB_PURGE_AGE: "7d"
+    restart: unless-stopped

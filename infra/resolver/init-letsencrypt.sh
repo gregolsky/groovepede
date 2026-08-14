@@ -37,6 +37,12 @@ LIVE="$CONF/live/$DOMAIN"
 command -v sudo >/dev/null || { echo "ERROR: sudo not found on this host (needed to write cert files as uid $PUID)"; exit 1; }
 sudo install -d -o "$PUID" -g "$PGID" -m 0755 "$LIVE" "$WWW"
 
+# nginx writes its access log here for fail2ban to tail, so it must be
+# writable by the same uid. (./data/fail2ban is fail2ban's own ban database;
+# that container runs as root, but pre-creating it keeps ./data consistent.)
+sudo install -d -o "$PUID" -g "$PGID" -m 0755 ./data/nginx-logs
+sudo install -d -m 0755 ./data/fail2ban
+
 echo "### [1/4] Writing a temporary self-signed cert so nginx can start..."
 command -v openssl >/dev/null || { echo "ERROR: openssl not found on this host (apt install openssl)"; exit 1; }
 # Write as root (some sudo builds don't support the `-u '#uid'` numeric-target

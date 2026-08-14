@@ -5,6 +5,41 @@
 # Per-IP rate limiting — replaces AWS WAF's rate-based rule.
 limit_req_zone $binary_remote_addr zone=gp_rl:10m rate=${RATE_LIMIT};
 
+# Access log to a real file (not the image's default stdout symlink) so
+# fail2ban can tail it. Bind-mounted from ./data/nginx-logs — see
+# docker-compose.yml. `combined` puts $remote_addr first, which is the format
+# fail2ban's nginx filters expect.
+access_log /var/log/nginx/access.log combined;
+
+# ── AI / LLM training crawlers ──────────────────────────────────────────────
+# Matched on User-Agent and dropped with 444 (close connection, no response) —
+# cheaper than 403 and gives fail2ban a distinct status code to filter on.
+#
+# Honest caveat: User-Agent is trivially spoofable, so this only stops crawlers
+# that self-identify. It does nothing about the l9scan/leakix-style scanners in
+# the logs, which don't announce themselves — that's what fail2ban is for.
+map $http_user_agent $gp_blocked_bot {
+    default                 0;
+    "~*GPTBot"              1;
+    "~*ChatGPT-User"        1;
+    "~*OAI-SearchBot"       1;
+    "~*ClaudeBot"           1;
+    "~*Claude-Web"          1;
+    "~*anthropic-ai"        1;
+    "~*CCBot"               1;
+    "~*Bytespider"          1;
+    "~*Google-Extended"     1;
+    "~*Amazonbot"           1;
+    "~*PerplexityBot"       1;
+    "~*Applebot-Extended"   1;
+    "~*cohere-ai"           1;
+    "~*Diffbot"             1;
+    "~*ImagesiftBot"        1;
+    "~*Omgilibot"           1;
+    "~*FacebookBot"         1;
+    "~*Meta-ExternalAgent"  1;
+}
+
 # ── HTTP :80 — ACME HTTP-01 challenge + redirect to HTTPS ───────────────────
 server {
     listen 80;
@@ -39,6 +74,11 @@ server {
     }
 
     location / {
+        # Drop self-identifying AI crawlers before any proxying happens.
+        # Deliberately NOT in the :80 server — that block must keep serving
+        # /.well-known/acme-challenge/ unconditionally or renewal breaks.
+        if ($gp_blocked_bot) { return 444; }
+
         limit_req zone=gp_rl burst=${RATE_LIMIT_BURST} nodelay;
         limit_req_status 429;
 

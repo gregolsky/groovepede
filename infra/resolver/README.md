@@ -87,6 +87,13 @@ cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.12
 > mv ~/groovepede-resolver/resolver-tmp-data ~/groovepede-resolver/resolver/data
 > sudo chown -R 10001:10001 ~/groovepede-resolver/resolver/data
 > ```
+>
+> `./data/nginx-logs` (fail2ban's log source) and `./data/fail2ban` are created
+> by `init-letsencrypt.sh`; if you're not re-running it, create them yourself:
+> ```bash
+> sudo install -d -o 10001 -g 10001 ~/groovepede-resolver/resolver/data/nginx-logs
+> sudo install -d ~/groovepede-resolver/resolver/data/fail2ban
+> ```
 
 Prereqs on the Pi: Docker + Docker Compose, ports 80+443 forwarded, and the DNS A
 record for `$DOMAIN` pointing at your public IP (as in Prerequisites above). The
@@ -133,16 +140,83 @@ private key stays the same (`VITE_GP_PRIVATE_KEY`) — the Pi verifies with the 
 
 Self-hosting drops CloudFront/WAF/OAC. Compensating controls:
 
-- **ECDSA token verification** (primary gate) — identical to AWS; 5-min replay window,
-  URL-bound. The private key ships in the public PWA bundle, so it's a strong deterrent,
-  not airtight auth (same honest caveat as the AWS deployment).
+- **ECDSA token verification** (primary gate) — 5-min replay window, URL-bound.
+  The private key ships in the public PWA bundle, so it's a strong deterrent,
+  not airtight auth.
 - **nginx per-IP rate limiting** (`RATE_LIMIT` / `RATE_LIMIT_BURST`) → 429 on abuse.
+- **fail2ban** — bans IPs that probe for nonexistent paths (see below).
+- **AI-crawler blocking** — self-identifying training crawlers get `444`.
 - **Host allowlist** in the resolver (SSRF hygiene) — only known music-service hosts
   are proxied to Odesli.
 - The resolver has **no published host port**; it's reachable only via nginx.
 
-Consider adding your own extra protections (fail2ban, a Cloudflare proxy in front, etc.)
-if the endpoint sees abuse.
+There is **no WAF** (no ModSecurity, no signature matching). The controls above
+are the whole story.
+
+### fail2ban
+
+Three jails, configured in `fail2ban/jail.d/gp-nginx.conf`:
+
+| Jail | Catches | maxretry / bantime |
+|---|---|---|
+| `gp-scanner` | any **404** — path probing | 3 / 24h |
+| `gp-ai-crawler` | any **444** — blocked AI crawler that kept knocking | 10 / 24h |
+| `nginx-botsearch` | built-in wordpress/phpmyadmin patterns | 3 / 24h |
+
+`gp-scanner` bans on *any* 404 rather than a path blocklist. This server has
+exactly two valid paths (`/v1/resolve`, `/healthz`) plus the ACME dir, so
+nothing legitimate ever 404s — a far better signal than a blocklist, and it
+needs no upkeep as scanners change targets. It deliberately does **not** match
+403, since the resolver returns 403 for a failed token check and a real user
+can hit that with clock skew.
+
+> The stock `nginx-botsearch` filter alone is **not** sufficient here: it only
+> matches wordpress/phpmyadmin/webmail paths, and was verified to miss `/.env`
+> and `/.git/config` — two of the most common probes in practice. That's why
+> `gp-scanner` exists.
+
+**⚠ Bans target the `DOCKER-USER` iptables chain, not `INPUT`.** Traffic to a
+Docker *published* port is DNAT'd in `PREROUTING` and traverses `FORWARD` — it
+never touches `INPUT`, so a stock fail2ban config reports IPs as banned while
+they keep connecting. The `chain = DOCKER-USER` line in `[DEFAULT]` is what
+makes bans real, and it must be its own key: writing
+`banaction = iptables-multiport[chain=DOCKER-USER]` looks right but is silently
+overridden by fail2ban's `action_` interpolation.
+
+Verify on the Pi:
+
+```bash
+docker compose exec fail2ban fail2ban-client status gp-scanner
+sudo iptables -L DOCKER-USER -n --line-numbers   # jump rule must be HERE
+docker compose exec fail2ban fail2ban-regex /var/log/nginx/access.log /data/filter.d/gp-scanner.conf
+```
+
+The fail2ban container runs as **root with `NET_ADMIN` on host networking** —
+unavoidable, since it edits the host's iptables. It's the only privileged
+container in the stack and listens on nothing.
+
+### AI-crawler blocking
+
+`nginx/app.conf.template` maps ~18 known training crawlers (GPTBot, ClaudeBot,
+CCBot, Bytespider, Google-Extended, PerplexityBot, …) to `444`. Applied to the
+`:443` server only — the `:80` block must keep serving ACME challenges or cert
+renewal breaks.
+
+Be clear-eyed about what this buys: User-Agent is trivially spoofable, so it
+only stops crawlers that *choose* to identify themselves. It does nothing about
+the l9scan/leakix-style scanners that make up most background noise — that's
+`gp-scanner`'s job. Test it with:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' -A 'GPTBot' https://$DOMAIN/healthz  # empty reply
+curl -sS https://$DOMAIN/healthz                                               # {"ok":true}
+```
+
+### Access logs
+
+nginx writes `./data/nginx-logs/access.log` (a real file, not the image's stdout
+symlink, so fail2ban can tail it). The 6h maintenance loop caps it at 50MB and
+keeps one rotated generation, so scanner noise can't fill the SD card.
 
 ## Operations
 
