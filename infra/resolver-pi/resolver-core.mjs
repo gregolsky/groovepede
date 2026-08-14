@@ -1,11 +1,11 @@
 /**
  * Groovepede Resolver — shared core (transport- and cache-agnostic).
  *
- * Pure Node, zero external dependencies (no aws-sdk). Imported by both:
- *   - infra/resolver/handler.mjs   (AWS Lambda Function URL adapter, DynamoDB cache)
- *   - infra/resolver-pi/server.mjs (node:http adapter, node:sqlite cache)
+ * Pure Node, zero external dependencies. Imported by server.mjs (node:http
+ * adapter, node:sqlite cache) — kept transport-agnostic since this module
+ * previously also backed an AWS Lambda adapter (retired; see git history).
  *
- * The adapters do transport + cache; this module owns the actual work:
+ * The adapter does transport + cache; this module owns the actual work:
  * token verification, CORS, input/host validation, the Odesli call, and
  * cache orchestration via an injected `cache` adapter.
  */

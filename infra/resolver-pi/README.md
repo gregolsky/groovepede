@@ -1,13 +1,11 @@
 # Groovepede Resolver — self-hosted (Raspberry Pi / arm64)
 
-A small Docker Compose alternative to the AWS edge stack. Same job: a server-side
-Odesli proxy that fixes the browser CORS block, so the PWA can resolve album links.
-Runs on a home Raspberry Pi (arm64) with a free Let's Encrypt certificate.
+A small Docker Compose stack: a server-side Odesli proxy that fixes the browser
+CORS block, so the PWA can resolve album links. Runs on a home Raspberry Pi
+(arm64) with a free Let's Encrypt certificate.
 
-It reuses the **exact same resolver core** as the AWS Lambda
-(`../resolver/resolver-core.mjs`) — identical ECDSA token verification, CORS,
-host allowlist, and Odesli call — so the PWA's existing signed tokens work against
-either backend with the same key pair.
+`resolver-core.mjs` owns ECDSA token verification, CORS, host allowlist, and
+the Odesli call; `server.mjs` is the node:http + node:sqlite adapter around it.
 
 ## Architecture
 
@@ -34,7 +32,7 @@ published to the host — only nginx exposes ports (80/443).
   - If your home IP is dynamic, use a DDNS updater to keep the A record current.
 - **Ports 80 and 443 forwarded** on your router to the Pi. Port 80 must be reachable
   from the internet on `DOMAIN` — Let's Encrypt's HTTP-01 challenge validates there.
-- The **`GP_PUBLIC_KEY`** from your existing key pair (`cd ../resolver && make keygen`).
+- The **`GP_PUBLIC_KEY`** from your key pair (`make keygen`).
 
 ## Setup
 
@@ -151,6 +149,7 @@ means re-running `init-letsencrypt.sh`.
 # Run just the resolver, published locally:
 docker compose run --rm -p 8787:8787 -e DB_PATH=/tmp/cache.db resolver
 curl localhost:8787/healthz             # → {"ok":true}
-# Signed-request smoke: reuse ../resolver Makefile's token generation against
+# Signed-request smoke: sign a token the same way resolver-core.test.mjs does
+# (see its makeToken helper) against
 # http://localhost:8787/v1/resolve?url=...&userCountry=US with Origin: http://localhost:5173
 ```

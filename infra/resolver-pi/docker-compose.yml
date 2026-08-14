@@ -1,20 +1,18 @@
-# Groovepede resolver — self-hosted alternative to the AWS edge stack.
+# Groovepede resolver — self-hosted Raspberry Pi stack.
 # Run ./init-letsencrypt.sh once (obtains the cert), then: docker compose up -d
 #
-# Values come from .env (see .env.example). Build context is the parent infra/
-# dir so the image can include the shared resolver-core.mjs.
+# Values come from .env (see .env.example).
 
 services:
   resolver:
     build:
-      context: ..
-      dockerfile: resolver-pi/Dockerfile
+      context: .
       args:
         PUID: ${PUID:-10001}
         PGID: ${PGID:-10001}
     image: gp-resolver-pi
     environment:
-      GP_PUBLIC_KEY:   "${GP_PUBLIC_KEY:?set GP_PUBLIC_KEY in .env — from cd ../resolver && make keygen}"
+      GP_PUBLIC_KEY:   "${GP_PUBLIC_KEY:?set GP_PUBLIC_KEY in .env — from make keygen}"
       ODESLI_KEY:      "${ODESLI_KEY:-}"
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-}"
       PORT:            "8787"

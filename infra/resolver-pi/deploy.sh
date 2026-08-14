@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Deploy the self-hosted resolver to a Raspberry Pi over SSH.
 #
-# Rsyncs this stack + the shared resolver-core.mjs to the Pi (preserving the
-# infra/ build-context layout the Dockerfile expects), then builds and starts
-# the containers there. On first run — when no cert exists yet — it runs the
-# Let's Encrypt bootstrap automatically.
+# Rsyncs this stack to the Pi, then builds and starts the containers there.
+# On first run — when no cert exists yet — it runs the Let's Encrypt bootstrap
+# automatically.
 #
 # Config is read from a git-ignored deploy.env (copy deploy.env.example), and
 # any CLI arg overrides it. So you can just run `./deploy.sh` once configured.
@@ -66,13 +65,8 @@ echo "→ Remote dir: $REMOTE_DIR"
 echo "→ Domain:     $DOMAIN"
 
 # ── Sync ────────────────────────────────────────────────────────────────────
-# Layout on the Pi must mirror the repo so `context: ..` finds resolver-core:
-#   $REMOTE_DIR/resolver/resolver-core.mjs
-#   $REMOTE_DIR/resolver-pi/*
 echo "→ Syncing files…"
-ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/resolver' '$REMOTE_DIR/resolver-pi'"
-
-rsync -az -e "$RSYNC_SSH" ../resolver/resolver-core.mjs "$TARGET:$REMOTE_DIR/resolver/resolver-core.mjs"
+ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/resolver-pi'"
 
 # --delete keeps the remote in sync, but 'data/' (cache + certs) is excluded so
 # it is neither transferred nor deleted. deploy.env is deploy-only (holds the

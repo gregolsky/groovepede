@@ -2,16 +2,15 @@
  * Groovepede Resolver — self-hosted HTTP adapter (Raspberry Pi / arm64).
  *
  * Thin node:http server over the shared resolver-core, backed by a node:sqlite
- * cache. Reuses the exact same token verification / CORS / allowlist / Odesli
- * logic as the AWS Lambda. Runs behind nginx (TLS + per-IP rate limiting), so
- * it binds inside the compose network only and does no rate limiting itself.
+ * cache. Runs behind nginx (TLS + per-IP rate limiting), so it binds inside
+ * the compose network only and does no rate limiting itself.
  *
  * Requires Node >= 22.5 run with --experimental-sqlite (see Dockerfile).
  */
 
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { resolveRequest, TTL_S } from '../resolver/resolver-core.mjs';
+import { resolveRequest, TTL_S } from './resolver-core.mjs';
 
 const PORT    = parseInt(process.env.PORT || '8787', 10);
 const DB_PATH = process.env.DB_PATH || '/data/cache.db';
