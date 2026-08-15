@@ -476,6 +476,78 @@ function renderImportSummaryModal({ added, failed }) {
   </div>`;
 }
 
+// ── Share-target overlay ──────────────────────────────────────────────────────
+
+const VINYL_SVG = `<svg class="share-vinyl" width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true">
+  <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>
+  <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+</svg>`;
+
+const SHARE_CHECK_SVG = `<svg class="share-check" viewBox="0 0 52 52" aria-hidden="true">
+  <circle cx="26" cy="26" r="26"/>
+  <path d="M14 27l8 8 16-16"/>
+</svg>`;
+
+// Rejected links get a struck-through record rather than a spinning one — the
+// art slot should stop looking busy the moment there's nothing left to wait for.
+const SHARE_X_SVG = `<svg class="share-x" width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" aria-hidden="true">
+  <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>
+  <line x1="5" y1="19" x2="19" y2="5" stroke-width="1.5"/>
+</svg>`;
+
+// The mono line each phase ends on. `adding` has none — it shows the
+// indeterminate bar instead. The error line is an instruction, not a repeat of
+// the headline right above it.
+const SHARE_LABELS = {
+  added:   'Added to queue',
+  exists:  'Already in your queue',
+  pending: 'Saved — fetching details…',   // ellipsis: still working in the background
+  error:   'Tap to dismiss',
+};
+
+/**
+ * The overlay shown when the app is launched from a share.
+ *
+ * Every phase renders the SAME structure — a 140px art slot, two lines of text,
+ * a status line — so moving between them is a morph rather than a screen swap:
+ * the skeleton cross-fades into the cover art that lands in exactly its place.
+ *
+ * @param {object} opts
+ * @param {'adding'|'added'|'exists'|'pending'|'error'} opts.phase
+ * @param {string} [opts.service] — slug of the service the link came from
+ * @param {object} [opts.album]   — resolved record, once there is one
+ * @param {string} [opts.message] — error text, for the `error` phase
+ */
+export function renderShareOverlay({ phase, service, album, message }) {
+  const done    = phase !== 'adding';
+  const svcName = service ? serviceLabel(service) : '';
+
+  // The ellipsis is load-bearing: the wait is indeterminate, and the trailing
+  // dots are what say "still going" when the bar alone reads as decoration.
+  const title = done && album?.title ? album.title
+    : phase === 'error' ? 'Couldn’t add that link'
+    : 'Adding to your queue…';
+  const sub = done && album?.artist ? album.artist
+    : phase === 'error' ? (message || '')
+    : svcName ? `from ${svcName}` : '';
+
+  const cover = album?.cover || null;
+
+  return `
+    <div class="share-art">
+      <div class="share-art-skeleton">${phase === 'error' ? SHARE_X_SVG : VINYL_SVG}</div>
+      ${cover ? `<img class="share-art-cover" src="${attr(cover)}" alt="">` : ''}
+      ${phase === 'added' || phase === 'exists' ? `<span class="share-badge">${SHARE_CHECK_SVG}</span>` : ''}
+    </div>
+    <div class="share-text">
+      <p class="share-overlay__title">${escapeHtml(title)}</p>
+      ${sub ? `<p class="share-overlay__sub">${escapeHtml(sub)}</p>` : ''}
+    </div>
+    ${done
+      ? `<p class="share-overlay__label">${escapeHtml(SHARE_LABELS[phase] || '')}</p>`
+      : `<div class="share-progress" role="presentation"><span></span></div>`}`;
+}
+
 // ── Main app ──────────────────────────────────────────────────────────────────
 
 export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary, refreshingId }) {

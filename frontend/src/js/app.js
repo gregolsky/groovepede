@@ -5,7 +5,7 @@ import '@fontsource-variable/geist-mono';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
 import { spotifyGet, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchArtistImage, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
-import { renderAuthArea, renderApp, escapeHtml } from './render.js';
+import { renderAuthArea, renderApp, renderShareOverlay } from './render.js';
 import * as sync from './sync.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -480,34 +480,84 @@ window.addEventListener('popstate', () => {
   else if (profileOpen)      { profileOpen  = false; rerender(); }
 });
 
-function showShareConfirmAndClose(meta, highlightId) {
-  const el = document.createElement('div');
-  el.id = 'share-confirm';
-  el.innerHTML = `
-    <img src="${escapeHtml(meta.cover || '')}" alt="">
-    <svg class="share-check" viewBox="0 0 52 52" aria-hidden="true">
-      <circle cx="26" cy="26" r="26"/>
-      <path d="M14 27l8 8 16-16"/>
-    </svg>
-    <div class="share-confirm__text">
-      <p class="share-confirm__title">${escapeHtml(meta.title || '')}</p>
-      <p class="share-confirm__artist">${escapeHtml(meta.artist || '')}</p>
-      <p class="share-confirm__label">Added to queue</p>
-    </div>
-  `;
-  document.body.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('share-confirm--in'));
+// ── Share-target overlay ──────────────────────────────────────────────────────
+// Launching from a share used to show nothing at all until the album resolved:
+// a token refresh, a /me call and a resolver round trip happen first, so the app
+// sat there looking ignored for 2-3 seconds. The overlay now goes up BEFORE the
+// first await and morphs into the confirmation, instead of only existing at the
+// end of the flow.
 
-  setTimeout(() => window.close(), 900);
+let _shareEl      = null;
+let _shareShownAt = 0;
+
+// Don't flash: once the overlay is up it stays for at least this long before a
+// terminal phase replaces it, even if the resolver answered instantly.
+const SHARE_MIN_MS = 500;
+
+function showShareOverlay(phase, data = {}) {
+  if (!_shareEl) {
+    _shareEl = document.createElement('div');
+    _shareEl.id = 'share-overlay';
+    // Announced by screen readers as the phase changes, hence status/polite.
+    _shareEl.setAttribute('role', 'status');
+    _shareEl.setAttribute('aria-live', 'polite');
+    document.body.appendChild(_shareEl);
+    _shareShownAt = Date.now();
+  }
+  // Deliberately NO entrance animation on the overlay itself. Measured on a
+  // cold share launch: the main thread is busy booting, so a scale-in scheduled
+  // via rAF sat frozen at its 0.88 start frame for up to 400ms before running —
+  // a stutter at precisely the moment this thing exists to reassure. The scrim
+  // appears instantly; only the cover and badge animate, and by then boot is done.
+  _shareEl.className = `share-overlay--${phase}`;
+  _shareEl.innerHTML = renderShareOverlay({ phase, ...data });
+}
+
+/** Apply a terminal phase, honouring the minimum visible time. */
+async function setSharePhase(phase, data = {}) {
+  if (!_shareEl) return;
+  const elapsed = Date.now() - _shareShownAt;
+  if (elapsed < SHARE_MIN_MS) await _sleep(SHARE_MIN_MS - elapsed);
+  showShareOverlay(phase, data);
+}
+
+function hideShareOverlay() {
+  _shareEl?.remove();
+  _shareEl = null;
+}
+
+function highlightCard(highlightId) {
+  const card = highlightId && document.getElementById('card-' + highlightId);
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('card--highlight');
+  }
+}
+
+/**
+ * Close out a successful share: hold the confirmation briefly, close the window
+ * when this was a share launch (the user is expecting to land back where they
+ * came from), and otherwise fall back to highlighting the card in place.
+ */
+/**
+ * The error phase is the one the user has to read, so it neither auto-closes
+ * fast nor blocks: a tap dismisses it, otherwise it fades after a few seconds,
+ * revealing the add form with the same message already in it.
+ */
+function dismissShareError() {
+  const el = _shareEl;
+  if (!el) return;
+  const close = () => { if (_shareEl === el) hideShareOverlay(); };
+  el.addEventListener('click', close);
+  setTimeout(close, 3200);
+}
+
+function finishShareOverlay(highlightId, isShareLaunch) {
+  if (isShareLaunch) setTimeout(() => window.close(), 900);
   setTimeout(() => {
-    if (document.body.contains(el)) {
-      el.remove();
-      const card = document.getElementById('card-' + highlightId);
-      if (card) {
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        card.classList.add('card--highlight');
-      }
-    }
+    if (!_shareEl) return;
+    hideShareOverlay();
+    highlightCard(highlightId);
   }, 1050);
 }
 
@@ -612,6 +662,12 @@ async function boot() {
   const code   = params.get('code');
   const shared = params.get('text') || params.get('url');
 
+  // Before ANY await: a share launch must show feedback in its first frame,
+  // otherwise the app looks like it dropped the link. parseMusicLink needs no
+  // network, so the source service is already known here.
+  const sharedParse = shared ? parseMusicLink(shared) : null;
+  if (shared) showShareOverlay('adding', { service: sharedParse.service });
+
   if (code) {
     window.history.replaceState({}, document.title, window.location.pathname);
     await exchangeCode(code);
@@ -641,26 +697,31 @@ async function boot() {
 
   if (shared) {
     const isShareLaunch = window.matchMedia('(display-mode: standalone)').matches;
-    const { url, service, error } = parseMusicLink(shared);
+    const { url, service, error } = sharedParse;
     if (error) {
       addError = error;
       addOpen = true;
       window.history.replaceState({}, document.title, window.location.pathname);
       rerender();
+      await setSharePhase('error', { service, message: error });
+      dismissShareError();
     } else if (url) {
       const albums = loadAlbums();
       let highlightId = null;
       let addedMeta = null;
+      let phase = null;   // which terminal state the overlay lands on
       const existing = albums.find(a => a.sourceUrl === url);
       if (existing) {
         highlightId = existing.id;
         addedMeta = existing._pending ? null : existing;
+        phase = existing._pending ? 'pending' : 'exists';
       } else {
         const rec = await resolveAlbum(url);
         if (!rec._error) {
           await saveResolvedAlbum(rec);
           highlightId = rec.id;
           addedMeta = rec;
+          phase = 'added';
         } else if (isRetryableResolveError(rec._error)) {
           // Odesli down — save pending stub so share isn't lost
           const stub = makePendingRecord(url, service);
@@ -668,28 +729,21 @@ async function boot() {
           fresh.push(stub);
           saveAlbums(fresh);
           highlightId = stub.id;
-          addedMeta = null; // no cover/title for confirmation overlay
+          addedMeta = null; // no cover/title yet — the overlay says so
+          phase = 'pending';
         } else {
           // Non-retryable (404 / 400) — surface the failure instead of dropping it silently
           addError = 'Couldn’t find that album — double-check the link and try again.';
           addOpen = true;
+          phase = 'error';
         }
       }
       window.history.replaceState({}, document.title, window.location.pathname);
       rerender();
-      if (highlightId) {
-        if (isShareLaunch && addedMeta?.cover) {
-          showShareConfirmAndClose(addedMeta, highlightId);
-        } else {
-          requestAnimationFrame(() => requestAnimationFrame(() => {
-            const card = document.getElementById('card-' + highlightId);
-            if (card) {
-              card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              card.classList.add('card--highlight');
-            }
-          }));
-        }
-      }
+
+      await setSharePhase(phase, { service, album: addedMeta, message: addError });
+      if (phase === 'error') dismissShareError();
+      else                   finishShareOverlay(highlightId, isShareLaunch);
     }
   }
 

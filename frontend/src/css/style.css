@@ -660,7 +660,11 @@ body::after {
 }
 .card--pending { animation: pending-pulse 2.4s ease-in-out infinite; }
 
-/* ── Share confirmation overlay ──────────────────────────────────────────────── */
+/* ── Share-target overlay ────────────────────────────────────────────────────── */
+/* One overlay for the whole share flow. Every phase keeps the same geometry —
+   140px art slot, two lines of text, a status line — so the skeleton doesn't
+   get replaced by the confirmation, it BECOMES it: the cover cross-fades into
+   the exact square the spinning vinyl was sitting in. */
 @keyframes share-confirm-in {
   from { opacity: 0; transform: scale(0.88); }
   to   { opacity: 1; transform: scale(1); }
@@ -669,7 +673,18 @@ body::after {
   from { stroke-dashoffset: 60; }
   to   { stroke-dashoffset: 0; }
 }
-#share-confirm {
+@keyframes share-vinyl-spin { to { transform: rotate(360deg); } }
+@keyframes share-shimmer    { to { background-position: 200% 0; } }
+@keyframes share-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+@keyframes share-badge-pop {
+  from { opacity: 0; transform: scale(.4); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+#share-overlay {
   position: fixed;
   inset: 0;
   z-index: 9999;
@@ -677,46 +692,113 @@ body::after {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 18px;
+  padding: 24px;
   background: rgba(0,0,0,.82);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   pointer-events: none;
 }
-#share-confirm.share-confirm--in {
-  animation: share-confirm-in 250ms ease-out forwards;
-}
-#share-confirm img {
+/* The error phase is the one the user has to act on, so it accepts a tap. */
+#share-overlay.share-overlay--error { pointer-events: auto; cursor: pointer; }
+
+/* Art slot — fixed square that every phase shares. */
+#share-overlay .share-art {
+  position: relative;
   width: 140px;
   height: 140px;
-  border-radius: 8px;
-  object-fit: cover;
+  border-radius: 10px;
   box-shadow: 0 4px 24px rgba(0,0,0,.6);
 }
-#share-confirm .share-confirm__text { text-align: center; }
-#share-confirm .share-confirm__title { font-size: 1rem; font-weight: 600; color: var(--text); margin: 0 0 2px; }
-#share-confirm .share-confirm__artist { font-size: .85rem; color: var(--text-dim); margin: 0 0 10px; }
-#share-confirm .share-confirm__label {
+#share-overlay .share-art-skeleton {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #4a4a4a;
+  background: linear-gradient(100deg, #1c1917 30%, #262220 50%, #1c1917 70%) 0 0 / 200% 100%;
+  animation: share-shimmer 1.4s linear infinite;
+}
+#share-overlay .share-vinyl { animation: share-vinyl-spin 3.5s linear infinite; }
+#share-overlay .share-art-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  opacity: 0;
+  animation: share-confirm-in 320ms ease-out forwards;
+}
+#share-overlay .share-badge {
+  position: absolute;
+  right: -12px;
+  bottom: -12px;
+  width: 40px;
+  height: 40px;
+  animation: share-badge-pop 260ms cubic-bezier(.34,1.56,.64,1) 120ms both;
+}
+#share-overlay svg.share-check { width: 100%; height: 100%; display: block; }
+#share-overlay svg.share-check circle { fill: var(--accent); }
+#share-overlay svg.share-check path {
+  stroke: #000;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  stroke-dasharray: 60;
+  stroke-dashoffset: 60;
+  animation: share-check-draw 350ms ease-out 260ms forwards;
+}
+
+#share-overlay .share-text { text-align: center; max-width: 320px; }
+#share-overlay .share-overlay__title { font-size: 1rem; font-weight: 600; color: var(--text); margin: 0 0 3px; }
+#share-overlay .share-overlay__sub   { font-size: .85rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
+/* The status line keeps a fixed box in both states, so swapping the bar for the
+   label doesn't nudge the art slot up or down mid-morph. */
+#share-overlay .share-overlay__label {
   font-family: var(--font-mono);
   font-size: .75rem;
   color: var(--accent);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  margin: 0;
+  height: 18px;
+  line-height: 18px;
 }
-#share-confirm svg.share-check { width: 52px; height: 52px; }
-#share-confirm svg.share-check circle { fill: var(--accent); }
-#share-confirm svg.share-check path {
-  stroke: #fff;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  fill: none;
-  stroke-dasharray: 60;
-  stroke-dashoffset: 60;
-  animation: share-check-draw 350ms ease-out 200ms forwards;
+#share-overlay.share-overlay--error .share-overlay__label { color: var(--text-faint); }
+/* Nothing is pending any more — stop the art slot looking busy. */
+#share-overlay.share-overlay--error .share-art-skeleton { animation: none; color: var(--danger); opacity: .8; }
+
+/* Indeterminate bar — deliberately not a percentage: there is nothing honest to
+   measure, the resolver either answers or it doesn't. */
+#share-overlay .share-progress {
+  width: 140px;
+  height: 3px;
+  margin: 7.5px 0;      /* 3 + 15 = the label's 18px box — see above */
+  border-radius: 2px;
+  background: rgba(255,255,255,.09);
+  overflow: hidden;
 }
+#share-overlay .share-progress span {
+  display: block;
+  width: 25%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: share-progress 1.1s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  #share-confirm.share-confirm--in { animation: none; opacity: 1; }
-  #share-confirm svg.share-check path { animation: none; stroke-dashoffset: 0; }
+  #share-overlay svg.share-check path { animation: none; stroke-dashoffset: 0; }
+  #share-overlay .share-vinyl,
+  #share-overlay .share-art-skeleton { animation: none; }
+  #share-overlay .share-art-cover { animation: none; opacity: 1; }
+  #share-overlay .share-badge { animation: none; }
+  #share-overlay .share-progress span { animation: none; width: 100%; opacity: .5; }
 }
 
 /* ── Done flash ──────────────────────────────────────────────────────────────── */
