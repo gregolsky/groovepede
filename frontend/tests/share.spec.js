@@ -107,7 +107,7 @@ test('share-target shows confirmation overlay in standalone mode', async ({ page
   await expect(page.locator('#share-overlay')).toBeVisible({ timeout: 6000 });
   await expect(page.locator('#share-overlay .share-overlay__title')).toHaveText('Share Test Album');
   await expect(page.locator('#share-overlay .share-overlay__sub')).toHaveText('Share Artist');
-  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Added to queue');
+  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Added to queue!');
 });
 
 test('share-target overlay disappears and card is highlighted when window.close() does not close', async ({ page, context }) => {
@@ -156,7 +156,7 @@ test('sharing an album that is already queued says so', async ({ page, context }
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
 
-  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Already in your queue', { timeout: 6000 });
+  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Already in your queue!', { timeout: 6000 });
 });
 
 test('sharing an unresolvable link explains the failure instead of doing nothing', async ({ page, context }) => {
@@ -171,11 +171,29 @@ test('sharing an unresolvable link explains the failure instead of doing nothing
   const overlay = page.locator('#share-overlay');
   await expect(overlay).toHaveClass(/share-overlay--error/, { timeout: 6000 });
   await expect(overlay.locator('.share-overlay__title')).toHaveText(/Couldn’t add that link/);
-  await expect(overlay.locator('.share-overlay__label')).toHaveText('Tap to dismiss');
+  await expect(overlay.locator('.share-overlay__label')).toHaveText('Tap to dismiss!');
   // Tapping dismisses it, revealing the add form with the same message.
   await overlay.click();
   await expect(overlay).not.toBeAttached();
   await expect(page.locator('.add-error')).toBeVisible();
+});
+
+test('sharing while the resolver is down still confirms the link was saved', async ({ page, context }) => {
+  await seedLoggedIn()({ context }, async () => {});
+  await fakeStandalone(context);
+  await stubApis(context);
+  await context.addInitScript(() => { window.close = () => {}; });
+  // 503 is retryable, so a stub is saved and retried later — the share is not lost,
+  // and the overlay has to say so rather than looking like a failure.
+  await context.route('**/api.groovepede.gregolsky.pl/**', route =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+
+  const overlay = page.locator('#share-overlay');
+  await expect(overlay).toHaveClass(/share-overlay--pending/, { timeout: 10000 });
+  await expect(overlay.locator('.share-overlay__title')).toHaveText('Got it — saved!');
+  await expect(overlay.locator('.share-overlay__label')).toHaveText('Fetching details…');
 });
 
 test('a shared link that is not an album is rejected on the overlay', async ({ page, context }) => {

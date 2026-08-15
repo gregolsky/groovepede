@@ -499,10 +499,10 @@ const SHARE_X_SVG = `<svg class="share-x" width="52" height="52" viewBox="0 0 24
 // indeterminate bar instead. The error line is an instruction, not a repeat of
 // the headline right above it.
 const SHARE_LABELS = {
-  added:   'Added to queue',
-  exists:  'Already in your queue',
-  pending: 'Saved — fetching details…',   // ellipsis: still working in the background
-  error:   'Tap to dismiss',
+  added:   'Added to queue!',
+  exists:  'Already in your queue!',
+  pending: 'Fetching details…',           // ellipsis: still working in the background
+  error:   'Tap to dismiss!',
 };
 
 /**
@@ -522,10 +522,13 @@ export function renderShareOverlay({ phase, service, album, message }) {
   const done    = phase !== 'adding';
   const svcName = service ? serviceLabel(service) : '';
 
-  // The ellipsis is load-bearing: the wait is indeterminate, and the trailing
-  // dots are what say "still going" when the bar alone reads as decoration.
+  // Punctuation carries the tone here: the ellipsis is load-bearing (the wait is
+  // indeterminate, and the trailing dots say "still going" where the bar alone
+  // reads as decoration), and the sad face keeps a dead end from feeling curt.
   const title = done && album?.title ? album.title
-    : phase === 'error' ? 'Couldn’t add that link'
+    : phase === 'error'   ? 'Couldn’t add that link :('
+    // Saved as a stub — the link is safe, only the metadata is still coming.
+    : phase === 'pending' ? 'Got it — saved!'
     : 'Adding to your queue…';
   const sub = done && album?.artist ? album.artist
     : phase === 'error' ? (message || '')
