@@ -3,6 +3,13 @@
 #
 # Values come from .env (see .env.example).
 
+# Pinned so the project name — and therefore container names, the network, and
+# which containers a `docker compose down` can actually see — does not depend on
+# what the checkout directory happens to be called. Without this, renaming the
+# runtime directory silently starts a SECOND project: the old containers keep
+# running and holding the published ports, and the new stack can't bind them.
+name: groovepede-resolver
+
 services:
   resolver:
     build:

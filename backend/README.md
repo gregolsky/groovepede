@@ -92,7 +92,7 @@ cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.12
   on both the Pi and your dev machine (last 10 kept on the Pi). This is
   short-term insurance against a bad deploy, not a real archive — restore:
   ```bash
-  cd ~/groovepede-resolver/resolver
+  cd ~/groovepede-resolver/backend
   docker run --rm -u 10001:10001 -v "$PWD/data/certbot/conf:/etc/letsencrypt" \
     -v /tmp:/backup --entrypoint tar certbot/certbot \
     -xzf /backup/gp-cert-<domain>-<timestamp>.tar.gz -C /etc/letsencrypt
@@ -100,30 +100,30 @@ cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.12
   ```
 - The Pi's `./data/` (SQLite cache + certs) is never overwritten by a redeploy.
 
-> **Upgrading an existing Pi deployment:** two changes need a one-time manual
-> step on the Pi if you deployed before this update.
+> **Runtime directory renamed (2026-08-15):** it is
+> `~/groovepede-resolver/backend`, matching `backend/` in the repo. It was
+> `resolver/` before (and `resolver-pi/` before that).
 >
-> 1. Containers now run as fixed `PUID:PGID` (default `10001:10001`, see
->    `.env.example`) instead of uid 999. `./data` from before this change is
->    owned by root or 999.
-> 2. The remote directory is now `resolver` instead of `resolver-pi` — a plain
->    `./deploy.sh` will sync into a fresh `resolver/` next to the old one,
->    leaving the old `resolver-pi/data` (cache + certs) behind.
->
-> Fix both in one move — on the Pi:
+> The compose project name is now pinned to `groovepede-resolver` in
+> `docker-compose.yml`, so container names no longer follow the directory name.
+> That matters when renaming: without it, compose treats the new path as a new
+> project, the old containers keep running and holding the published ports, and
+> the new stack cannot bind them. To move the directory:
 > ```bash
-> mv ~/groovepede-resolver/resolver-pi/data ~/groovepede-resolver/resolver-tmp-data
-> rm -rf ~/groovepede-resolver/resolver-pi
-> # after your next ./deploy.sh creates ~/groovepede-resolver/resolver/:
-> mv ~/groovepede-resolver/resolver-tmp-data ~/groovepede-resolver/resolver/data
-> sudo chown -R 10001:10001 ~/groovepede-resolver/resolver/data
+> cd ~/groovepede-resolver/resolver          # the OLD path
+> docker compose down                        # stop the old project first
+> mv ~/groovepede-resolver/resolver ~/groovepede-resolver/backend
+> cd ~/groovepede-resolver/backend && ./deploy-local.sh
 > ```
+> All state is bind-mounted under `./data` (certs, SQLite cache, nginx logs,
+> fail2ban db), so moving the directory moves the state with it — there are no
+> named volumes to migrate.
 >
 > `./data/nginx-logs` (fail2ban's log source) and `./data/fail2ban` are created
 > by `init-letsencrypt.sh`; if you're not re-running it, create them yourself:
 > ```bash
-> sudo install -d -o 10001 -g 10001 ~/groovepede-resolver/resolver/data/nginx-logs
-> sudo install -d ~/groovepede-resolver/resolver/data/fail2ban
+> sudo install -d -o 10001 -g 10001 ~/groovepede-resolver/backend/data/nginx-logs
+> sudo install -d ~/groovepede-resolver/backend/data/fail2ban
 > ```
 
 Prereqs on the Pi: Docker + Docker Compose, ports 80+443 forwarded, and the DNS A
@@ -172,7 +172,7 @@ commit it just pushed — a plain `{"ok":true}` would also come back from the
 resets its checkout on every run; if `.env`, `data/certbot` and the SQLite cache
 lived inside it, a routine pull would wipe the live certificate. So the checkout
 goes to `~/.ansible-pull/groovepede` and the playbook only ever rsyncs *out of*
-it into `~/groovepede-resolver/resolver`, excluding `data/` and `.env`.
+it into `~/groovepede-resolver/backend`, excluding `data/` and `.env`.
 
 One-time setup on the Pi (already done on the live one):
 

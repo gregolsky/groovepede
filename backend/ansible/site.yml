@@ -17,7 +17,7 @@
     src_dir: "{{ playbook_dir }}/.."
     # lookup('env') rather than ansible_env — facts aren't gathered (nothing here
     # needs them, and skipping them keeps the pull fast).
-    runtime_dir: "{{ lookup('env', 'GP_RUNTIME_DIR') | default(lookup('env', 'HOME') ~ '/groovepede-resolver/resolver', true) }}"
+    runtime_dir: "{{ lookup('env', 'GP_RUNTIME_DIR') | default(lookup('env', 'HOME') ~ '/groovepede-resolver/backend', true) }}"
 
   tasks:
     - name: Ensure the runtime directory exists

@@ -68,16 +68,19 @@ echo "→ Domain:     $DOMAIN"
 
 # ── Sync ────────────────────────────────────────────────────────────────────
 echo "→ Syncing files…"
-ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/resolver'"
+ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/backend'"
 
 # --delete keeps the remote in sync, but 'data/' (cache + certs) is excluded so
 # it is neither transferred nor deleted. deploy.env is deploy-only (holds the
 # SSH target) and must not land on the Pi.
 rsync -az --delete -e "$RSYNC_SSH" \
   --exclude 'data/' --exclude '.git' --exclude 'deploy.env' \
-  ./ "$TARGET:$REMOTE_DIR/resolver/"
+  ./ "$TARGET:$REMOTE_DIR/backend/"
 
-REMOTE_PI="$REMOTE_DIR/resolver"
+# Mirrors the repo layout: this directory holds what backend/ holds. It was
+# called resolver/ until 2026-08-15; the compose project name is pinned in
+# docker-compose.yml so the rename didn't change any container names.
+REMOTE_PI="$REMOTE_DIR/backend"
 
 # ── Everything on-Pi is deploy-local.sh's job ────────────────────────────────
 # Cert backup, the never-auto-issue guard, build/start, and the health check all

@@ -38,8 +38,18 @@ if [ -d data/certbot/conf ]; then
   docker run --rm -u "$PUID:$PGID" \
     -v "$PWD/data/certbot/conf:/etc/letsencrypt:ro" -v /tmp:/backup \
     --entrypoint tar certbot/certbot -czf "/backup/$BACKUP_NAME" -C /etc/letsencrypt .
-  # Keep the 10 most recent so this can't fill the SD card.
-  ls -1t /tmp/gp-cert-"$DOMAIN"-*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
+  # Keep the 10 most recent so this can't fill the SD card. The prune has to run
+  # INSIDE the container, as the same uid that wrote the files: /tmp is sticky
+  # (drwxrwxrwt), the tarballs are owned by PUID (10001), and the deploy user is
+  # not, so its rm gets EPERM. That failed the whole deploy under `set -e` — but
+  # only from the 11th backup onwards, which is why it lay dormant until three
+  # deploys in one evening crossed the threshold.
+  # Non-fatal either way: a failed prune must never block a deploy, and the
+  # backup it protects has already been written by this point.
+  docker run --rm -u "$PUID:$PGID" -v /tmp:/backup \
+    -e DOMAIN="$DOMAIN" --entrypoint sh certbot/certbot -c \
+    'ls -1t /backup/gp-cert-"$DOMAIN"-*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f' \
+    || echo "   (could not prune old backups — continuing)"
   echo "   /tmp/$BACKUP_NAME"
 else
   echo "   (no data/certbot yet — nothing to back up)"
