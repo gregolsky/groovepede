@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, serviceLabel, isOnPreferredService, timeAgo, artistInitials } from './render.js';
+import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, pickListenTarget, linkedServiceNames, serviceLabel, isOnPreferredService, timeAgo, artistInitials } from './render.js';
 
 // ── isOnPreferredService ──────────────────────────────────────────────────────
 
@@ -60,6 +60,60 @@ describe('serviceLabel', () => {
   it('returns Pandora for pandora', () => expect(serviceLabel('pandora')).toBe('Pandora'));
   it('returns SoundCloud for soundcloud', () => expect(serviceLabel('soundcloud')).toBe('SoundCloud'));
   it('returns empty string for unknown slug', () => expect(serviceLabel('whatever')).toBe(''));
+});
+
+// ── pickListenTarget ──────────────────────────────────────────────────────────
+// The Listen button labels itself with the service it will actually open, so
+// the URL and the service it belongs to have to be picked together.
+
+describe('pickListenTarget', () => {
+  it('reports the preferred service when the album is on it', () => {
+    const album = { links: { spotify: { nativeUri: 'spotify:album:abc' }, apple: { url: 'https://music.apple.com/album/abc' } } };
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'spotify:album:abc', service: 'spotify' });
+  });
+
+  it('names the fallback service when the preferred one has no link', () => {
+    const album = { links: { apple: { url: 'https://music.apple.com/album/abc' } } };
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://music.apple.com/album/abc', service: 'apple' });
+  });
+
+  it('keeps the url and service in step when a nativeUri wins over an earlier url', () => {
+    const album = { links: { deezer: { url: 'https://deezer.com/album/1' }, tidal: { nativeUri: 'tidal://album/2' } } };
+    // nativeUri beats url across services, so the label must say Tidal, not Deezer.
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'tidal://album/2', service: 'tidal' });
+  });
+
+  it('falls back to the pasted url, tagged with the record’s own service', () => {
+    const album = { sourceUrl: 'https://original.com/album', service: 'tidal', links: {} };
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://original.com/album', service: 'tidal' });
+  });
+
+  it('reports a null service when the pasted url’s service is unknown', () => {
+    const album = { sourceUrl: 'https://original.com/album', links: {} };
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://original.com/album', service: null });
+  });
+
+  it('returns nulls when there is nothing to open', () => {
+    expect(pickListenTarget({ links: {} }, 'spotify')).toEqual({ url: null, service: null });
+  });
+});
+
+// ── linkedServiceNames ────────────────────────────────────────────────────────
+
+describe('linkedServiceNames', () => {
+  it('lists the display names of services with a usable link', () => {
+    const album = { links: { spotify: { url: 'x' }, apple: { nativeUri: 'y' } } };
+    expect(linkedServiceNames(album)).toEqual(['Spotify', 'Apple Music']);
+  });
+
+  it('skips entries with neither url nor nativeUri', () => {
+    const album = { links: { spotify: { url: 'x' }, tidal: { url: null, nativeUri: null } } };
+    expect(linkedServiceNames(album)).toEqual(['Spotify']);
+  });
+
+  it('returns an empty list for a record with no links', () => {
+    expect(linkedServiceNames({})).toEqual([]);
+  });
 });
 
 // ── pickListenUrl ─────────────────────────────────────────────────────────────

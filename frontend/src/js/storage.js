@@ -1,5 +1,10 @@
 import { STORAGE_KEY, DONE_KEY, PREF_SERVICE_KEY } from './config.js';
-import { findServiceByHost } from './services.js';
+import { findServiceByHost, serviceListText } from './services.js';
+
+// "Spotify, Apple Music, … or SoundCloud" — every service the parser accepts,
+// derived from the registry so an unsupported-link error can never advertise a
+// shorter list than parseMusicLink actually handles.
+const SUPPORTED = () => serviceListText({ conj: 'or' });
 
 export function upgradeAlbumRecord(rec) {
   if (rec.links) return rec; // already migrated
@@ -147,17 +152,17 @@ export function parseMusicLink(raw) {
   if (/^[a-zA-Z0-9]{22}$/.test(s)) return { url: `https://open.spotify.com/album/${s}`, service: 'spotify' };
 
   if (!/^https?:\/\//.test(s))
-    return { error: 'Paste an album link from a supported music service' };
+    return { error: `Paste an album link from ${SUPPORTED()}` };
 
   let host;
   try { host = new URL(s).hostname.replace(/^www\./, ''); }
-  catch { return { error: 'Paste an album link from a supported music service' }; }
+  catch { return { error: `Paste an album link from ${SUPPORTED()}` }; }
 
   // Blocked sources (not in the service registry)
   if (host.includes('bandcamp.com'))
-    return { error: "Bandcamp isn't supported yet — paste a link from Spotify, Apple Music, YouTube, Tidal, or Deezer" };
+    return { error: `Bandcamp isn't supported yet — paste a link from ${SUPPORTED()}` };
   if (host.includes('discogs.com'))
-    return { error: "Discogs isn't supported yet — paste a link from Spotify, Apple Music, YouTube, Tidal, or Deezer" };
+    return { error: `Discogs isn't supported yet — paste a link from ${SUPPORTED()}` };
   if (host === 'youtu.be')
     return { error: "That's a track — paste a YouTube playlist link for an album" };
 
@@ -165,10 +170,10 @@ export function parseMusicLink(raw) {
   const svc = findServiceByHost(host);
   if (svc) {
     if (svc.albumMatch(s)) return { url: s, service: svc.slug };
-    return { error: svc.nonAlbumError(s) || 'Paste an album link from a supported service (Spotify, Apple Music, YouTube, Tidal, or Deezer)' };
+    return { error: svc.nonAlbumError(s) || `Paste an album link from ${SUPPORTED()}` };
   }
 
-  return { error: 'Paste an album link from a supported service (Spotify, Apple Music, YouTube, Tidal, or Deezer)' };
+  return { error: `That site isn't supported — paste an album link from ${SUPPORTED()}` };
 }
 
 export function makePendingRecord(url, service) {

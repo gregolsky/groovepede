@@ -251,6 +251,10 @@ body::after {
 .add-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15,210,135,.14); }
 .add-input.error { border-color: var(--danger); }
 .add-error { font-size: 12px; color: var(--danger); margin: -8px 0 12px 2px; line-height: 1.4; }
+/* The supported-service list. Lives here rather than in the input's placeholder
+   because a placeholder vanishes as soon as the user types — and is truncated
+   on a phone, which is where most links get pasted. */
+.add-hint { font-size: 12px; color: var(--text-faint); line-height: 1.5; margin: -6px 0 12px 2px; }
 .add-btn {
   height: 40px;
   padding: 0 18px;
@@ -403,6 +407,10 @@ body::after {
 .btn-listen:hover { background: #0ae87a; border-color: #0ae87a; box-shadow: 0 0 0 3px rgba(15,210,135,.18); }
 .btn-listen--unavailable { background: transparent; border-color: var(--border); color: var(--text-faint); font-weight: 400; cursor: not-allowed; }
 .btn-listen--unavailable:hover { background: transparent; border-color: var(--border); box-shadow: none; }
+/* Playable, but not on the preferred service — outlined rather than solid, so
+   the button reads as "this opens somewhere else" at a glance. */
+.btn-listen--alt { background: transparent; border-color: var(--accent-border); color: var(--accent); font-weight: 600; }
+.btn-listen--alt:hover { background: rgba(15,210,135,.10); border-color: var(--accent); box-shadow: none; }
 .btn-done { color: var(--text-dim); border-color: var(--border-2); font-size: 12px; }
 .btn-done:hover { color: var(--text); border-color: var(--text-faint); }
 
@@ -853,6 +861,19 @@ body::after {
 .landing-feature h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
 .landing-feature p { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
 
+/* Secondary feature strip — text only, no imagery, so it reads as a footnote to
+   the three illustrated cards above rather than competing with them. */
+.landing-extras {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px 24px;
+  margin-bottom: 48px;
+  padding: 20px 0 0;
+  border-top: 1px solid var(--border);
+}
+.landing-extra h4 { font-size: 14px; font-weight: 600; margin-bottom: 5px; color: var(--text); }
+.landing-extra p  { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+
 .landing-section-title {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -957,12 +978,14 @@ body::after {
   .animate-in .landing-hero-text  { animation: rise-in .4s ease-out both; animation-delay: .05s; }
   .animate-in .landing-hero-visual { animation: rise-in .4s ease-out both; animation-delay: .14s; }
   .animate-in .landing-features   { animation: rise-in .4s ease-out both; animation-delay: .28s; }
-  .animate-in .landing-steps      { animation: rise-in .4s ease-out both; animation-delay: .38s; }
+  .animate-in .landing-extras     { animation: rise-in .4s ease-out both; animation-delay: .34s; }
+  .animate-in .landing-steps      { animation: rise-in .4s ease-out both; animation-delay: .44s; }
 }
 
 /* ── Landing desktop responsive ──────────────────────────────────────────────── */
 @media (min-width: 768px) {
   .landing-features { grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .landing-extras   { grid-template-columns: repeat(2, 1fr); }
 
   .landing-timeline {
     display: grid;
@@ -1022,6 +1045,7 @@ body::after {
 /* ── Preferred service picker ────────────────────────────────────────────────── */
 .profile-pref-service { width: 100%; margin-bottom: 4px; padding: 14px 0; border-top: 1px solid var(--border); }
 .profile-pref-service-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); margin-bottom: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.profile-pref-service-desc { font-size: 12px; color: var(--text-faint); line-height: 1.6; margin: -4px 0 10px; }
 .profile-pref-service-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .pref-service-option {
   display: flex;
@@ -1108,6 +1132,7 @@ body::after {
 .profile-id { font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); margin-bottom: 12px; letter-spacing: 0.02em; }
 .profile-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; margin-bottom: 24px; }
 .profile-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.profile-actions-desc { font-size: 12px; color: var(--text-faint); line-height: 1.6; margin: 10px 0 0; }
 .profile-actions--bottom { margin-top: 16px; }
 .profile-action-btn {
   width: 100%;

@@ -301,7 +301,7 @@ test('unresolvable import link is dropped and shown in the summary modal', async
   await expect(page.locator('.import-summary-overlay')).not.toBeAttached();
 });
 
-test('Listen button is disabled when album is not on preferred service', async ({ page, context }) => {
+test('Listen button offers the service the album IS on when it is not on the preferred one', async ({ page, context }) => {
   await stubLastfm(context);
 
   // Seed a resolved album that only has an Apple Music link, while the
@@ -323,11 +323,42 @@ test('Listen button is disabled when album is not on preferred service', async (
   await page.goto('/');
   await expect(page.locator('.stats')).toBeVisible();
 
-  // The Listen button should be disabled (preferred service = spotify, album only on apple)
+  // Preferred service is Spotify and the album is Apple-only — the button stays
+  // usable but says where it will actually take you, rather than dead-ending.
+  const listenBtn = page.locator('.btn-listen--alt');
+  await expect(listenBtn).toBeVisible();
+  await expect(listenBtn).toBeEnabled();
+  await expect(listenBtn).toContainText('Apple Music');
+  await expect(listenBtn).toHaveAttribute('title', /Not on Spotify.*Apple Music/);
+  await expect(page.locator('.btn-listen--unavailable')).toHaveCount(0);
+
+  // The explore card has room for the full phrase.
+  await page.locator('.card').first().click();
+  await expect(page.locator('.explore-album .btn-listen--alt')).toContainText('Listen on Apple Music');
+});
+
+test('Listen button is disabled only when the album has no link anywhere', async ({ page, context }) => {
+  await stubLastfm(context);
+
+  const album = {
+    id: 'ORPHAN_ALBUM::none',
+    title: 'Linkless Album',
+    artist: 'Some Artist',
+    sourceUrl: null,
+    links: {},
+    cover: null, year: '2024', tags: [], addedAt: new Date().toISOString(),
+  };
+  await context.addInitScript(({ keys, al }) => {
+    localStorage.setItem(keys.ALBUMS, JSON.stringify([al]));
+  }, { keys: KEYS, al: album });
+
+  await page.goto('/');
+  await expect(page.locator('.stats')).toBeVisible();
+
   const listenBtn = page.locator('.btn-listen--unavailable');
   await expect(listenBtn).toBeVisible();
   await expect(listenBtn).toBeDisabled();
-  await expect(listenBtn).toContainText('Not on Spotify');
+  await expect(listenBtn).toContainText('No link yet');
 });
 
 test('resolution resumes when user returns to tab (visibilitychange)', async ({ page, context }) => {
@@ -426,8 +457,14 @@ test('faq.html loads with on-brand styles and accordion items', async ({ page })
   // Title present
   await expect(page.locator('.faq-page-title')).toContainText('Frequently asked questions');
 
-  // Five FAQ items
-  await expect(page.locator('.faq-item')).toHaveCount(5);
+  // The visible accordion and the FAQPage structured data must describe the
+  // same questions — a search engine showing an answer the page doesn't have
+  // (or missing one it does) is the failure mode worth guarding, not the count.
+  const visible = await page.locator('.faq-item summary').allInnerTexts();
+  expect(visible.length).toBeGreaterThanOrEqual(5);
+
+  const ld = JSON.parse(await page.locator('script[type="application/ld+json"]').innerText());
+  expect(ld.mainEntity.map(q => q.name)).toEqual(visible.map(t => t.trim()));
 
   // Back-to-home link in header
   const backLink = page.locator('.header-right a[href="/"]');

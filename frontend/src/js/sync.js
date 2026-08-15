@@ -79,20 +79,20 @@ export async function enableSync(userProfile) {
   if (!playlistId) {
     notify('syncing');
     const userId = userProfile?.id;
-    if (!userId) { notify('error', 'Not logged in'); return; }
+    if (!userId) { notify('error', 'Connect Spotify first'); return; }
 
     const playlist = await spotifyPost('/users/' + userId + '/playlists', {
       name: 'Groovepede Queue', public: false,
       description: 'Your Groovepede album listening queue.',
     });
 
-    if (!playlist) { notify('error', 'Auth failed'); return; }
+    if (!playlist) { notify('error', 'Spotify session expired — reconnect from your profile'); return; }
     if (playlist._error === 403) {
       localStorage.setItem(SYNC_PENDING_KEY, '1');
       login(SYNC_SCOPES);
       return;
     }
-    if (playlist._error) { notify('error', 'Could not create playlist (Spotify error ' + playlist._error + ')'); return; }
+    if (playlist._error) { notify('error', 'Spotify wouldn’t create the playlist (error ' + playlist._error + ')'); return; }
 
     playlistId = playlist.id;
     localStorage.setItem(SYNC_PLAYLIST_KEY, playlistId);
@@ -157,7 +157,7 @@ export async function pushNow() {
 }
 
 function handleErr(res, msg = 'Sync failed') {
-  if (!res)                { notify('error', 'Auth failed'); return true; }
+  if (!res)                { notify('error', 'Spotify session expired — reconnect from your profile'); return true; }
   if (res._error === 404)  {
     localStorage.removeItem(SYNC_PLAYLIST_KEY);
     localStorage.removeItem(SYNC_ENABLED_KEY);
@@ -181,7 +181,7 @@ export async function pullNow(rerenderFn) {
   while (next) {
     const path = next.startsWith('http') ? next.replace('https://api.spotify.com/v1', '') : next;
     const page = await spotifyGet(path);
-    if (!page) { notify('error', 'Failed to fetch playlist'); return; }
+    if (!page) { notify('error', 'Couldn’t read your Spotify playlist'); return; }
     items.push(...(page.items || []));
     next = page.next || null;
   }

@@ -98,6 +98,48 @@ export function serviceLabel(slug) {
   return svc ? svc.label : '';
 }
 
+/** Every supported service's display name, in registry order. */
+export function serviceNames() {
+  return SERVICES.map(s => s.label);
+}
+
+/**
+ * The supported-service list as prose, for UI copy and error messages.
+ *
+ * Exists so the list is written down ONCE. It used to be hardcoded in eight
+ * places that all disagreed — three services were advertised nowhere outside
+ * the FAQ, and error messages named five while parsing accepted eight.
+ *
+ * NOTE: static markup can't call this. When adding a service, also update the
+ * "Which services work?" answer in src/faq.html (both the <details> copy and
+ * the FAQPage JSON-LD) and the meta descriptions in src/index.html.
+ *
+ * @param {object}  [opts]
+ * @param {number}  [opts.max]   cap the names shown; the rest become "and N more"
+ * @param {string}  [opts.sep]   separator between names
+ * @param {string}  [opts.conj]  final conjunction ('and', 'or'); '' to plain-join
+ */
+export function serviceListText({ max = 0, sep = ', ', conj = 'and' } = {}) {
+  const names = serviceNames();
+
+  // The "and N more" tail already reads as the conjunction, so plain-join it.
+  if (max > 0 && names.length > max) {
+    return [...names.slice(0, max), `and ${names.length - max} more`].join(sep);
+  }
+  return joinList(names, { sep, conj });
+}
+
+/**
+ * "A" · "A and B" · "A, B, and C" — Oxford comma, configurable conjunction.
+ * Used for any human-readable list of service names, including the subset of
+ * services a single album happens to have links for.
+ */
+export function joinList(items, { sep = ', ', conj = 'and' } = {}) {
+  if (!conj || items.length < 2) return items.join(sep);
+  if (items.length === 2) return items.join(` ${conj} `);
+  return items.slice(0, -1).join(sep) + `${sep}${conj} ` + items[items.length - 1];
+}
+
 // Odesli linksByPlatform key → internal slug (e.g. 'appleMusic' → 'apple')
 export const ODESLI_KEY_MAP = {};
 for (const svc of SERVICES) {

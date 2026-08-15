@@ -1,7 +1,7 @@
 import { hasSession } from './auth.js';
 import { loadAlbums, loadDone, filterAlbums } from './storage.js';
 import { isSyncEnabled, getSyncStatus, getPlaylistId } from './sync.js';
-import { serviceLabel } from './services.js';
+import { SERVICES, serviceLabel, serviceListText, joinList } from './services.js';
 
 const SPOTIFY_ICON = 'M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.8 3.3-7.3 1.7-20-12.2-45.2-15-74.9-8.2-2.9.7-5.7-1.1-6.4-4-.7-2.9 1.1-5.7 4-6.4 32.5-7.4 60.4-4.2 82.9 9.5 2.5 1.6 3.3 4.9 1.7 7.4zm10.3-22.8c-2 3.1-6.1 4.1-9.2 2.1-22.9-14.1-57.8-18.1-84.9-9.9-3.4 1-7.1-.9-8.2-4.3-1-3.4.9-7.1 4.3-8.2 31-9.4 69.5-4.9 95.8 11.2 3.1 2 4.1 6.1 2.2 9.1zm.9-23.7C108.4 59 63.5 57.6 37.8 65.5c-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.7-9 79.1-7.3 110.3 11 3.7 2.2 4.9 6.9 2.7 10.5-2.1 3.7-6.9 4.9-10.5 2.7z';
 
@@ -21,6 +21,10 @@ const PLAY_SVG      = `<svg width="10" height="10" viewBox="0 0 10 10" fill="cur
 const X_SVG         = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>`;
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+// Done is one tap, irreversible, and the label alone doesn't say it removes the
+// album. Spelled out here so all three Done buttons say the same thing.
+const DONE_TIP = 'Mark as listened — removes it from your queue';
 
 export function timeAgo(iso) {
   const d = Date.now() - new Date(iso).getTime();
@@ -74,25 +78,45 @@ function attr(value) {
 
 export { serviceLabel };
 
-export function pickListenUrl(album, prefService) {
+/**
+ * The link the Listen button will actually open, together with the service it
+ * belongs to. The service matters for the label: when the album isn't on the
+ * user's preferred service the button names the one it will open instead,
+ * rather than silently sending them somewhere unexpected.
+ *
+ * @returns {{ url: string|null, service: string|null }} — service is null when
+ *   falling back to the originally pasted URL of an unknown service.
+ */
+export function pickListenTarget(album, prefService) {
   const links = album.links || {};
 
   // 1. preferred service nativeUri
-  if (links[prefService]?.nativeUri) return links[prefService].nativeUri;
+  if (links[prefService]?.nativeUri) return { url: links[prefService].nativeUri, service: prefService };
   // 2. preferred service web url
-  if (links[prefService]?.url) return links[prefService].url;
+  if (links[prefService]?.url) return { url: links[prefService].url, service: prefService };
 
   // 3. first available nativeUri from any service
-  for (const entry of Object.values(links)) {
-    if (entry?.nativeUri) return entry.nativeUri;
+  for (const [slug, entry] of Object.entries(links)) {
+    if (entry?.nativeUri) return { url: entry.nativeUri, service: slug };
   }
   // 4. first available url from any service
-  for (const entry of Object.values(links)) {
-    if (entry?.url) return entry.url;
+  for (const [slug, entry] of Object.entries(links)) {
+    if (entry?.url) return { url: entry.url, service: slug };
   }
 
   // 5. last resort
-  return album.sourceUrl || null;
+  return { url: album.sourceUrl || null, service: album.sourceUrl ? (album.service || null) : null };
+}
+
+export function pickListenUrl(album, prefService) {
+  return pickListenTarget(album, prefService).url;
+}
+
+/** Display names of every service this album has a usable link for. */
+export function linkedServiceNames(album) {
+  return Object.entries(album.links || {})
+    .filter(([, e]) => e?.url || e?.nativeUri)
+    .map(([slug]) => serviceLabel(slug) || slug);
 }
 
 /**
@@ -107,19 +131,45 @@ export function isOnPreferredService(album, prefService) {
 
 /**
  * Render the Listen button for a resolved album.
- * Disabled + X icon when the album isn't on the user's preferred service.
+ *
+ * Three states, in order of preference:
+ *   1. on the preferred service        → "Listen"
+ *   2. only on other services          → "Listen on <that service>"
+ *   3. no usable link anywhere         → disabled
+ *
+ * State 2 used to be a dead end: a disabled "Not on Spotify" that never said
+ * where the album WAS playable, even though the record usually holds two or
+ * three working links. Naming the fallback keeps the original promise — never
+ * open a different service silently — while still letting the user listen.
+ *
  * @param {object} album
  * @param {string} prefService
  * @param {{ showService?: boolean }} opts — show "Listen on Spotify" vs "Listen"
  */
 function renderListenBtn(album, prefService, { showService = false } = {}) {
-  const svcName = serviceLabel(prefService);
+  const prefName = serviceLabel(prefService) || prefService;
+
   if (isOnPreferredService(album, prefService)) {
-    const url = pickListenUrl(album, prefService);
-    const label = showService ? `Listen on ${escapeHtml(svcName)}` : 'Listen';
-    return `<button class="btn btn-listen" data-action="listen" data-url="${attr(url)}">${PLAY_SVG} ${label}</button>`;
+    const url   = pickListenUrl(album, prefService);
+    const label = showService ? `Listen on ${escapeHtml(prefName)}` : 'Listen';
+    return `<button class="btn btn-listen" data-action="listen" data-url="${attr(url)}" title="${attr(`Opens this album in ${prefName}`)}">${PLAY_SVG} ${label}</button>`;
   }
-  return `<button class="btn btn-listen btn-listen--unavailable" disabled title="${attr(`Not available on ${svcName}`)}">${X_SVG} Not on ${escapeHtml(svcName)}</button>`;
+
+  const target = pickListenTarget(album, prefService);
+  if (target.url) {
+    const altName   = target.service ? (serviceLabel(target.service) || target.service) : '';
+    const elsewhere = linkedServiceNames(album);
+    const tip = altName
+      ? `Not on ${prefName} — this album is on ${joinList(elsewhere)}. Change your service in your profile.`
+      : `Not on ${prefName} — opens the link you saved.`;
+    // In the list the service name stands alone — the play icon already says
+    // "listen", and "Listen on YouTube Music" squeezes the album title on a
+    // phone. The explore card has room for the full phrase.
+    const altLabel = altName ? (showService ? `Listen on ${escapeHtml(altName)}` : escapeHtml(altName)) : 'Listen';
+    return `<button class="btn btn-listen btn-listen--alt" data-action="listen" data-url="${attr(target.url)}" title="${attr(tip)}">${PLAY_SVG} ${altLabel}</button>`;
+  }
+
+  return `<button class="btn btn-listen btn-listen--unavailable" disabled title="${attr(`No link on ${prefName} or any other supported service yet — try Refresh details.`)}">${X_SVG} No link yet</button>`;
 }
 
 // ── Auth area ─────────────────────────────────────────────────────────────────
@@ -128,12 +178,12 @@ export function renderAuthArea(el, userProfile) {
   if (!hasSession()) {
     el.innerHTML = `
       <div class="auth-area-logged-out">
-        <button class="profile-icon-btn" data-action="open-profile" aria-label="Profile &amp; settings">
+        <button class="profile-icon-btn" data-action="open-profile" aria-label="Profile &amp; settings" title="Profile, listening service, backups">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
           </svg>
         </button>
-        <button class="auth-btn auth-btn--small" data-action="login">${spotifyIcon(14, 14)} Connect Spotify</button>
+        <button class="auth-btn auth-btn--small" data-action="login" title="Optional — lets you sync your queue to a private Spotify playlist">${spotifyIcon(14, 14)} Connect Spotify</button>
       </div>`;
     return;
   }
@@ -141,7 +191,7 @@ export function renderAuthArea(el, userProfile) {
   const name = userProfile?.display_name || '';
   el.innerHTML = `
     <div class="user-pill">
-      <button class="user-avatar-btn" data-action="open-profile" aria-label="Your profile">
+      <button class="user-avatar-btn" data-action="open-profile" aria-label="Your profile" title="Profile, listening service, sync &amp; backups">
         ${img ? `<img class="user-avatar" src="${attr(img)}" alt="">` : spotifyIcon(20, 20)}
       </button>
       ${name ? `<span class="user-name">${name}</span>` : ''}
@@ -152,29 +202,34 @@ export function renderAuthArea(el, userProfile) {
 
 /**
  * The paste-a-link form. Rendered in two places — the empty-queue hero and the
- * populated queue's toolbar — which differ only in placeholder text and wrapper.
+ * populated queue's toolbar — which now share their copy exactly.
+ *
+ * The supported-service list lives in the hint line, not the placeholder: a
+ * placeholder disappears the moment the user types and is truncated on a phone,
+ * so it was the one place the list could never actually be read.
  */
-function renderAddForm({ loadingAdd, addError, placeholder }) {
+function renderAddForm({ loadingAdd, addError }) {
   return `
     <div class="add-reveal">
-      <input class="add-input" id="url-input" placeholder="${attr(placeholder)}">
-      <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''}>
+      <input class="add-input" id="url-input" placeholder="Paste an album link…" title="Paste an album link from ${attr(serviceListText({ conj: 'or' }))}">
+      <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''} title="Add this album to your queue">
         ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
       </button>
     </div>
-    ${addError ? `<div class="add-error">${addError}</div>` : ''}`;
+    ${addError ? `<div class="add-error">${addError}</div>` : ''}
+    <p class="add-hint">${serviceListText()} &mdash; or share straight from your phone's music app.</p>`;
 }
 
 function renderHero({ loadingAdd, addError, addOpen }) {
   const addSection = addOpen ? `
     <div class="landing-add-open">
-      ${renderAddForm({ loadingAdd, addError, placeholder: 'Paste a music album link from Spotify, Apple Music, YouTube…' })}
+      ${renderAddForm({ loadingAdd, addError })}
     </div>` : `
-    <button class="auth-btn landing-cta" data-action="toggle-add">
+    <button class="auth-btn landing-cta" data-action="toggle-add" title="No account needed — paste a link and it's in your queue">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
       Paste a music album link
     </button>
-    <p class="landing-note">Spotify &middot; Apple Music &middot; YouTube Music &middot; Tidal &middot; Deezer &middot; and more</p>`;
+    <p class="landing-note">${serviceListText({ sep: ' &middot; ', conj: '' })}</p>`;
 
   return `
     <div class="landing">
@@ -207,7 +262,7 @@ function renderHero({ loadingAdd, addError, addOpen }) {
           </div>
           <div class="landing-feature-body">
             <h3>Save from anywhere</h3>
-            <p>Paste links from Spotify, Apple Music, YouTube Music, Tidal, Deezer, and more. Or share directly from your phone's music app.</p>
+            <p>Paste links from ${serviceListText()}. Or share directly from your phone's music app.</p>
           </div>
         </div>
         <div class="landing-feature">
@@ -239,6 +294,25 @@ function renderHero({ loadingAdd, addError, addOpen }) {
             <h3>Fully local</h3>
             <p>Your queue lives in your browser's storage. Nothing is sent to our servers &mdash; because there are none.</p>
           </div>
+        </div>
+      </div>
+
+      <div class="landing-extras">
+        <div class="landing-extra">
+          <h4>Dig into an artist</h4>
+          <p>Tap any album for its tracklist, the artist's bio, and similar artists worth queueing next.</p>
+        </div>
+        <div class="landing-extra">
+          <h4>Optional Spotify sync</h4>
+          <p>Connect Spotify to mirror your queue into a private playlist &mdash; backed up, and there on every device.</p>
+        </div>
+        <div class="landing-extra">
+          <h4>Take your queue with you</h4>
+          <p>Export the whole queue as a JSON file and import it anywhere. It's your data, in a format you can read.</p>
+        </div>
+        <div class="landing-extra">
+          <h4>Install it like an app</h4>
+          <p>Add Groovepede to your home screen. On Android it shows up in the share sheet of your music apps.</p>
         </div>
       </div>
 
@@ -295,31 +369,30 @@ function renderSyncSection() {
       <div class="profile-sync-row">
         <div class="profile-sync-label">
           <span class="profile-sync-title">Sync to Spotify playlist</span>
-          ${enabled ? statusLine : '<span class="sync-status">Keeps your queue safe across devices</span>'}
+          ${enabled ? statusLine : '<span class="sync-status">Mirrors your queue to a private playlist, “Groovepede Queue”</span>'}
         </div>
-        <button class="sync-toggle ${enabled ? 'sync-toggle--on' : ''}" data-action="toggle-sync" aria-pressed="${enabled}">
+        <button class="sync-toggle ${enabled ? 'sync-toggle--on' : ''}" data-action="toggle-sync" aria-pressed="${enabled}"
+            title="${enabled ? 'Stop mirroring your queue to Spotify (the playlist stays)' : 'Mirror your queue to a private Spotify playlist'}">
           <span class="sync-toggle-knob"></span>
         </button>
       </div>
     </div>`;
 }
 
-const PREF_SERVICE_OPTIONS = [
-  { slug: 'spotify',    label: 'Spotify' },
-  { slug: 'apple',      label: 'Apple Music' },
-  { slug: 'youtube',    label: 'YouTube Music' },
-  { slug: 'deezer',     label: 'Deezer' },
-  { slug: 'tidal',      label: 'Tidal' },
-  { slug: 'amazon',     label: 'Amazon Music' },
-];
-
+/**
+ * Every service, straight from the registry. It used to be a hardcoded six,
+ * which left Pandora and SoundCloud unselectable — and since adding an album
+ * auto-sets the preference from the pasted link (app.js), a SoundCloud user
+ * ended up staring at a radio group with nothing selected and no explanation.
+ */
 function renderPrefServiceSection(prefService) {
   return `
     <div class="profile-pref-service">
       <div class="profile-pref-service-label">Listen on</div>
+      <div class="profile-pref-service-desc">Where the Listen button opens albums. Set automatically from your first pasted link.</div>
       <div class="profile-pref-service-options">
-        ${PREF_SERVICE_OPTIONS.map(({ slug, label }) => `
-        <label class="pref-service-option${prefService === slug ? ' active' : ''}">
+        ${SERVICES.map(({ slug, label }) => `
+        <label class="pref-service-option${prefService === slug ? ' active' : ''}" title="${attr(`Open albums in ${label}`)}">
           <input type="radio" name="pref-service" value="${slug}" data-action="set-pref-service" ${prefService === slug ? 'checked' : ''}>
           ${label}
         </label>`).join('')}
@@ -356,16 +429,17 @@ function renderProfile(userProfile, prefService) {
           <button class="auth-btn profile-connect-btn" data-action="login">${spotifyIcon(14, 14)} Connect with Spotify</button>
         </div>`}
         <div class="profile-actions">
-          <button class="profile-action-btn" data-action="export-data">Export queue</button>
-          <button class="profile-action-btn" data-action="import-data">Import queue</button>
+          <button class="profile-action-btn" data-action="export-data" title="Download your whole queue as a JSON backup file">Export queue</button>
+          <button class="profile-action-btn" data-action="import-data" title="Load a backup file — replaces your current queue">Import queue</button>
           <input type="file" id="profile-import-input" accept="application/json" style="display:none">
         </div>
+        <p class="profile-actions-desc">Backups are plain JSON and include every album, so importing restores your queue instantly &mdash; on this device or another.</p>
         ${loggedIn ? `
         <details class="profile-advanced">
           <summary class="profile-advanced-summary">Advanced</summary>
           <div class="profile-advanced-body">
             <p class="profile-advanced-desc">Restore replaces your current queue with the contents of your Spotify playlist. This cannot be undone.</p>
-            <button class="profile-action-btn" data-action="restore-sync" ${!isSyncEnabled() || !getPlaylistId() ? 'disabled' : ''}>Restore from Spotify playlist</button>
+            <button class="profile-action-btn" data-action="restore-sync" ${!isSyncEnabled() || !getPlaylistId() ? 'disabled' : ''} title="Overwrite this device's queue with the Spotify playlist">Restore from Spotify playlist</button>
           </div>
         </details>
         <div class="profile-actions profile-actions--bottom">
@@ -395,9 +469,9 @@ function renderImportSummaryModal({ added, failed }) {
         <ul class="import-summary-failed-list">
           ${failed.map(u => `<li><a class="import-summary-link" href="${attr(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a></li>`).join('')}
         </ul>
-        <button class="profile-action-btn import-summary-copy" data-action="copy-import-links">Copy links</button>
+        <button class="profile-action-btn import-summary-copy" data-action="copy-import-links" title="Copy these links to the clipboard so you can try them again">Copy links</button>
       </div>` : ''}
-      <button class="auth-btn import-summary-dismiss" data-action="close-import-summary">Done</button>
+      <button class="auth-btn import-summary-dismiss" data-action="close-import-summary">Close</button>
     </div>
   </div>`;
 }
@@ -444,12 +518,12 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
         <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
-        <input class="search-input" id="search-input" placeholder="Search albums or artists…" value="${attr(searchQuery || '')}" autocomplete="off">
-        ${searchQuery ? `<button class="search-clear" data-action="clear-search" aria-label="Clear search">&times;</button>` : ''}
+        <input class="search-input" id="search-input" placeholder="Search your queue…" title="Filters the albums in your queue by title or artist" aria-label="Search your queue by album title or artist" value="${attr(searchQuery || '')}" autocomplete="off">
+        ${searchQuery ? `<button class="search-clear" data-action="clear-search" aria-label="Clear search" title="Clear search">&times;</button>` : ''}
       </div>
-      <button class="add-toggle${addOpen ? ' active' : ''}" data-action="toggle-add" aria-expanded="${addOpen}">+ Add</button>
+      <button class="add-toggle${addOpen ? ' active' : ''}" data-action="toggle-add" aria-expanded="${addOpen}" title="Add an album by pasting a link">+ Add</button>
     </div>
-    ${addOpen ? renderAddForm({ loadingAdd, addError, placeholder: 'Paste an album link from Spotify, Apple Music, YouTube…' }) : ''}`;
+    ${addOpen ? renderAddForm({ loadingAdd, addError }) : ''}`;
 
   if (importProgress) {
     const pct      = importProgress.total > 0 ? (importProgress.done / importProgress.total * 100) : 0;
@@ -478,10 +552,10 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
     }
     html += `
       <div class="filter-bar">
-        <button class="filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-action="filter" data-tag="all">All</button>
+        <button class="filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-action="filter" data-tag="all" title="Show every album in your queue">All</button>
         ${displayTags.map(t => `
-        <button class="filter-chip ${activeFilter === t ? 'active' : ''}" data-action="filter" data-tag="${attr(t)}">${t}</button>`).join('')}
-        ${showMore ? `<button class="tag-more" data-action="toggle-tags">${tagsExpanded ? 'Less ▴' : 'More ▾'}</button>` : ''}
+        <button class="filter-chip ${activeFilter === t ? 'active' : ''}" data-action="filter" data-tag="${attr(t)}" title="${attr(`Show only ${t} albums`)}">${t}</button>`).join('')}
+        ${showMore ? `<button class="tag-more" data-action="toggle-tags" title="${tagsExpanded ? 'Show fewer genre tags' : 'Show every genre tag in your queue'}">${tagsExpanded ? 'Less ▴' : 'More ▾'}</button>` : ''}
       </div>`;
   }
 
@@ -525,12 +599,12 @@ function renderPendingCard(album, visibleIdx) {
         <div class="card-body">
           <div class="card-title card-title--pending">${escapeHtml(svcLabel)}</div>
           <div class="card-artist card-artist--pending">Looking up details…</div>
-          <div class="card-meta">Added ${timeAgo(album.addedAt)} · resolving</div>
+          <div class="card-meta" title="Waiting on the link resolver — this retries by itself, and your link is already saved">Added ${timeAgo(album.addedAt)} · resolving</div>
         </div>
         <div class="card-actions">
           ${listenUrl ? `
-          <button class="btn btn-listen" data-action="listen" data-url="${attr(listenUrl)}">${PLAY_SVG} Listen</button>` : ''}
-          <button class="btn btn-done" data-action="done" data-index="${visibleIdx}">${CHECKMARK_SVG} Done</button>
+          <button class="btn btn-listen" data-action="listen" data-url="${attr(listenUrl)}" title="Opens the link you saved">${PLAY_SVG} Listen</button>` : ''}
+          <button class="btn btn-done" data-action="done" data-index="${visibleIdx}" title="${attr(DONE_TIP)}">${CHECKMARK_SVG} Done</button>
         </div>
       </div>
     </div>`;
@@ -542,7 +616,7 @@ function renderCards(visible, albums, searchQuery, prefService) {
 
     const tagHtml = [
       album.year ? `<span class="tag year">${album.year}</span>` : '',
-      ...(album.tags || []).map(t => `<span class="tag genre" data-action="filter" data-tag="${attr(t)}">${escapeHtml(t)}</span>`),
+      ...(album.tags || []).map(t => `<span class="tag genre" data-action="filter" data-tag="${attr(t)}" title="${attr(`Filter your queue by ${t}`)}">${escapeHtml(t)}</span>`),
     ].filter(Boolean).join('');
 
     return `
@@ -566,7 +640,7 @@ function renderCards(visible, albums, searchQuery, prefService) {
           </div>
           <div class="card-actions">
             ${renderListenBtn(album, prefService)}
-            <button class="btn btn-done" data-action="done" data-index="${visibleIdx}">${CHECKMARK_SVG} Done</button>
+            <button class="btn btn-done" data-action="done" data-index="${visibleIdx}" title="${attr(DONE_TIP)}">${CHECKMARK_SVG} Done</button>
           </div>
         </div>
       </div>`;
@@ -606,7 +680,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
   const mergedTags = [...new Set([...genres, ...tags])];
 
   const lastfmLink = lastfmUrl
-    ? `<a class="explore-link explore-link--lastfm" href="${attr(lastfmUrl)}" target="_blank">${lastfmIcon(12, 12)} Last.fm</a>`
+    ? `<a class="explore-link explore-link--lastfm" href="${attr(lastfmUrl)}" target="_blank" title="${attr(`${album.artist || 'This artist'} on Last.fm — where the genre tags come from`)}">${lastfmIcon(12, 12)} Last.fm</a>`
     : '';
 
   const tracklistHtml = tracks === null
@@ -624,11 +698,11 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
   return `
     <div class="explore">
       <div class="explore-nav">
-        <button class="explore-back" data-action="close-explore">← Back</button>
-        <span class="explore-counter">${index + 1} / ${total}</span>
+        <button class="explore-back" data-action="close-explore" title="Back to your queue">← Back</button>
+        <span class="explore-counter" title="${attr(`Album ${index + 1} of ${total} in the current view`)}">${index + 1} / ${total}</span>
         <div class="explore-arrows">
-          <button class="explore-arrow" data-action="explore-prev" ${hasPrev ? '' : 'disabled'} aria-label="Previous">‹</button>
-          <button class="explore-arrow" data-action="explore-next" ${hasNext ? '' : 'disabled'} aria-label="Next">›</button>
+          <button class="explore-arrow" data-action="explore-prev" ${hasPrev ? '' : 'disabled'} aria-label="Previous album" title="Previous album">‹</button>
+          <button class="explore-arrow" data-action="explore-next" ${hasNext ? '' : 'disabled'} aria-label="Next album" title="Next album">›</button>
         </div>
       </div>
 
@@ -642,7 +716,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
         </div>
         <div class="explore-album-actions">
           ${renderListenBtn(album, prefService, { showService: true })}
-          <button class="btn btn-done" data-action="explore-done" data-index="${index}">Done</button>
+          <button class="btn btn-done" data-action="explore-done" data-index="${index}" title="${attr(DONE_TIP)}">Done</button>
         </div>
         ${tracklistHtml}
       </div>
@@ -656,7 +730,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
             <h2 class="explore-artist-name">${escapeHtml(album.artist || '')}</h2>
             ${mergedTags.length ? `<div class="explore-tags">${mergedTags.map(t => `<span class="tag genre">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
             <div class="explore-links">
-              ${spotifyUrl ? `<a class="explore-link explore-link--spotify" href="${attr(spotifyUrl)}" target="_blank">${spotifyIcon(12, 12)} Follow on Spotify</a>` : ''}
+              ${spotifyUrl ? `<a class="explore-link explore-link--spotify" href="${attr(spotifyUrl)}" target="_blank" title="${attr(`Open ${album.artist || 'this artist'}'s page on Spotify`)}">${spotifyIcon(12, 12)} Artist on Spotify</a>` : ''}
               ${lastfmLink}
             </div>
           </div>
@@ -671,6 +745,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
 
       <div class="explore-footer">
         <button class="explore-refresh" data-action="refresh" data-index="${index}"
+            title="Re-fetch this album's cover, links and tags"
             ${refreshingId === album.id ? 'disabled' : ''}>
           ↻ ${refreshingId === album.id ? 'Refreshing…' : 'Refresh details'}
         </button>
