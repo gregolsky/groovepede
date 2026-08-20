@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, spotifyAlbumMatches, searchSpotifyAlbum, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistImage, deezerAlbumId, fetchArtistImage } from './api.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, spotifyAlbumMatches, searchSpotifyAlbum, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistData, deezerAlbumId, fetchArtistImage, enrichWithLastfm, cleanTags } from './api.js';
+import { loadAlbums } from './storage.js';
 
 // ── throttle helpers ──────────────────────────────────────────────────────────
 
@@ -221,12 +222,42 @@ describe('resolveAlbumMusicBrainz', () => {
   beforeEach(() => { vi.restoreAllMocks(); resetThrottles(); });
 
   it('returns album record on success', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true, json: async () => MB_RESPONSE,
-    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE });               // /url lookup
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ genres: [] }) });          // /release genres
     const rec = await resolveAlbumMusicBrainz('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', 'spotify');
     expect(rec.title).toBe('Devil Is Fine');
     expect(rec._error).toBeUndefined();
+  });
+
+  it('attaches genres from the second /release lookup', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE });
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ genres: [{ name: 'black metal' }, { name: 'avant-garde' }] }) });
+    const rec = await resolveAlbumMusicBrainz('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', 'spotify');
+    expect(rec.tags).toEqual(['black metal', 'avant-garde']);
+    const genreUrl = fetchMock.mock.calls[1][0];
+    expect(genreUrl).toContain('/release/ce4d1a76-7727-45d7-b61a-21a6e841e21c');
+    expect(genreUrl).toContain('inc=genres');
+  });
+
+  it('degrades to empty tags (not a failed resolve) when the genre lookup fails', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+    const rec = await resolveAlbumMusicBrainz('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', 'spotify');
+    expect(rec._error).toBeUndefined();
+    expect(rec.title).toBe('Devil Is Fine');
+    expect(rec.tags).toEqual([]);
+  });
+
+  it('degrades to empty tags when the genre lookup throws', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE });
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    const rec = await resolveAlbumMusicBrainz('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', 'spotify');
+    expect(rec._error).toBeUndefined();
+    expect(rec.tags).toEqual([]);
   });
 
   it('returns { _error } on HTTP error', async () => {
@@ -275,6 +306,7 @@ describe('resolveAlbumResilient', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // Odesli error
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // MB success
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ genres: [] }) }); // MB genres
     const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
     expect(rec.title).toBe('Devil Is Fine');
     expect(rec.id).toMatch(/^mb:/);
@@ -284,6 +316,7 @@ describe('resolveAlbumResilient', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     fetchMock.mockResolvedValueOnce({ ok: false, status: 429 }); // Odesli 429
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // MB success
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ genres: [] }) }); // MB genres
     const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
     expect(rec.title).toBe('Devil Is Fine');
   });
@@ -291,10 +324,11 @@ describe('resolveAlbumResilient', () => {
   it('skips Odesli and goes straight to MusicBrainz when Odesli is cooling down', async () => {
     _setThrottles({ odesli: coolingThrottle() });
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // only MB is called
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // MB lookup
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ genres: [] }) }); // MB genres
     const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
     expect(rec.title).toBe('Devil Is Fine');
-    expect(fetchMock).toHaveBeenCalledTimes(1); // Odesli fetch never called
+    expect(fetchMock).toHaveBeenCalledTimes(2); // Odesli fetch never called; MB lookup + MB genres
   });
 
   it('returns Odesli error when both Odesli and MusicBrainz fail', async () => {
@@ -533,6 +567,171 @@ describe('fetchLastfmArtist — Last.fm single-object quirk', () => {
   });
 });
 
+// ── cleanTags ───────────────────────────────────────────────────────────────────
+
+describe('cleanTags', () => {
+  const tag = (name) => ({ name });
+
+  it('lowercases tag names', () => {
+    expect(cleanTags([tag('Post-Rock')])).toEqual(['post-rock']);
+  });
+
+  it('drops 4-digit year and 2-digit decade tags', () => {
+    expect(cleanTags([tag('1990'), tag('1990s'), tag('90s'), tag('shoegaze')])).toEqual(['shoegaze']);
+  });
+
+  it('drops known junk tags', () => {
+    expect(cleanTags([tag('seen live'), tag('vinyl'), tag('awesome'), tag('ambient')])).toEqual(['ambient']);
+  });
+
+  it('canonicalizes near-duplicate spellings and dedupes the result', () => {
+    expect(cleanTags([tag('hip hop'), tag('hiphop'), tag('HIP-HOP')])).toEqual(['hip-hop']);
+  });
+
+  it('drops a tag matching the artist name, case-insensitively', () => {
+    expect(cleanTags([tag('Mogwai'), tag('post-rock')], 'mogwai')).toEqual(['post-rock']);
+  });
+
+  it('keeps tags unrelated to the artist name', () => {
+    expect(cleanTags([tag('post-rock')], 'Mogwai')).toEqual(['post-rock']);
+  });
+
+  it('drops tags outside the length bounds', () => {
+    expect(cleanTags([tag('a'), tag('x'.repeat(26)), tag('drone')])).toEqual(['drone']);
+  });
+
+  it('returns an empty array for an empty input', () => {
+    expect(cleanTags([])).toEqual([]);
+  });
+});
+
+// ── enrichWithLastfm ────────────────────────────────────────────────────────────
+
+describe('enrichWithLastfm', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    resetThrottles();
+    vi.stubGlobal('localStorage', {
+      _store: {},
+      getItem(k) { return this._store[k] ?? null; },
+      setItem(k, v) { this._store[k] = v; },
+      removeItem(k) { delete this._store[k]; },
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function mockFetchSequence(responses) {
+    let i = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve({ ok: true, json: async () => responses[i++] })
+    );
+  }
+
+  function seedAlbum(id) {
+    localStorage.setItem('gp_albums', JSON.stringify([{
+      id, sourceUrl: 'https://open.spotify.com/album/x', title: 'OK Computer', artist: 'Radiohead',
+      cover: null, year: null, tags: [], addedAt: '2024-01-01T00:00:00.000Z', links: {},
+    }]));
+  }
+
+  it('merges artist tags before album tags, dropping duplicates from the album side', async () => {
+    seedAlbum('album-1');
+    mockFetchSequence([
+      { toptags: { tag: [{ name: 'post-rock', count: 10 }, { name: 'ambient', count: 8 }] } }, // artist.gettoptags
+      { album: { tags: { tag: [{ name: 'ambient' }, { name: 'drone' }] } } },                  // album.getinfo
+    ]);
+    const onUpdate = vi.fn();
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer', onUpdate);
+    const album = loadAlbums().find(a => a.id === 'album-1');
+    expect(album.tags).toEqual(['post-rock', 'ambient', 'drone']);
+    expect(onUpdate).toHaveBeenCalledOnce();
+  });
+
+  it('caps merged tags at 7', async () => {
+    seedAlbum('album-1');
+    mockFetchSequence([
+      { toptags: { tag: [1, 2, 3, 4, 5].map(n => ({ name: `artist-tag-${n}`, count: 10 })) } },
+      { album: { tags: { tag: [1, 2, 3, 4, 5].map(n => ({ name: `album-tag-${n}` })) } } },
+    ]);
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
+    const album = loadAlbums().find(a => a.id === 'album-1');
+    expect(album.tags).toHaveLength(7);
+    expect(album.tags).toEqual(['artist-tag-1', 'artist-tag-2', 'artist-tag-3', 'artist-tag-4', 'artist-tag-5', 'album-tag-1', 'album-tag-2']);
+  });
+
+  it('falls back to similar-artist tags when artist and album sources return nothing', async () => {
+    seedAlbum('album-1');
+    mockFetchSequence([
+      { toptags: { tag: [] } },                                                    // artist.gettoptags — empty
+      { album: { tags: {} } },                                                     // album.getinfo — empty
+      { similarartists: { artist: [{ name: 'Sim1' }, { name: 'Sim2' }] } },        // artist.getsimilar
+      { toptags: { tag: [{ name: 'shoegaze', count: 20 }] } },                     // Sim1 toptags
+      { toptags: { tag: [{ name: 'shoegaze', count: 20 }] } },                     // Sim2 toptags
+    ]);
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
+    const album = loadAlbums().find(a => a.id === 'album-1');
+    expect(album.tags).toContain('shoegaze');
+  });
+
+  function seedAlbumWithDeezerLink(id) {
+    localStorage.setItem('gp_albums', JSON.stringify([{
+      id, sourceUrl: 'https://open.spotify.com/album/x', title: 'OK Computer', artist: 'Radiohead',
+      cover: null, year: null, tags: [], addedAt: '2024-01-01T00:00:00.000Z',
+      links: { deezer: { url: 'https://www.deezer.com/album/302127', nativeUri: null } },
+    }]));
+  }
+
+  it('fills in with Deezer genres when Last.fm returns fewer than 3 tags', async () => {
+    seedAlbumWithDeezerLink('album-1');
+    mockFetchSequence([
+      { toptags: { tag: [{ name: 'post-rock', count: 10 }] } }, // artist.gettoptags — 1 tag
+      { album: { tags: { tag: [] } } },                          // album.getinfo — empty
+      { image: null, genres: ['Rock', 'Alternative'] },          // resolver /v1/artist
+    ]);
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
+    const album = loadAlbums().find(a => a.id === 'album-1');
+    expect(album.tags).toEqual(['post-rock', 'rock', 'alternative']);
+  });
+
+  it('does not query Deezer when Last.fm is thin but the album has no Deezer link', async () => {
+    seedAlbum('album-1'); // no links.deezer
+    let calls = 0;
+    const responses = [
+      { toptags: { tag: [{ name: 'post-rock', count: 10 }] } },
+      { album: { tags: { tag: [] } } },
+    ];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      const body = responses[calls++];
+      return Promise.resolve({ ok: true, json: async () => body });
+    });
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
+    expect(calls).toBe(2);
+    const album = loadAlbums().find(a => a.id === 'album-1');
+    expect(album.tags).toEqual(['post-rock']);
+  });
+
+  it('returns early without fetching when artistName is falsy', async () => {
+    seedAlbum('album-1');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const onUpdate = vi.fn();
+    await enrichWithLastfm('album-1', '', 'OK Computer', onUpdate);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not write or call onUpdate when the album id is not in storage', async () => {
+    // No seedAlbum() — storage is empty.
+    mockFetchSequence([
+      { toptags: { tag: [{ name: 'post-rock', count: 10 }] } },
+      { album: { tags: { tag: [] } } },
+    ]);
+    const onUpdate = vi.fn();
+    await enrichWithLastfm('missing-id', 'Radiohead', 'OK Computer', onUpdate);
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(loadAlbums()).toEqual([]);
+  });
+});
+
 // ── artist images ─────────────────────────────────────────────────────────────
 
 const DZ_PIC = 'https://cdn-images.dzcdn.net/images/artist/09bbbb9b4f4cab65db1e69a7d4005aec/1000x1000-000000-80-0-0.jpg';
@@ -597,42 +796,53 @@ describe('fetchAudiodbArtistImage', () => {
   });
 });
 
-describe('fetchDeezerArtistImage', () => {
+describe('fetchDeezerArtistData', () => {
   beforeEach(() => { resetThrottles(); vi.restoreAllMocks(); });
 
   it('passes albumId through and returns the resolver image', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ image: DZ_PIC }));
-    expect(await fetchDeezerArtistImage('Witch Club Satan', '542142182')).toBe(DZ_PIC);
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ image: DZ_PIC, genres: [] }));
+    expect(await fetchDeezerArtistData('Witch Club Satan', '542142182')).toEqual({ image: DZ_PIC, genres: [] });
     const url = spy.mock.calls[0][0];
     expect(url).toContain('/v1/artist?');
     expect(url).toContain('albumId=542142182');
   });
 
   it('omits albumId when there is none', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ image: DZ_PIC }));
-    await fetchDeezerArtistImage('Hamulec', null);
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ image: DZ_PIC, genres: [] }));
+    await fetchDeezerArtistData('Hamulec', null);
     expect(spy.mock.calls[0][0]).not.toContain('albumId');
   });
 
   it('treats a Deezer placeholder as no image', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      okJson({ image: 'https://cdn-images.dzcdn.net/images/artist//1000x1000.jpg' }));
-    expect(await fetchDeezerArtistImage('Betwixt The Stars', null)).toBeNull();
+      okJson({ image: 'https://cdn-images.dzcdn.net/images/artist//1000x1000.jpg', genres: [] }));
+    expect(await fetchDeezerArtistData('Betwixt The Stars', null)).toEqual({ image: null, genres: [] });
+  });
+
+  it('passes genres through when present', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ image: DZ_PIC, genres: ['Rock', 'Metal'] }));
+    expect(await fetchDeezerArtistData('Witch Club Satan', '542142182')).toEqual({ image: DZ_PIC, genres: ['Rock', 'Metal'] });
+  });
+
+  it('defaults genres to [] when the resolver response predates the field', async () => {
+    // Simulates a pre-genres cached /v1/artist response (no `genres` key at all).
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ image: DZ_PIC }));
+    expect(await fetchDeezerArtistData('X', null)).toEqual({ image: DZ_PIC, genres: [] });
   });
 
   it('surfaces 429 so the throttler can back off', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false, status: 429, headers: { get: h => (h === 'retry-after' ? '12' : null) },
     });
-    expect(await fetchDeezerArtistImage('X', null)).toEqual({ _error: 429, _retryAfter: 12 });
+    expect(await fetchDeezerArtistData('X', null)).toEqual({ _error: 429, _retryAfter: 12 });
   });
 
   it('returns null on other errors and on network failure', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 403 });
-    expect(await fetchDeezerArtistImage('X', null)).toBeNull();
+    expect(await fetchDeezerArtistData('X', null)).toBeNull();
 
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
-    expect(await fetchDeezerArtistImage('X', null)).toBeNull();
+    expect(await fetchDeezerArtistData('X', null)).toBeNull();
   });
 });
 

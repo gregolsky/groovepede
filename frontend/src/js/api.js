@@ -131,6 +131,30 @@ export function parseMbRelease(data, sourceUrl, service) {
   };
 }
 
+/**
+ * Genres for an already-known MusicBrainz release. MB's `/url` lookup (used
+ * to find the release in the first place) doesn't support `inc=genres` — only
+ * relationship includes — so this is a second, separate request. Only called
+ * for records MusicBrainz itself resolved (Odesli already failed on them), so
+ * it's not a cost paid on every album. Runs inside the same throttled slot as
+ * the release lookup that found `mbid` (see resolveAlbumMusicBrainz) rather
+ * than taking its own throttles.musicbrainz.run() — nesting a second call
+ * into that per-service throttle would queue behind itself and deadlock,
+ * since only one operation runs through it at a time. Degrades to [] on any
+ * failure so a slow/rate-limited genre lookup never fails the resolve itself.
+ */
+async function fetchMbReleaseGenres(mbid) {
+  try {
+    const params = new URLSearchParams({ inc: 'genres', fmt: 'json' });
+    const res = await fetch(`${MUSICBRAINZ_BASE}/release/${mbid}?${params}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data?.genres || []).map(g => g.name).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** Resolve a single URL via MusicBrainz. Returns album record or { _error }. */
 export async function resolveAlbumMusicBrainz(sourceUrl, service) {
   try {
@@ -139,7 +163,9 @@ export async function resolveAlbumMusicBrainz(sourceUrl, service) {
     if (!res.ok) return { _error: res.status };
     const data = await res.json();
     const rec  = parseMbRelease(data, sourceUrl, service);
-    return rec || { _error: 'not-found' };
+    if (!rec) return { _error: 'not-found' };
+    rec.tags = await fetchMbReleaseGenres(rec.id.slice(3)); // strip the 'mb:' prefix back to the raw mbid
+    return rec;
   } catch {
     return { _error: 'network' };
   }
@@ -240,10 +266,26 @@ export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate
     tags = await fetchTagsFromSimilarArtists(primaryArtist);
   }
 
-  if (!tags.length) return;
   const albums = loadAlbums();
-  const album = albums.find(x => x.id === albumId);
-  if (album) { album.tags = tags.slice(0, 7); saveAlbums(albums); onUpdate?.(); }
+  const album  = albums.find(x => x.id === albumId);
+
+  // Last.fm coverage thins out fast for obscure artists. Deezer's own (coarser)
+  // genre labels fill that gap — but only when Last.fm came up thin, so a
+  // well-tagged mainstream album isn't diluted with broad Deezer categories.
+  const deezerId = album ? deezerAlbumId(album) : null;
+  if (tags.length < 3 && deezerId) {
+    const deezerData   = await fetchDeezerArtistData(primaryArtist, deezerId);
+    const deezerGenres = deezerData?.genres?.length
+      ? cleanTags(deezerData.genres.map(name => ({ name })), primaryArtist)
+      : [];
+    const seenTags = new Set(tags);
+    for (const g of deezerGenres) if (!seenTags.has(g)) { tags.push(g); seenTags.add(g); }
+  }
+
+  if (!tags.length || !album) return;
+  album.tags = tags.slice(0, 7);
+  saveAlbums(albums);
+  onUpdate?.();
 }
 
 // ── Last.fm ───────────────────────────────────────────────────────────────────
@@ -266,24 +308,72 @@ function lfmGet(params) {
 
 export async function fetchLastfmAlbum(artist, album) {
   const data = await lfmGet({ method: 'album.getinfo', artist, album, autocorrect: '1' });
-  const tags = cleanTags(asArray(data?.album?.tags?.tag).slice(0, 5));
+  const tags = cleanTags(asArray(data?.album?.tags?.tag).slice(0, 5), artist);
   return { tags };
 }
 
 const BIO_MAX_CHARS = 900;
 
-const YEAR_RE = /^\d{4}s?$/;
-const JUNK_TAGS = new Set(['seen live', 'favorites', 'favourite', 'under 2000 listeners']);
+// 4-digit years ("1990") and 2-digit decades ("90s") are both common Last.fm
+// crowd tags and neither is a genre.
+const YEAR_RE = /^\d{2,4}s?$/;
 
-function cleanTags(rawTags) {
-  return rawTags
-    .map(t => t.name.toLowerCase())
-    .filter(t => t.length > 1 && t.length <= 25 && !YEAR_RE.test(t) && !JUNK_TAGS.has(t));
+// Crowd-tag noise that isn't a genre: possession/format tags and bare
+// opinion tags. Not exhaustive by design — extend as more noise turns up.
+const JUNK_TAGS = new Set([
+  'seen live', 'favorites', 'favourite', 'under 2000 listeners',
+  'albums i own', 'vinyl', 'cd', 'digital', 'owned', 'wishlist',
+  'awesome', 'amazing', 'love', 'favourite song',
+]);
+
+// Near-duplicate spellings Last.fm's crowd tagging produces often enough to
+// be worth collapsing into one canonical form before dedup. Not a general
+// genre-taxonomy normalizer — just the handful of variants seen in practice.
+const CANON_MAP = {
+  'hip hop':     'hip-hop',
+  'hiphop':      'hip-hop',
+  'lofi':        'lo-fi',
+  'lo fi':       'lo-fi',
+  'synthpop':    'synth-pop',
+  'postpunk':    'post-punk',
+  'post punk':   'post-punk',
+  'postrock':    'post-rock',
+  'drum n bass': 'drum and bass',
+  'dnb':         'drum and bass',
+  'd&b':         'drum and bass',
+};
+
+function normalizeForCompare(s) {
+  return s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+/**
+ * Lowercase, canonicalize near-duplicate spellings, drop junk/year tags and
+ * duplicates, and drop a tag that's just the artist's own name (Last.fm
+ * frequently self-tags an artist). `artistName` is the artist these specific
+ * raw tags came from — the primary artist for fetchArtistTags/
+ * fetchLastfmAlbum, or each similar artist in fetchTagsFromSimilarArtists.
+ */
+export function cleanTags(rawTags, artistName) {
+  const artistNorm = artistName ? normalizeForCompare(artistName) : null;
+  const seen = new Set();
+  const out = [];
+  for (const raw of rawTags) {
+    let t = raw.name.toLowerCase();
+    t = CANON_MAP[t] || t;
+    if (t.length <= 1 || t.length > 25) continue;
+    if (YEAR_RE.test(t) || JUNK_TAGS.has(t)) continue;
+    if (artistNorm && normalizeForCompare(t) === artistNorm) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
 }
 
 async function fetchArtistTags(artist) {
   const data = await lfmGet({ method: 'artist.gettoptags', artist, autocorrect: '1' });
-  return cleanTags(asArray(data?.toptags?.tag).filter(t => t.count >= 5).slice(0, 5));
+  return cleanTags(asArray(data?.toptags?.tag).filter(t => t.count >= 5).slice(0, 5), artist);
 }
 
 async function fetchTagsFromSimilarArtists(artist) {
@@ -293,10 +383,10 @@ async function fetchTagsFromSimilarArtists(artist) {
   const results = await Promise.all(
     simArtists.map(a => lfmGet({ method: 'artist.gettoptags', artist: a.name, autocorrect: '1' }))
   );
-  for (const data of results) {
-    const tags = cleanTags(asArray(data?.toptags?.tag).filter(t => t.count >= 15).slice(0, 5));
+  results.forEach((data, i) => {
+    const tags = cleanTags(asArray(data?.toptags?.tag).filter(t => t.count >= 15).slice(0, 5), simArtists[i]?.name);
     for (const name of tags) counts[name] = (counts[name] || 0) + 1;
-  }
+  });
   // Keep tags that appear in at least 2 similar artists
   return Object.entries(counts)
     .filter(([, c]) => c >= 2)
@@ -451,11 +541,14 @@ export async function fetchAudiodbArtistImage(artistName) {
 }
 
 /**
- * Deezer artist image via our resolver. `albumId` (Deezer's own album id, which
- * Odesli hands us for free in links.deezer) makes the lookup exact; without it
- * the resolver falls back to a strict name match.
+ * Deezer artist image + genres via our resolver, in a single call. `albumId`
+ * (Deezer's own album id, which Odesli hands us for free in links.deezer)
+ * makes the lookup exact; without it the resolver falls back to a strict name
+ * match and returns no genres (Deezer's search endpoint doesn't carry them).
+ * Returns `{ image: string|null, genres: string[] }`, a rate-limit error
+ * object (`{ _error: 429, ... }`), or `null` on failure.
  */
-export async function fetchDeezerArtistImage(artistName, albumId) {
+export async function fetchDeezerArtistData(artistName, albumId) {
   return throttles.deezer.run(async () => {
     try {
       const params = new URLSearchParams({ name: artistName });
@@ -467,7 +560,7 @@ export async function fetchDeezerArtistImage(artistName, albumId) {
       });
       if (!res.ok) return res.status === 429 ? rateLimitError(res) : null;
       const data = await res.json();
-      return isBlankImage(data?.image) ? null : data.image;
+      return { image: isBlankImage(data?.image) ? null : data.image, genres: data?.genres || [] };
     } catch { return null; }
   });
 }
@@ -489,6 +582,6 @@ export async function fetchArtistImage(album) {
   const fromAudiodb = await fetchAudiodbArtistImage(artist);
   if (fromAudiodb) return fromAudiodb;
 
-  const fromDeezer = await fetchDeezerArtistImage(artist, deezerAlbumId(album));
-  return typeof fromDeezer === 'string' ? fromDeezer : null;
+  const fromDeezer = await fetchDeezerArtistData(artist, deezerAlbumId(album));
+  return typeof fromDeezer?.image === 'string' ? fromDeezer.image : null;
 }

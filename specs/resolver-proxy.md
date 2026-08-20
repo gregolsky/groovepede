@@ -65,8 +65,13 @@ optional Deezer `albumId`.
 **Required header:** `x-gp-token: <ts>.<base64url-sig>` (ECDSA-P256; 5-minute
 window; bound to the URL, or to `artist:<name>|<albumId>`)  
 **Response shape:** verbatim Odesli JSON on success; `{ "_error": <status> }` on
-failure. `/v1/artist` returns `{ image: string|null }` — a URL only, never image
-bytes.  
+failure. `/v1/artist` returns `{ image: string|null, genres: string[] }` — image
+is a URL only, never image bytes; `genres` comes from the same Deezer
+`/album/{albumId}` lookup already made for the image (Deezer's own genre
+labels, only populated when `albumId` was supplied and matched — otherwise
+`[]`). Cache entries written before this field existed (30-day TTL) return
+without a `genres` key at all — callers must treat it as optional, not assume
+presence.  
 **CORS:** explicit origin allowlist —
 `https://groovepede.gregolsky.pl` plus `http://localhost:5173` for dev,
 extendable via `ALLOWED_ORIGINS`. Never `*`.
@@ -130,7 +135,7 @@ direct `curl` carrying a valid token. See `backend/README.md` § Security postur
   GitHub Actions secret for CI). Generate the pair with `cd backend && make keygen`.
 - `frontend/src/js/sign.js` — `signRequestToken(payload)` returns
   `"<ts>.<base64url(ECDSA-SHA256 over '${ts}\n${payload}')>"`.
-- `frontend/src/js/api.js` — `resolveAlbum` and `fetchDeezerArtistImage` are the
+- `frontend/src/js/api.js` — `resolveAlbum` and `fetchDeezerArtistData` are the
   only callers; every add path funnels through `resolveAlbum`.
 
 ---

@@ -34,7 +34,7 @@ Universal album listening queue. Users paste links from any supported music serv
   artist:        string,
   cover:         string | null,
   year:          string | null,
-  tags:          string[],  // Last.fm genre tags
+  tags:          string[],  // genre tags — primarily Last.fm; Deezer/MusicBrainz genres fill in when Last.fm is thin
   addedAt:       string,    // ISO 8601
 
   links: {                  // populated from Odesli linksByPlatform

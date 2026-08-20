@@ -233,12 +233,25 @@ test('artistRequest: albumId path is exact — no search call is made', async ()
     token: artistToken('Witch Club Satan', '542142182'), cache: noCache, fetchImpl,
   });
   assert.equal(r.statusCode, 200);
-  assert.deepEqual(r.body, { image: PIC });
+  assert.deepEqual(r.body, { image: PIC, genres: [] }); // response has no genres field — defaults to []
   assert.equal(calls.length, 1);
   assert.match(calls[0], /\/album\/542142182$/);
 });
 
-test('artistRequest: falls back to strict search when the album lookup yields nothing', async () => {
+test('artistRequest: returns genres from the same Deezer album response used for the image', async () => {
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    json: async () => ({ artist: { picture_xl: PIC }, genres: { data: [{ name: 'Rock' }, { name: 'Alternative' }] } }),
+  });
+  const r = await artistRequest({
+    method: 'GET', origin: '', name: 'Radiohead', albumId: '302127',
+    token: artistToken('Radiohead', '302127'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { image: PIC, genres: ['Rock', 'Alternative'] });
+});
+
+test('artistRequest: falls back to strict search when the album lookup yields nothing (Stage 2 has no genres)', async () => {
   const calls = [];
   const fetchImpl = async (url) => {
     calls.push(url);
@@ -250,11 +263,11 @@ test('artistRequest: falls back to strict search when the album lookup yields no
     token: artistToken('Hamulec', '1'), cache: noCache, fetchImpl,
   });
   assert.equal(r.statusCode, 200);
-  assert.deepEqual(r.body, { image: PIC });
+  assert.deepEqual(r.body, { image: PIC, genres: [] });
   assert.equal(calls.length, 2);
 });
 
-test('artistRequest: no match → image null, and the negative is cached', async () => {
+test('artistRequest: no match → image null, and the negative is cached (with empty genres)', async () => {
   let putKey = null, putBody = null;
   const cache = { get: async () => null, put: async (k, b) => { putKey = k; putBody = b; } };
   const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ name: 'Black Bomb A', picture_xl: PIC }] }) });
@@ -263,12 +276,14 @@ test('artistRequest: no match → image null, and the negative is cached', async
     token: artistToken('Black Limbo'), cache, fetchImpl,
   });
   assert.equal(r.statusCode, 200);
-  assert.deepEqual(r.body, { image: null });
+  assert.deepEqual(r.body, { image: null, genres: [] });
   assert.equal(putKey, 'artist:black limbo');
-  assert.deepEqual(putBody, { image: null });
+  assert.deepEqual(putBody, { image: null, genres: [] });
 });
 
-test('artistRequest: cache hit short-circuits the Deezer call', async () => {
+test('artistRequest: cache hit short-circuits the Deezer call, incl. a pre-genres cached entry', async () => {
+  // Simulates an entry cached before the genres field existed (30-day TTL) —
+  // it must be returned as-is, with no genres key, not backfilled or crashed on.
   const cache = { get: async () => ({ image: PIC }), put: async () => { throw new Error('no put on hit'); } };
   const r = await artistRequest({
     method: 'GET', origin: '', name: 'Bölzer', albumId: '',

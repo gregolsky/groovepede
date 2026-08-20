@@ -321,9 +321,13 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
   }
 
   const opts = { headers: { 'User-Agent': UA, 'Accept': 'application/json' } };
-  let image = null;
+  let image  = null;
+  let genres = [];
 
-  // Stage 1 — exact, via the Deezer album id.
+  // Stage 1 — exact, via the Deezer album id. Genres ride along for free:
+  // this is the same /album/{id} response already being fetched for the
+  // artist image, and Deezer includes genres.data[].name on it. Stage 2
+  // (search/artist) has no genre data, so genres stay [] unless Stage 1 ran.
   if (albumId) {
     try {
       const res = await fetchImpl(`${DEEZER_BASE}/album/${albumId}`, opts);
@@ -331,6 +335,7 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
         const data = await res.json();
         const pic  = data?.artist?.picture_xl || data?.artist?.picture_big || null;
         if (!isBlankArtistImage(pic)) image = pic;
+        genres = (data?.genres?.data || []).map(g => g.name).filter(Boolean);
       }
     } catch { /* fall through to search */ }
   }
@@ -349,7 +354,7 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
     }
   }
 
-  const body = { image: image || null };
+  const body = { image: image || null, genres };
 
   // Cache negatives too — an artist Deezer doesn't have won't appear next week
   // either, and re-asking on every explore would be pure waste.
