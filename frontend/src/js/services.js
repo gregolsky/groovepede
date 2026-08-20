@@ -59,7 +59,7 @@ export const SERVICES = [
   {
     slug: 'amazon',
     label: 'Amazon Music',
-    hosts: ['music.amazon.com'],
+    hosts: ['music.amazon.com', 'music.amazon.co.uk', 'music.amazon.de', 'music.amazon.fr', 'music.amazon.co.jp'],
     albumMatch: (url) => /\/albums\//.test(url),
     nonAlbumError: () => null,
     odesliKeys: ['amazonMusic'],

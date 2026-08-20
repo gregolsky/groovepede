@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum, filterAlbums } from './storage.js';
+import { SERVICES } from './services.js';
 
 describe('filterAlbums', () => {
   const albums = [
@@ -106,6 +107,26 @@ describe('parseMusicLink', () => {
     expect(r.error).toMatch(/podcast/i);
     expect(r.url).toBeUndefined();
   });
+  it('rejects Spotify artist URI', () => {
+    const r = parseMusicLink('spotify:artist:0OdUWJ0sBjDrqHygGUXeCF');
+    expect(r.error).toMatch(/artist/i);
+    expect(r.url).toBeUndefined();
+  });
+  it('rejects Spotify track URI', () => {
+    const r = parseMusicLink('spotify:track:11dFghVXANMlKmJXsNCbNl');
+    expect(r.error).toMatch(/track/i);
+    expect(r.url).toBeUndefined();
+  });
+  it('rejects Spotify playlist URI', () => {
+    const r = parseMusicLink('spotify:playlist:37i9dQZF1DXcBWIGoYBM5M');
+    expect(r.error).toMatch(/playlist/i);
+    expect(r.url).toBeUndefined();
+  });
+  it('rejects Spotify show URI', () => {
+    const r = parseMusicLink('spotify:show:2MAi0BvDc6GTFvKFPXnkCL');
+    expect(r.error).toBeTruthy();
+    expect(r.url).toBeUndefined();
+  });
 
   // ── Apple Music ───────────────────────────────────────────────────────────────
   it('accepts Apple Music album URL', () => {
@@ -113,6 +134,21 @@ describe('parseMusicLink', () => {
     expect(r.service).toBe('apple');
     expect(r.url).toBe('https://music.apple.com/us/album/ok-computer/1097861328');
     expect(r.error).toBeUndefined();
+  });
+  it('rejects Apple Music track URL (?i= param) with track error', () => {
+    const r = parseMusicLink('https://music.apple.com/us/album/ok-computer/1097861328?i=1097861624');
+    expect(r.error).toMatch(/track/i);
+    expect(r.url).toBeUndefined();
+  });
+  it('rejects Apple Music artist URL with artist error', () => {
+    const r = parseMusicLink('https://music.apple.com/us/artist/radiohead/657515');
+    expect(r.error).toMatch(/artist/i);
+    expect(r.url).toBeUndefined();
+  });
+  it('rejects Apple Music playlist URL with playlist error', () => {
+    const r = parseMusicLink('https://music.apple.com/us/playlist/hot-hits/pl.abc123');
+    expect(r.error).toMatch(/playlist/i);
+    expect(r.url).toBeUndefined();
   });
 
   // ── YouTube / YouTube Music ───────────────────────────────────────────────────
@@ -131,12 +167,22 @@ describe('parseMusicLink', () => {
     expect(r.error).toMatch(/track/i);
     expect(r.url).toBeUndefined();
   });
+  it('rejects youtu.be short link with track error', () => {
+    const r = parseMusicLink('https://youtu.be/abc123');
+    expect(r.error).toMatch(/track/i);
+    expect(r.url).toBeUndefined();
+  });
 
   // ── Deezer ────────────────────────────────────────────────────────────────────
   it('accepts Deezer album URL', () => {
     const r = parseMusicLink('https://www.deezer.com/album/302127');
     expect(r.service).toBe('deezer');
     expect(r.error).toBeUndefined();
+  });
+  it('rejects Deezer track URL', () => {
+    const r = parseMusicLink('https://www.deezer.com/track/1234567');
+    expect(r.error).toBeTruthy();
+    expect(r.url).toBeUndefined();
   });
 
   // ── Tidal ─────────────────────────────────────────────────────────────────────
@@ -149,6 +195,74 @@ describe('parseMusicLink', () => {
     const r = parseMusicLink('https://listen.tidal.com/album/26026362');
     expect(r.service).toBe('tidal');
     expect(r.error).toBeUndefined();
+  });
+  it('rejects Tidal track URL', () => {
+    const r = parseMusicLink('https://tidal.com/track/26026363');
+    expect(r.error).toBeTruthy();
+    expect(r.url).toBeUndefined();
+  });
+
+  // ── Amazon Music ──────────────────────────────────────────────────────────────
+  it('accepts Amazon Music album URL', () => {
+    const r = parseMusicLink('https://music.amazon.com/albums/B08XYZ1234');
+    expect(r.service).toBe('amazon');
+    expect(r.error).toBeUndefined();
+  });
+  it('rejects Amazon Music track URL', () => {
+    const r = parseMusicLink('https://music.amazon.com/tracks/B08XYZ5678');
+    expect(r.error).toBeTruthy();
+    expect(r.url).toBeUndefined();
+  });
+  it('accepts Amazon Music regional-domain album URL', () => {
+    const r = parseMusicLink('https://music.amazon.co.uk/albums/B08XYZ1234');
+    expect(r.service).toBe('amazon');
+    expect(r.error).toBeUndefined();
+  });
+
+  // ── Pandora ───────────────────────────────────────────────────────────────────
+  it('accepts Pandora album URL', () => {
+    const r = parseMusicLink('https://www.pandora.com/album/some-album/AL1234567890');
+    expect(r.service).toBe('pandora');
+    expect(r.error).toBeUndefined();
+  });
+  it('rejects Pandora artist URL', () => {
+    const r = parseMusicLink('https://www.pandora.com/artist/some-artist/AR1234567890');
+    expect(r.error).toBeTruthy();
+    expect(r.url).toBeUndefined();
+  });
+
+  // ── SoundCloud ────────────────────────────────────────────────────────────────
+  it('accepts SoundCloud sets (album) URL', () => {
+    const r = parseMusicLink('https://soundcloud.com/artist-name/sets/album-name');
+    expect(r.service).toBe('soundcloud');
+    expect(r.error).toBeUndefined();
+  });
+  it('rejects SoundCloud track URL (no /sets/)', () => {
+    const r = parseMusicLink('https://soundcloud.com/artist-name/track-name');
+    expect(r.error).toBeTruthy();
+    expect(r.url).toBeUndefined();
+  });
+
+  // ── Every registered service has at least one accepting fixture ────────────────
+  // Backstop for the explicit cases above: fails loudly if a service is added to
+  // SERVICES without ever being exercised here, instead of shipping untested.
+  it('accepts a representative URL for every service in the registry', () => {
+    const fixtures = {
+      spotify:    'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy',
+      apple:      'https://music.apple.com/us/album/ok-computer/1097861328',
+      youtube:    'https://music.youtube.com/playlist?list=OLAK5uy_abc123',
+      deezer:     'https://www.deezer.com/album/302127',
+      tidal:      'https://tidal.com/album/26026362',
+      amazon:     'https://music.amazon.com/albums/B08XYZ1234',
+      pandora:    'https://www.pandora.com/album/some-album/AL1234567890',
+      soundcloud: 'https://soundcloud.com/artist-name/sets/album-name',
+    };
+    for (const svc of SERVICES) {
+      expect(fixtures, `no fixture URL for service "${svc.slug}"`).toHaveProperty(svc.slug);
+      const r = parseMusicLink(fixtures[svc.slug]);
+      expect(r.service, `${svc.slug} fixture did not resolve to itself`).toBe(svc.slug);
+      expect(r.error, `${svc.slug} fixture was unexpectedly rejected`).toBeUndefined();
+    }
   });
 
   // ── Blocked sources ───────────────────────────────────────────────────────────
@@ -455,6 +569,36 @@ describe('serializeBackup / parseBackup', () => {
     const result = parseBackup(v3);
     expect(result.albums.length).toBe(1);
     expect(result.albums[0].sourceUrl).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+  });
+
+  it('strips _pending and _error flags from exported records', () => {
+    const withTransientFlags = { ...fullAlbum, _pending: true, _error: 'network error' };
+    const data = JSON.parse(serializeBackup([withTransientFlags], 0));
+    expect(data.albums[0]._pending).toBeUndefined();
+    expect(data.albums[0]._error).toBeUndefined();
+    expect(data.albums[0].title).toBe('OK Computer'); // everything else survives
+  });
+
+  it('empty queue exports and round-trips to an empty album list', () => {
+    const text = serializeBackup([], 0);
+    const data = JSON.parse(text);
+    expect(data.albums).toEqual([]);
+    expect(data.done).toBe(0);
+    const result = parseBackup(text);
+    expect(result.albums).toEqual([]);
+    expect(result.done).toBe(0);
+  });
+
+  it('falls back to spotify when service is absent and sourceUrl matches no known service', () => {
+    const v4 = JSON.stringify({
+      version: 4,
+      exportedAt: '2024-01-01T00:00:00.000Z',
+      albums: [{ sourceUrl: 'https://example.com/foo', addedAt: '2024-01-01T00:00:00.000Z' }],
+      done: 0,
+    });
+    const result = parseBackup(v4);
+    expect(result.albums[0]._pending).toBe(true);
+    expect(result.albums[0].service).toBe('spotify');
   });
 });
 
