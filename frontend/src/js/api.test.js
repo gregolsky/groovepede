@@ -12,7 +12,7 @@ const coolingThrottle = () => ({ run: fn => fn(), coolingDown: () => true });
 /** Reset throttles to no-op before each test so pacing doesn't bleed between tests. */
 function resetThrottles() {
   _setThrottles({
-    odesli:      noopThrottle(),
+    resolver:    noopThrottle(),
     musicbrainz: noopThrottle(),
     lastfm:      noopThrottle(),
     spotify:     noopThrottle(),
@@ -23,43 +23,19 @@ function resetThrottles() {
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
-const ODESLI_RESPONSE = {
-  entityUniqueId: 'SPOTIFY_ALBUM::4aawyAB9vmqN3uQ7FjRGTy',
-  entitiesByUniqueId: {
-    'SPOTIFY_ALBUM::4aawyAB9vmqN3uQ7FjRGTy': {
-      title: 'OK Computer',
-      artistName: 'Radiohead',
-      thumbnailUrl: 'https://example.com/cover.jpg',
-      apiProvider: 'spotify',
-      type: 'album',
-    },
-    'ITUNES_ALBUM::1097861328': {
-      title: 'OK Computer',
-      artistName: 'Radiohead',
-      thumbnailUrl: 'https://example.com/cover2.jpg',
-      apiProvider: 'itunes',
-      type: 'album',
-    },
-  },
-  linksByPlatform: {
-    spotify: {
-      url: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy',
-      nativeAppUriMobile: 'spotify:album:4aawyAB9vmqN3uQ7FjRGTy',
-      nativeAppUriDesktop: 'spotify:album:4aawyAB9vmqN3uQ7FjRGTy',
-      entityUniqueId: 'SPOTIFY_ALBUM::4aawyAB9vmqN3uQ7FjRGTy',
-    },
-    appleMusic: {
-      url: 'https://music.apple.com/us/album/ok-computer/1097861328',
-      nativeAppUriMobile: null,
-      nativeAppUriDesktop: null,
-      entityUniqueId: 'ITUNES_ALBUM::1097861328',
-    },
-    youtube: {
-      url: 'https://www.youtube.com/playlist?list=OLAK5uy_abc',
-      nativeAppUriMobile: null,
-      nativeAppUriDesktop: null,
-      entityUniqueId: 'YOUTUBE_ALBUM::abc',
-    },
+// Shape returned by the resolver's /v1/album (backend/resolver-core.mjs) —
+// already normalized server-side, so resolveAlbum just adopts it verbatim.
+const RESOLVER_RESPONSE = {
+  id: 'spotify:4aawyAB9vmqN3uQ7FjRGTy',
+  service: 'spotify',
+  title: 'OK Computer',
+  artist: 'Radiohead',
+  cover: 'https://example.com/cover.jpg',
+  year: '1997',
+  tags: ['alternative rock'],
+  links: {
+    spotify: { url: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy', nativeUri: 'spotify:album:4aawyAB9vmqN3uQ7FjRGTy' },
+    apple:   { url: 'https://music.apple.com/us/album/ok-computer/1097861328' },
   },
 };
 
@@ -85,43 +61,69 @@ describe('resolveAlbum', () => {
     resetThrottles();
   });
 
-  it('returns album record with title, artist, cover from primary entity', async () => {
+  it('returns album record with title, artist, cover, year, tags from the resolver', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
-      json: async () => ODESLI_RESPONSE,
+      json: async () => RESOLVER_RESPONSE,
     });
     const result = await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(result.title).toBe('OK Computer');
     expect(result.artist).toBe('Radiohead');
     expect(result.cover).toBe('https://example.com/cover.jpg');
+    expect(result.year).toBe('1997');
+    expect(result.tags).toEqual(['alternative rock']);
     expect(result._error).toBeUndefined();
   });
 
-  it('uses Odesli entityUniqueId as album id', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+  it('calls the resolver\'s /v1/album endpoint, not the retired /v1/resolve, with no userCountry param', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
-      json: async () => ODESLI_RESPONSE,
+      json: async () => RESOLVER_RESPONSE,
     });
-    const result = await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
-    expect(result.id).toBe('SPOTIFY_ALBUM::4aawyAB9vmqN3uQ7FjRGTy');
+    await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const calledUrl = new URL(fetchSpy.mock.calls[0][0]);
+    expect(calledUrl.pathname).toBe('/v1/album');
+    expect(calledUrl.pathname).not.toBe('/v1/resolve');
+    expect(calledUrl.searchParams.has('userCountry')).toBe(false);
   });
 
-  it('populates links map from linksByPlatform', async () => {
+  it('uses the resolver-assigned <service>:<id> as album id', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
-      json: async () => ODESLI_RESPONSE,
+      json: async () => RESOLVER_RESPONSE,
+    });
+    const result = await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(result.id).toBe('spotify:4aawyAB9vmqN3uQ7FjRGTy');
+  });
+
+  it('adopts the links map from the resolver verbatim', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => RESOLVER_RESPONSE,
     });
     const result = await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(result.links.spotify.url).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(result.links.spotify.nativeUri).toBe('spotify:album:4aawyAB9vmqN3uQ7FjRGTy');
     expect(result.links.apple.url).toBe('https://music.apple.com/us/album/ok-computer/1097861328');
-    expect(result.links.youtube.url).toBe('https://www.youtube.com/playlist?list=OLAK5uy_abc');
+  });
+
+  it('defaults links/tags to empty when the resolver omits them', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: 'spotify:x', title: 'X', artist: 'Y' }),
+    });
+    const result = await resolveAlbum('https://open.spotify.com/album/x');
+    expect(result.links).toEqual({});
+    expect(result.tags).toEqual([]);
+    expect(result.cover).toBeNull();
+    expect(result.year).toBeNull();
   });
 
   it('sets firstTrackUri to null (resolved by sync later)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
-      json: async () => ODESLI_RESPONSE,
+      json: async () => RESOLVER_RESPONSE,
     });
     const result = await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(result.firstTrackUri).toBeNull();
@@ -131,19 +133,18 @@ describe('resolveAlbum', () => {
     const inputUrl = 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy';
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
-      json: async () => ODESLI_RESPONSE,
+      json: async () => RESOLVER_RESPONSE,
     });
     const result = await resolveAlbum(inputUrl);
     expect(result.sourceUrl).toBe(inputUrl);
   });
 
-  it('initializes tags as empty array and addedAt as ISO string', async () => {
+  it('sets addedAt as an ISO string', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
-      json: async () => ODESLI_RESPONSE,
+      json: async () => RESOLVER_RESPONSE,
     });
     const result = await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
-    expect(result.tags).toEqual([]);
     expect(typeof result.addedAt).toBe('string');
     expect(() => new Date(result.addedAt)).not.toThrow();
   });
@@ -286,25 +287,25 @@ describe('resolveAlbumMusicBrainz', () => {
 describe('resolveAlbumResilient', () => {
   beforeEach(() => { vi.restoreAllMocks(); resetThrottles(); });
 
-  it('returns Odesli result immediately when Odesli succeeds', async () => {
+  it('returns the resolver result immediately when the resolver succeeds', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true, json: async () => ODESLI_RESPONSE,
+      ok: true, json: async () => RESOLVER_RESPONSE,
     });
     const rec = await resolveAlbumResilient('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(rec.title).toBe('OK Computer');
     expect(rec._error).toBeUndefined();
   });
 
-  it('MusicBrainz is not called when Odesli succeeds', async () => {
+  it('MusicBrainz is not called when the resolver succeeds', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ODESLI_RESPONSE });
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => RESOLVER_RESPONSE });
     await resolveAlbumResilient('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to MusicBrainz when Odesli returns any error', async () => {
+  it('falls back to MusicBrainz when the resolver returns any error', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // Odesli error
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // resolver error
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // MB success
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ genres: [] }) }); // MB genres
     const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
@@ -312,35 +313,35 @@ describe('resolveAlbumResilient', () => {
     expect(rec.id).toMatch(/^mb:/);
   });
 
-  it('falls back to MusicBrainz when Odesli 429s', async () => {
+  it('falls back to MusicBrainz when the resolver 429s', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 }); // Odesli 429
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 }); // resolver 429
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // MB success
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ genres: [] }) }); // MB genres
     const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
     expect(rec.title).toBe('Devil Is Fine');
   });
 
-  it('skips Odesli and goes straight to MusicBrainz when Odesli is cooling down', async () => {
-    _setThrottles({ odesli: coolingThrottle() });
+  it('skips the resolver and goes straight to MusicBrainz when it is cooling down', async () => {
+    _setThrottles({ resolver: coolingThrottle() });
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => MB_RESPONSE }); // MB lookup
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ genres: [] }) }); // MB genres
     const rec = await resolveAlbumResilient('https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', { service: 'spotify' });
     expect(rec.title).toBe('Devil Is Fine');
-    expect(fetchMock).toHaveBeenCalledTimes(2); // Odesli fetch never called; MB lookup + MB genres
+    expect(fetchMock).toHaveBeenCalledTimes(2); // resolver fetch never called; MB lookup + MB genres
   });
 
-  it('returns Odesli error when both Odesli and MusicBrainz fail', async () => {
+  it('returns the resolver error when both the resolver and MusicBrainz fail', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 }); // Odesli 429
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 }); // resolver 429
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // MB fails
     const rec = await resolveAlbumResilient('https://url');
     expect(rec._error).toBe(429);
   });
 
-  it('returns synthetic 429 error when Odesli is cooling and MB also fails', async () => {
-    _setThrottles({ odesli: coolingThrottle() });
+  it('returns synthetic 429 error when the resolver is cooling and MB also fails', async () => {
+    _setThrottles({ resolver: coolingThrottle() });
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // MB fails
     const rec = await resolveAlbumResilient('https://url');
@@ -645,6 +646,34 @@ describe('enrichWithLastfm', () => {
     const album = loadAlbums().find(a => a.id === 'album-1');
     expect(album.tags).toEqual(['post-rock', 'ambient', 'drone']);
     expect(onUpdate).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the album\'s existing resolver-supplied tags, merging Last.fm tags on top instead of overwriting them', async () => {
+    localStorage.setItem('gp_albums', JSON.stringify([{
+      id: 'album-1', sourceUrl: 'https://open.spotify.com/album/x', title: 'OK Computer', artist: 'Radiohead',
+      cover: null, year: null, tags: ['Alternative'], addedAt: '2024-01-01T00:00:00.000Z', links: {},
+    }]));
+    mockFetchSequence([
+      { toptags: { tag: [{ name: 'post-rock', count: 10 }] } },
+      { album: { tags: { tag: [{ name: 'ambient' }] } } },
+    ]);
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
+    const album = loadAlbums().find(a => a.id === 'album-1');
+    expect(album.tags).toEqual(['Alternative', 'post-rock', 'ambient']);
+  });
+
+  it('does not duplicate an existing resolver-supplied tag that Last.fm also returns', async () => {
+    localStorage.setItem('gp_albums', JSON.stringify([{
+      id: 'album-1', sourceUrl: 'https://open.spotify.com/album/x', title: 'OK Computer', artist: 'Radiohead',
+      cover: null, year: null, tags: ['post-rock'], addedAt: '2024-01-01T00:00:00.000Z', links: {},
+    }]));
+    mockFetchSequence([
+      { toptags: { tag: [{ name: 'post-rock', count: 10 }] } },
+      { album: { tags: { tag: [{ name: 'ambient' }] } } },
+    ]);
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
+    const album = loadAlbums().find(a => a.id === 'album-1');
+    expect(album.tags).toEqual(['post-rock', 'ambient']);
   });
 
   it('caps merged tags at 7', async () => {

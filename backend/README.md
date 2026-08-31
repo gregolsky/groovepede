@@ -1,11 +1,18 @@
 # Groovepede Resolver — self-hosted (Raspberry Pi / arm64)
 
-A small Docker Compose stack: a server-side Odesli proxy that fixes the browser
-CORS block, so the PWA can resolve album links. Runs on a home Raspberry Pi
-(arm64) with a free Let's Encrypt certificate.
+A small Docker Compose stack that fetches a pasted album page server-side
+(browsers can't — CORS), extracts `{title, artist, cover, year}` with a small
+per-service routine, and looks up the exact album on the two services with a
+free keyless search API (Deezer, Apple/iTunes) to rebuild cross-service links.
+Runs on a home Raspberry Pi (arm64) with a free Let's Encrypt certificate.
 
-`resolver-core.mjs` owns ECDSA token verification, CORS, host allowlist, and
-the Odesli call; `server.mjs` is the node:http + node:sqlite adapter around it.
+Odesli's public API — what this resolver proxied wholesale until 2026-08 — was
+deprecated (`401 PUBLIC_API_ACCESS_DEPRECATED`); see `resolver-core.mjs`'s
+top-of-file comment and git history for the retired proxy code.
+
+`resolver-core.mjs` owns ECDSA token verification, CORS, host allowlist,
+per-service extraction, and cross-linking; `server.mjs` is the node:http +
+node:sqlite adapter around it.
 
 ## Architecture
 
@@ -16,7 +23,8 @@ Browser (HTTPS, signed x-gp-token)
   → resolver  (node:http, internal-only :8787)
       · ECDSA token verify · host allowlist · CORS
       · SQLite cache (node:sqlite, /data/cache.db)
-  → Odesli API
+  → the pasted album's own service (page fetch + extraction)
+  → Deezer / Apple (free keyless search, cross-service links)
 certbot  → obtains + auto-renews the cert (HTTP-01 webroot)
 ```
 
@@ -39,7 +47,7 @@ published to the host — only nginx exposes ports (80/443).
 ```bash
 cd backend
 cp .env.example .env
-#   edit .env: DOMAIN, LETSENCRYPT_EMAIL, GP_PUBLIC_KEY (+ optional ODESLI_KEY, rate limit)
+#   edit .env: DOMAIN, LETSENCRYPT_EMAIL, GP_PUBLIC_KEY (+ optional rate limit)
 
 # One-time: obtain the Let's Encrypt cert (bootstraps nginx, runs HTTP-01).
 # Test first with --staging to avoid LE rate limits if you're unsure of DNS/ports:
@@ -142,18 +150,18 @@ HTTPS_PORT=4433
 
 Because Let's Encrypt HTTP-01 validates on public **:80** and browsers expect **:443**,
 your router must forward public `80 → HTTP_PORT` and `443 → HTTPS_PORT`. (The PWA's
-`ODESLI_BASE` stays `https://$DOMAIN` with no port — the router handles the mapping.)
+`RESOLVER_BASE` stays `https://$DOMAIN` with no port — the router handles the mapping.)
 
 ## Point the PWA at your Pi
 
-Build the PWA with `ODESLI_BASE` set to your Pi's hostname instead of the AWS edge.
+Build the PWA with `RESOLVER_BASE` set to your Pi's hostname instead of the AWS edge.
 In `src/js/config.js` (or via a build-time override):
 
 ```js
-export const ODESLI_BASE = 'https://pi.example.com';
+export const RESOLVER_BASE = 'https://pi.example.com';
 ```
 
-The path (`/v1/resolve`) and the signed `x-gp-token` header are unchanged, and the
+The path (`/v1/album`) and the signed `x-gp-token` header are unchanged, and the
 private key stays the same (`VITE_GP_PRIVATE_KEY`) — the Pi verifies with the matching
 `GP_PUBLIC_KEY`.
 
@@ -251,7 +259,7 @@ Self-hosting drops CloudFront/WAF/OAC. Compensating controls:
 - **fail2ban** — bans IPs that probe for nonexistent paths (see below).
 - **AI-crawler blocking** — self-identifying training crawlers get `444`.
 - **Host allowlist** in the resolver (SSRF hygiene) — only known music-service hosts
-  are proxied to Odesli.
+  are fetched on the paste-er's behalf.
 - The resolver has **no published host port**; it's reachable only via nginx.
 
 There is **no WAF** (no ModSecurity, no signature matching). The controls above
@@ -268,11 +276,11 @@ Three jails, configured in `fail2ban/jail.d/gp-nginx.conf`:
 | `nginx-botsearch` | built-in wordpress/phpmyadmin patterns | 3 / 24h |
 
 `gp-scanner` bans on *any* 404 rather than a path blocklist. This server has
-exactly two valid paths (`/v1/resolve`, `/healthz`) plus the ACME dir, so
-nothing legitimate ever 404s — a far better signal than a blocklist, and it
-needs no upkeep as scanners change targets. It deliberately does **not** match
-403, since the resolver returns 403 for a failed token check and a real user
-can hit that with clock skew.
+exactly three valid paths (`/v1/album`, `/v1/artist`, `/healthz`) plus the ACME
+dir, so nothing legitimate ever 404s — a far better signal than a blocklist,
+and it needs no upkeep as scanners change targets. It deliberately does **not**
+match 403, since the resolver returns 403 for a failed token check and a real
+user can hit that with clock skew.
 
 > The stock `nginx-botsearch` filter alone is **not** sufficient here: it only
 > matches wordpress/phpmyadmin/webmail paths, and was verified to miss `/.env`
@@ -332,8 +340,8 @@ docker compose down                     # stop (keeps ./data cache + certs)
 ```
 
 The SQLite cache and certs live under `./data/` (git-ignored). Deleting
-`./data/cache.db` just forces re-fetches from Odesli; deleting `./data/certbot`
-means re-running `init-letsencrypt.sh`.
+`./data/cache.db` just forces re-extraction of every album on its next paste;
+deleting `./data/certbot` means re-running `init-letsencrypt.sh`.
 
 ## Local test (no TLS / no DNS)
 
@@ -343,5 +351,5 @@ docker compose run --rm -p 8787:8787 -e DB_PATH=/tmp/cache.db resolver
 curl localhost:8787/healthz             # → {"ok":true}
 # Signed-request smoke: sign a token the same way resolver-core.test.mjs does
 # (see its makeToken helper) against
-# http://localhost:8787/v1/resolve?url=...&userCountry=US with Origin: http://localhost:5173
+# http://localhost:8787/v1/album?url=... with Origin: http://localhost:5173
 ```

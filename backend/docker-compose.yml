@@ -21,11 +21,12 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     image: gp-resolver-pi
     environment:
-      GP_PUBLIC_KEY:   "${GP_PUBLIC_KEY:?set GP_PUBLIC_KEY in .env — from make keygen}"
-      ODESLI_KEY:      "${ODESLI_KEY:-}"
-      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-}"
-      PORT:            "8787"
-      DB_PATH:         /data/cache.db
+      GP_PUBLIC_KEY:         "${GP_PUBLIC_KEY:?set GP_PUBLIC_KEY in .env — from make keygen}"
+      ALLOWED_ORIGINS:       "${ALLOWED_ORIGINS:-}"
+      SPOTIFY_CLIENT_ID:     "${SPOTIFY_CLIENT_ID:-}"
+      SPOTIFY_CLIENT_SECRET: "${SPOTIFY_CLIENT_SECRET:-}"
+      PORT:                  "8787"
+      DB_PATH:               /data/cache.db
     volumes:
       - ./data:/data
     expose:

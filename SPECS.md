@@ -15,11 +15,13 @@ Universal album listening queue. Users paste links from any supported music serv
 | `youtube` | YouTube / YT Music | `music.youtube.com/playlist?list=…`, `youtube.com/playlist?list=…` |
 | `deezer` | Deezer | `deezer.com/album/…` |
 | `tidal` | Tidal | `tidal.com/album/…`, `listen.tidal.com/album/…` |
-| `amazon` | Amazon Music | `music.amazon.com/albums/…` |
 | `pandora` | Pandora | `pandora.com/album/…` |
-| `soundcloud` | SoundCloud | `soundcloud.com/…/sets/…` |
 
-**Blocked at input (with clear error):** Bandcamp, Discogs.
+**Blocked at input (with clear error):** Bandcamp, Discogs, Amazon Music, SoundCloud
+— the last two used to be supported, but neither album page has any
+server-rendered metadata to extract (verified live — pure client-rendered JS
+shells, no og:/JSON-LD, and SoundCloud's oEmbed endpoint 404s outright), so
+the resolver has no way to read them.
 
 ---
 
@@ -27,7 +29,9 @@ Universal album listening queue. Users paste links from any supported music serv
 
 ```js
 {
-  id:            string,    // Odesli entityUniqueId (new records); legacy: Spotify album ID
+  id:            string,    // '<service>:<serviceAlbumId>' (new records), e.g. 'spotify:4aaw…';
+                             // 'mb:<mbid>' when resolved via the MusicBrainz fallback;
+                             // legacy: bare Spotify album ID
   legacyId?:     string,    // old Spotify ID — set by migration on pre-pivot records
   sourceUrl:     string,    // the URL the user originally pasted
   title:         string,
@@ -37,16 +41,18 @@ Universal album listening queue. Users paste links from any supported music serv
   tags:          string[],  // genre tags — primarily Last.fm; Deezer/MusicBrainz genres fill in when Last.fm is thin
   addedAt:       string,    // ISO 8601
 
-  links: {                  // populated from Odesli linksByPlatform
+  links: {                  // EXACT links only, from the resolver's cross-linking (see below).
     spotify?:    { url: string, nativeUri: string | null },
     apple?:      { url: string, nativeUri: string | null },
     youtube?:    { url: string, nativeUri: string | null },
     deezer?:     { url: string, nativeUri: string | null },
     tidal?:      { url: string, nativeUri: string | null },
-    amazon?:     { url: string, nativeUri: string | null },
     pandora?:    { url: string, nativeUri: string | null },
-    soundcloud?: { url: string, nativeUri: string | null },
   },
+  // NOT part of the stored record: best-effort SEARCH links for a service with
+  // no exact entry above are built on the fly by services.js's buildSearchUrl()
+  // at render time (see pickListenTarget in render.js) — never persisted, so
+  // every album retroactively gains them as new services/templates are added.
 
   firstTrackUri?: string,   // spotify:track:<id> — used by sync.js; only set on Spotify-sourced albums
 }
@@ -86,22 +92,28 @@ All keys are defined in `frontend/src/js/config.js`.
 
 ## API integrations
 
-### Odesli / Songlink — via the resolver
+### Resolver (album-page extraction + cross-linking)
 
-The browser never calls Odesli directly: `api.song.link` sends no CORS header for
-our origin. All resolution goes through the self-hosted resolver.
+Odesli's public API was deprecated (2026-08). The browser can't fetch another
+service's album page itself (CORS), so the self-hosted resolver fetches the
+pasted URL server-side, extracts `{title, artist, cover, year}` with a small
+per-service routine, then cross-links to Deezer and Apple/iTunes via their own
+free keyless search APIs.
 
-- **Base**: `https://api.groovepede.gregolsky.pl` (`ODESLI_BASE` in config.js)
-- **Endpoint**: `GET /v1/resolve?url=<encoded>&userCountry=US`
+- **Base**: `https://api.groovepede.gregolsky.pl` (`RESOLVER_BASE` in config.js)
+- **Endpoint**: `GET /v1/album?url=<encoded>`
 - **Auth**: `x-gp-token`, an ECDSA-P256 signature over `"<ts>\n<url>"` (see `sign.js`)
-- **Odesli API key**: server-side only (`ODESLI_KEY` in `backend/.env`)
 - **Caching**: 60 days in the resolver's SQLite cache; resolved records then live
   in localStorage
-- **Returns**: `{ entityUniqueId, entitiesByUniqueId, linksByPlatform }` — see `resolveAlbum()` in `api.js`
-- **Error handling**: non-200 → `{ _error: statusCode }`; network failure → `{ _error: 'network' }`
+- **Returns**: `{ id, service, title, artist, cover, year, tags, links }` — see
+  `resolveAlbum()` in `api.js`, which adopts the response near-verbatim
+- **Error handling**: non-200 → `{ _error: statusCode }`; network failure →
+  `{ _error: 'network' }`; a fetch that succeeded but found no album (markup
+  changed, or not really an album page) → `{ _error: 422 }`, non-retryable
 - **Fallback**: `resolveAlbumResilient()` falls back to MusicBrainz (client-side,
-  throttled) when Odesli errors or is in rate-limit cooldown
-- See `specs/resolver-proxy.md` and `backend/README.md`
+  throttled) when the resolver errors or is in rate-limit cooldown — used on
+  every interactive resolve (paste, share, refresh), not just the pending-retry loop
+- See `backend/resolver-core.mjs` and `backend/README.md`
 
 ### Last.fm
 
@@ -151,14 +163,20 @@ The visible album list, after the tag filter and the search box. Single source o
 truth: every `data-index` in the rendered markup is an index into this list, and
 `app.js`'s click handlers resolve those indices against the same function.
 
-### `pickListenUrl(album, prefService)` — `render.js`
+### `pickListenTarget(album, prefService)` / `pickListenUrl(album, prefService)` — `render.js`
 
-Resolves the best URL to open for Listen, given the user's preferred service:
-1. `album.links[prefService]?.nativeUri` (preferred: opens native app)
-2. `album.links[prefService]?.url` (web fallback for preferred)
-3. First available `nativeUri` across all services
-4. First available `url` across all services
-5. `album.sourceUrl` (last resort)
+Resolves the best `{ url, service, exact }` to open for Listen, given the
+user's preferred service. Exact links (from `album.links`) always win over a
+best-effort search link built on the fly (`buildSearchUrl()` in `services.js`):
+1. `album.links[prefService]?.nativeUri` (preferred, exact: opens native app)
+2. `album.links[prefService]?.url` (preferred, exact: web fallback)
+3. First available `nativeUri` across all services (any, exact)
+4. First available `url` across all services (any, exact)
+5. Search link on the preferred service, if `artist` + `title` are known (`exact: false`)
+6. Search link on a fallback service, if the preferred slug isn't registered (`exact: false`)
+7. `album.sourceUrl` (last resort — always `exact: true`, it's a real page)
+
+`pickListenUrl` returns just the `url`.
 
 ### `serviceLabel(service)` — `services.js`
 
@@ -171,9 +189,9 @@ Re-exported from `render.js` for convenience.
 
 ```
 user input
-  → parseMusicLink()       // validate + normalize
-  → resolveAlbum(url)      // resolver: cross-service links + metadata
-  → saveResolvedAlbum()    // dedupe by id, persist, schedule sync, enrich
+  → parseMusicLink()             // validate + normalize
+  → resolveAlbumResilient(url)   // resolver, falling back to MusicBrainz on any error
+  → saveResolvedAlbum()          // dedupe by id, persist, schedule sync, enrich
       → attachFirstTrackUri()  // Spotify only, when logged in
       → enrichWithLastfm()     // async: fill tags
   → rerender()
@@ -187,9 +205,15 @@ pending stub is saved instead and retried by `resolvePending()` on next open.
 
 ## Listen button
 
-- Label: `Listen on <serviceLabel(prefService)>` (or `Listen` if no preferred service match)
-- `data-url` attribute: result of `pickListenUrl(album, prefService)`
-- Preferred service set in profile overlay; persisted to `gp_pref_service`
+Three states, via `renderListenBtn()` in `render.js`:
+1. Exact link on the preferred service → `Listen` (or `Listen on <service>` where shown)
+2. Exact link on another service → `Listen on <that service>` (never opens silently)
+3. No exact link anywhere, but artist+title are known → `Find on <service>`
+   (opens a search, styled and labelled distinctly from the exact states)
+4. Nothing at all → disabled, `No link yet`
+
+`data-url` attribute: result of `pickListenUrl(album, prefService)`.
+Preferred service set in profile overlay; persisted to `gp_pref_service`.
 
 ---
 

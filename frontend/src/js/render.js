@@ -1,7 +1,7 @@
 import { hasSession } from './auth.js';
 import { loadAlbums, loadDone, filterAlbums } from './storage.js';
 import { isSyncEnabled, getSyncStatus, getPlaylistId } from './sync.js';
-import { SERVICES, serviceLabel, serviceListText, joinList } from './services.js';
+import { SERVICES, serviceLabel, serviceListText, joinList, buildSearchUrl } from './services.js';
 
 const SPOTIFY_ICON = 'M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.8 3.3-7.3 1.7-20-12.2-45.2-15-74.9-8.2-2.9.7-5.7-1.1-6.4-4-.7-2.9 1.1-5.7 4-6.4 32.5-7.4 60.4-4.2 82.9 9.5 2.5 1.6 3.3 4.9 1.7 7.4zm10.3-22.8c-2 3.1-6.1 4.1-9.2 2.1-22.9-14.1-57.8-18.1-84.9-9.9-3.4 1-7.1-.9-8.2-4.3-1-3.4.9-7.1 4.3-8.2 31-9.4 69.5-4.9 95.8 11.2 3.1 2 4.1 6.1 2.2 9.1zm.9-23.7C108.4 59 63.5 57.6 37.8 65.5c-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.7-9 79.1-7.3 110.3 11 3.7 2.2 4.9 6.9 2.7 10.5-2.1 3.7-6.9 4.9-10.5 2.7z';
 
@@ -19,6 +19,7 @@ function lastfmIcon(w, h) {
 const CHECKMARK_SVG = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>`;
 const PLAY_SVG      = `<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>`;
 const X_SVG         = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>`;
+const SEARCH_SVG    = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/></svg>`;
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
@@ -84,28 +85,55 @@ export { serviceLabel };
  * user's preferred service the button names the one it will open instead,
  * rather than silently sending them somewhere unexpected.
  *
- * @returns {{ url: string|null, service: string|null }} — service is null when
- *   falling back to the originally pasted URL of an unknown service.
+ * Exact links (from the resolver — a real album page) always win over a
+ * search link (a best-effort "search this service" URL built client-side from
+ * artist+title, for a service the resolver couldn't cross-link to). `exact`
+ * tells the caller which kind it got, since a search result isn't guaranteed
+ * to be the right album the way an exact link is.
+ *
+ * @returns {{ url: string|null, service: string|null, exact: boolean }}
+ *   service is null only when falling back to a pasted URL of unknown service.
  */
 export function pickListenTarget(album, prefService) {
   const links = album.links || {};
 
-  // 1. preferred service nativeUri
-  if (links[prefService]?.nativeUri) return { url: links[prefService].nativeUri, service: prefService };
-  // 2. preferred service web url
-  if (links[prefService]?.url) return { url: links[prefService].url, service: prefService };
+  // 1. preferred service, exact — nativeUri then web url
+  if (links[prefService]?.nativeUri) return { url: links[prefService].nativeUri, service: prefService, exact: true };
+  if (links[prefService]?.url)       return { url: links[prefService].url,       service: prefService, exact: true };
 
-  // 3. first available nativeUri from any service
+  // 2. any service, exact — nativeUri then web url
   for (const [slug, entry] of Object.entries(links)) {
-    if (entry?.nativeUri) return { url: entry.nativeUri, service: slug };
+    if (entry?.nativeUri) return { url: entry.nativeUri, service: slug, exact: true };
   }
-  // 4. first available url from any service
   for (const [slug, entry] of Object.entries(links)) {
-    if (entry?.url) return { url: entry.url, service: slug };
+    if (entry?.url) return { url: entry.url, service: slug, exact: true };
   }
 
-  // 5. last resort
-  return { url: album.sourceUrl || null, service: album.sourceUrl ? (album.service || null) : null };
+  // 3. no exact cross-service link at all — the exact URL the user originally
+  // pasted still beats a search fallback (an exact link they know is right
+  // outranks a guess), so check it before ever reaching the search tiers.
+  if (Object.keys(links).length === 0 && album.sourceUrl) {
+    return { url: album.sourceUrl, service: album.service || null, exact: true };
+  }
+
+  // 4 & 5. search fallback — only meaningful once artist+title are actually
+  // known (a pending/sparse record has nothing worth searching for).
+  if (album.artist && album.title) {
+    const prefSearch = buildSearchUrl(prefService, album.artist, album.title);
+    if (prefSearch) return { url: prefSearch, service: prefService, exact: false };
+
+    // prefService isn't in the registry — e.g. a preference saved before
+    // Amazon Music/SoundCloud were dropped. Fall back to a known-good service
+    // rather than giving up on a search link entirely.
+    const fallback = SERVICES[0].slug;
+    const anySearch = buildSearchUrl(fallback, album.artist, album.title);
+    if (anySearch) return { url: anySearch, service: fallback, exact: false };
+  }
+
+  // 6. last resort — the link the user originally pasted (links is non-empty
+  // here, just missing a usable url/nativeUri on every entry — vanishingly
+  // rare, but the source link is still the right thing to fall back to)
+  return { url: album.sourceUrl || null, service: album.sourceUrl ? (album.service || null) : null, exact: true };
 }
 
 export function pickListenUrl(album, prefService) {
@@ -132,15 +160,19 @@ export function isOnPreferredService(album, prefService) {
 /**
  * Render the Listen button for a resolved album.
  *
- * Three states, in order of preference:
- *   1. on the preferred service        → "Listen"
- *   2. only on other services          → "Listen on <that service>"
- *   3. no usable link anywhere         → disabled
+ * Four states, in order of preference:
+ *   1. on the preferred service, exact  → "Listen"
+ *   2. on another service, exact        → "Listen on <that service>"
+ *   3. no exact link anywhere           → "Find on <a service>" (opens a search)
+ *   4. nothing to open at all           → disabled
  *
  * State 2 used to be a dead end: a disabled "Not on Spotify" that never said
  * where the album WAS playable, even though the record usually holds two or
  * three working links. Naming the fallback keeps the original promise — never
  * open a different service silently — while still letting the user listen.
+ * State 3 keeps that same promise for search links: it's visually and verbally
+ * distinct ("Find", not "Listen") because a search isn't guaranteed to land on
+ * the right album the way an exact link is.
  *
  * @param {object} album
  * @param {string} prefService
@@ -156,20 +188,27 @@ function renderListenBtn(album, prefService, { showService = false } = {}) {
   }
 
   const target = pickListenTarget(album, prefService);
-  if (target.url) {
-    const altName   = target.service ? (serviceLabel(target.service) || target.service) : '';
-    const elsewhere = linkedServiceNames(album);
-    const tip = altName
-      ? `Not on ${prefName} — this album is on ${joinList(elsewhere)}. Change your service in your profile.`
-      : `Not on ${prefName} — opens the link you saved.`;
-    // In the list the service name stands alone — the play icon already says
-    // "listen", and "Listen on YouTube Music" squeezes the album title on a
-    // phone. The explore card has room for the full phrase.
-    const altLabel = altName ? (showService ? `Listen on ${escapeHtml(altName)}` : escapeHtml(altName)) : 'Listen';
-    return `<button class="btn btn-listen btn-listen--alt" data-action="listen" data-url="${attr(target.url)}" title="${attr(tip)}">${PLAY_SVG} ${altLabel}</button>`;
+  if (!target.url) {
+    return `<button class="btn btn-listen btn-listen--unavailable" disabled title="${attr(`No link on ${prefName} or any other supported service yet — try Refresh details.`)}">${X_SVG} No link yet</button>`;
   }
 
-  return `<button class="btn btn-listen btn-listen--unavailable" disabled title="${attr(`No link on ${prefName} or any other supported service yet — try Refresh details.`)}">${X_SVG} No link yet</button>`;
+  const altName = target.service ? (serviceLabel(target.service) || target.service) : '';
+
+  if (!target.exact) {
+    const tip = `Not on ${prefName} — this searches for it on ${altName || 'another service'} instead of opening the album directly.`;
+    const label = altName ? `Find on ${escapeHtml(altName)}` : 'Find';
+    return `<button class="btn btn-listen btn-listen--search" data-action="listen" data-url="${attr(target.url)}" title="${attr(tip)}">${SEARCH_SVG} ${label}</button>`;
+  }
+
+  const elsewhere = linkedServiceNames(album);
+  const tip = altName
+    ? `Not on ${prefName} — this album is on ${joinList(elsewhere)}. Change your service in your profile.`
+    : `Not on ${prefName} — opens the link you saved.`;
+  // In the list the service name stands alone — the play icon already says
+  // "listen", and "Listen on YouTube Music" squeezes the album title on a
+  // phone. The explore card has room for the full phrase.
+  const altLabel = altName ? (showService ? `Listen on ${escapeHtml(altName)}` : escapeHtml(altName)) : 'Listen';
+  return `<button class="btn btn-listen btn-listen--alt" data-action="listen" data-url="${attr(target.url)}" title="${attr(tip)}">${PLAY_SVG} ${altLabel}</button>`;
 }
 
 // ── Auth area ─────────────────────────────────────────────────────────────────

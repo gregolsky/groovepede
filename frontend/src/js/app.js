@@ -3,7 +3,7 @@ import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
 import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumFirstTrack, resolveAlbum, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchArtistImage, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
+import { spotifyGet, fetchAlbumFirstTrack, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchArtistImage, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, renderShareOverlay } from './render.js';
 import * as sync from './sync.js';
@@ -66,10 +66,11 @@ function rerender() {
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
-// Spotify track URIs aren't in Odesli's response; fetch the album's first
+// The resolver never returns a Spotify track URI; fetch the album's first
 // track from the Spotify API (when logged in) so playlist sync has a URI.
-// Also recovers a missing links.spotify entry via search when Odesli's
-// cross-service matching had a gap (e.g. Deezer → Spotify asymmetry).
+// Also recovers a missing links.spotify entry via search when the resolver's
+// cross-linking had a gap (e.g. it wasn't a Spotify paste and the Deezer/Apple
+// search didn't happen to match).
 async function attachFirstTrackUri(rec) {
   if (!tokenValid()) return;
   // Fill in missing Spotify link via search fallback
@@ -136,7 +137,7 @@ async function handleAdd() {
   loadingAdd = true;
   rerender();
 
-  const rec = await resolveAlbum(url);
+  const rec = await resolveAlbumResilient(url, { service });
 
   if (!rec._error) {
     // Auto-set preferred service from the first link pasted (if never explicitly chosen)
@@ -150,7 +151,7 @@ async function handleAdd() {
     const inp = appEl.querySelector('#url-input');
     if (inp) inp.value = '';
   } else if (isRetryableResolveError(rec._error)) {
-    // Odesli is down / rate-limited — save a pending stub so the link isn't lost
+    // Resolver + MusicBrainz both failed with a retryable error — save a pending stub so the link isn't lost
     const fresh = loadAlbums();
     if (!fresh.find(a => a.sourceUrl === url)) {
       fresh.push(makePendingRecord(url, service));
@@ -341,7 +342,7 @@ async function refreshAlbum(visibleIdx) {
   refreshingId = album.id;
   rerender();
   try {
-    const rec = await resolveAlbum(album.sourceUrl);
+    const rec = await resolveAlbumResilient(album.sourceUrl, { service: album.service });
     if (!rec._error) {
       const merged = mergeRefreshedAlbum(album, rec);
       const all = loadAlbums();
@@ -567,7 +568,7 @@ let _resolvingPending = false;
 let _resolvePendingAgain = false;
 
 // Backoff for transient errors in the retry loop (separate from the throttler's
-// cooldown, which already paces Odesli/MB calls). Capped at 60 s.
+// cooldown, which already paces resolver/MB calls). Capped at 60 s.
 const _retryBackoff = n => Math.min(Math.pow(2, n) * 1000, 60_000);
 const _sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -716,14 +717,14 @@ async function boot() {
         addedMeta = existing._pending ? null : existing;
         phase = existing._pending ? 'pending' : 'exists';
       } else {
-        const rec = await resolveAlbum(url);
+        const rec = await resolveAlbumResilient(url, { service });
         if (!rec._error) {
           await saveResolvedAlbum(rec);
           highlightId = rec.id;
           addedMeta = rec;
           phase = 'added';
         } else if (isRetryableResolveError(rec._error)) {
-          // Odesli down — save pending stub so share isn't lost
+          // Resolver + MusicBrainz both failed with a retryable error — save pending stub so share isn't lost
           const stub = makePendingRecord(url, service);
           const fresh = loadAlbums();
           fresh.push(stub);

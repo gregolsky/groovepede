@@ -24,10 +24,10 @@ Two top-level workspaces:
 - **`frontend/src/css/style.css`** — all styles, imported via JS
 - **`frontend/src/js/app.js`** — entry point: state management, event delegation, boot sequence
 - **`frontend/src/js/auth.js`** — Spotify OAuth PKCE flow (no backend); login is optional
-- **`frontend/src/js/api.js`** — Odesli (universal link resolver) + Spotify Web API + Last.fm API
+- **`frontend/src/js/api.js`** — calls our resolver (album-page extraction + cross-service links, see `backend/`) + Spotify Web API + Last.fm API
 - **`frontend/src/js/render.js`** — pure HTML string rendering (no virtual DOM, no templates)
 - **`frontend/src/js/storage.js`** — localStorage read/write for albums, listen count, preferred service; link parsing, backup (de)serialisation, and `filterAlbums` (the visible-list source of truth)
-- **`frontend/src/js/services.js`** — the supported-service registry; `ODESLI_KEY_MAP`, service labels, per-host album matching, the profile's "Listen on" options and every user-facing service list (`serviceListText`) all derive from it. Static markup can't call it — when adding a service, also update `src/faq.html` (both the `<details>` copy and the FAQPage JSON-LD) and the meta descriptions in `src/index.html`
+- **`frontend/src/js/services.js`** — the supported-service registry; service labels, per-host album matching, search-link templates (`buildSearchUrl`), the profile's "Listen on" options and every user-facing service list (`serviceListText`) all derive from it. Static markup can't call it — when adding a service, also update `src/faq.html` (both the `<details>` copy and the FAQPage JSON-LD) and the meta descriptions in `src/index.html`. A service can only be added here if its album page (or a free keyless API) actually exposes extractable metadata — see `backend/resolver-core.mjs`'s per-service extractors.
 - **`frontend/src/js/sign.js`** — ECDSA-P256 request signing for the resolver's `x-gp-token`
 - **`frontend/src/js/throttle.js`** — per-service pacing + 429 cooldown used by every outbound API call
 - **`frontend/src/js/config.js`** — API keys, storage keys, OAuth config, resolver base URL, throttle policy
@@ -40,8 +40,8 @@ Two top-level workspaces:
 
 1. User shares/pastes any album URL (Spotify, Apple Music, YouTube, Tidal, Deezer, etc.)
 2. `parseMusicLink()` validates the URL and identifies the service
-3. `resolveAlbum()` calls the Odesli API to get cross-service links + metadata → saved to localStorage with `tags: []` and `links: { spotify?, apple?, youtube?, … }`
-4. If Odesli is unreachable (retryable error), a pending stub is saved and retried on next app open via `resolvePending()`
+3. `resolveAlbum()` calls our resolver, which fetches the pasted album page itself, extracts title/artist/cover/year, and cross-links Deezer + Apple Music → saved to localStorage with `links: { spotify?, apple?, youtube?, … }` (exact links only; search-link fallbacks for other services are built on the fly by `services.js`, not stored)
+4. If the resolver is unreachable (retryable error), a pending stub is saved and retried on next app open via `resolvePending()`
 5. `enrichWithLastfm()` fires asynchronously to fetch Last.fm tags → updates saved album and re-renders
 6. Artist bio/similar artists fetched on-demand via `fetchLastfmArtist()` when user expands a card
 7. Listen button opens the user's preferred service (configurable in profile; falls back through available links)
@@ -60,7 +60,7 @@ npm run test:e2e   # Run Playwright E2E tests
 npm test           # Run all tests (unit + E2E)
 ```
 
-For local dev, update `REDIRECT` in `frontend/src/js/config.js` to `http://localhost:5173/` and add that URI to your Spotify Developer app. Odesli requires no API key for development (10 req/min free tier).
+For local dev, update `REDIRECT` in `frontend/src/js/config.js` to `http://localhost:5173/` and add that URI to your Spotify Developer app. The resolver itself needs no API key — see `backend/README.md` for running it locally (or point `RESOLVER_BASE` at the deployed one).
 
 ## Conventions
 

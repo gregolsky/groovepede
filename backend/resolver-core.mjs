@@ -5,18 +5,31 @@
  * adapter, node:sqlite cache) — kept transport-agnostic since this module
  * previously also backed an AWS Lambda adapter (retired; see git history).
  *
- * The adapter does transport + cache; this module owns the actual work:
- * token verification, CORS, input/host validation, the Odesli call, and
- * cache orchestration via an injected `cache` adapter.
+ * The adapter does transport + cache; this module owns the actual work: token
+ * verification, CORS, input/host validation, per-service metadata extraction,
+ * cross-service link discovery, and cache orchestration via an injected
+ * `cache` adapter.
+ *
+ * Odesli's public API was deprecated (401 PUBLIC_API_ACCESS_DEPRECATED,
+ * 2026-08) — this module used to proxy it wholesale (see git history for
+ * resolveRequest/ODESLI_BASE). It's replaced by /v1/album: fetch the pasted
+ * album page ourselves, extract {title, artist, cover, year} with a small
+ * per-service routine, then look up the exact album on the two services that
+ * offer free keyless search (Deezer, Apple/iTunes) to rebuild cross-service
+ * links. Everything else — Amazon Music, SoundCloud — turned out to be a pure
+ * client-rendered JS shell with no server-rendered metadata at all (verified
+ * live), so neither is extractable and both were dropped from the registry.
  */
 
 import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
 
-export const UA          = 'Groovepede-Resolver/1.0 (+https://groovepede.gregolsky.pl)';
-export const TTL_S       = 60 * 60 * 24 * 60;              // 60 days
-export const ODESLI_BASE = 'https://api.song.link/v1-alpha.1';
-
+export const UA            = 'Groovepede-Resolver/1.0 (+https://groovepede.gregolsky.pl)';
+export const ALBUM_TTL_S   = 60 * 60 * 24 * 60;             // 60 days — album metadata is near-static
+export const PARTIAL_TTL_S = 60 * 60;                       // 1 hour — used when cross-linking partially failed, so a retry isn't frozen out for 60 days
 export const DEEZER_BASE   = 'https://api.deezer.com';
+export const ITUNES_BASE   = 'https://itunes.apple.com';
+export const SPOTIFY_ACCOUNTS_BASE = 'https://accounts.spotify.com';
+export const SPOTIFY_API_BASE      = 'https://api.spotify.com/v1';
 export const ARTIST_TTL_S  = 60 * 60 * 24 * 30;            // 30 days — artist photos are near-static
 
 const TOKEN_WINDOW_S = 300; // 5-minute replay window
@@ -73,9 +86,8 @@ export function verifyToken(token, url) {
 }
 
 // ── CORS ────────────────────────────────────────────────────────────────────
-// Origin-based allowlist (same pattern Odesli uses for its own frontends).
-// Defaults cover prod + local dev; extra origins can be added via ALLOWED_ORIGINS
-// (comma-separated) — used by the self-hosted Pi deployment.
+// Origin-based allowlist. Defaults cover prod + local dev; extra origins can be
+// added via ALLOWED_ORIGINS (comma-separated) — used by the self-hosted Pi deployment.
 
 const DEFAULT_ORIGINS = ['https://groovepede.gregolsky.pl', 'http://localhost:5173'];
 
@@ -99,29 +111,31 @@ export function corsHeaders(origin) {
 }
 
 // ── Input allowlist (SSRF hygiene) ──────────────────────────────────────────
-// Hosts we are willing to proxy to Odesli. Keeps the resolver from being used
-// as an open proxy to arbitrary URLs.
+// Hosts we are willing to fetch on the paste-er's behalf, mapped straight to
+// the internal service slug — also doubles as "which extractor to run".
+// Amazon Music and SoundCloud are deliberately absent: both album pages are
+// pure client-rendered JS shells with no og:/JSON-LD server-rendered at all
+// (verified live), and SoundCloud's oEmbed endpoint 404s outright — nothing
+// here could ever extract metadata from either, so neither is in the registry.
 
-export const ALLOWED_HOSTS = new Set([
-  'open.spotify.com',
-  'music.apple.com',
-  'music.youtube.com',
-  'youtube.com',
-  'www.youtube.com',
-  'deezer.com',
-  'www.deezer.com',
-  'tidal.com',
-  'listen.tidal.com',
-  'music.amazon.com',
-  'music.amazon.co.uk',
-  'music.amazon.de',
-  'music.amazon.fr',
-  'music.amazon.co.jp',
-  'pandora.com',
-  'www.pandora.com',
-  'soundcloud.com',
-  'www.soundcloud.com',
+export const SERVICE_HOSTS = new Map([
+  ['open.spotify.com',   'spotify'],
+  ['music.apple.com',    'apple'],
+  ['deezer.com',         'deezer'],
+  ['www.deezer.com',     'deezer'],
+  ['tidal.com',          'tidal'],
+  ['listen.tidal.com',   'tidal'],
+  ['music.youtube.com',  'youtube'],
+  ['youtube.com',        'youtube'],
+  ['www.youtube.com',    'youtube'],
+  ['pandora.com',        'pandora'],
+  ['www.pandora.com',    'pandora'],
 ]);
+
+/** Resolve a URL's hostname to a service slug, trying the www-stripped form too. */
+function serviceForHost(hostname) {
+  return SERVICE_HOSTS.get(hostname) || SERVICE_HOSTS.get(hostname.replace(/^www\./, '')) || null;
+}
 
 /**
  * Strip tracking params (si=, utm_*) while preserving service-specific params.
@@ -135,106 +149,7 @@ export function normalizeUrl(rawUrl) {
   return u.toString();
 }
 
-// ── Core resolve ────────────────────────────────────────────────────────────
-
-/**
- * Resolve one request. Transport-agnostic: adapters pass parsed inputs and a
- * cache adapter, and translate the returned shape onto their wire format.
- *
- * @param {object}   p
- * @param {string}   p.method   HTTP method ('GET' | 'OPTIONS' | …)
- * @param {string}   p.origin   Origin request header (for CORS)
- * @param {string}   p.url      ?url= query value
- * @param {string}   p.cc       ?userCountry= (defaults to 'US')
- * @param {string}   p.token    x-gp-token header
- * @param {{get(k):Promise<any>, put(k,body,ttlS):Promise<void>}} p.cache
- * @param {typeof fetch} [p.fetchImpl]  injectable for tests
- * @returns {Promise<{statusCode:number, headers:object, body:any}>}
- *          body is a JS value (object) or null; adapters JSON-stringify it.
- */
-export async function resolveRequest({ method, origin, url, cc, token, cache, fetchImpl = fetch }) {
-  const cors = corsHeaders(origin || '');
-
-  // OPTIONS preflight — handled natively (no separate edge config needed).
-  if (method === 'OPTIONS') {
-    return { statusCode: 204, headers: cors, body: null };
-  }
-
-  const jsonHeaders = { 'content-type': 'application/json', ...cors };
-  const country = cc || 'US';
-
-  // Token verification (signature is bound to `url`).
-  if (!verifyToken(token || '', url || '')) {
-    return { statusCode: 403, headers: jsonHeaders, body: { _error: 'forbidden' } };
-  }
-
-  // Input validation.
-  if (!url) {
-    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'missing url' } };
-  }
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'bad url' } };
-  }
-  const host = parsed.hostname.replace(/^www\./, '');
-  if (!ALLOWED_HOSTS.has(parsed.hostname) && !ALLOWED_HOSTS.has(host)) {
-    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'unsupported url' } };
-  }
-
-  const k = `links:${country}:${normalizeUrl(url)}`;
-
-  // Cache read (non-fatal on error).
-  try {
-    const hit = await cache.get(k);
-    if (hit) return { statusCode: 200, headers: jsonHeaders, body: hit };
-  } catch (err) {
-    console.warn('cache get error (non-fatal):', err.message);
-  }
-
-  // Odesli call.
-  const params = new URLSearchParams({ url, userCountry: country });
-  if (process.env.ODESLI_KEY) params.set('key', process.env.ODESLI_KEY);
-
-  let res;
-  try {
-    res = await fetchImpl(`${ODESLI_BASE}/links?${params}`, {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-    });
-  } catch {
-    return { statusCode: 503, headers: jsonHeaders, body: { _error: 'network' } };
-  }
-
-  if (!res.ok) {
-    // Pass Odesli's status through so the app's retry logic handles 429 / 5xx.
-    const retryAfter = res.headers.get('retry-after');
-    const body = { _error: res.status };
-    if (retryAfter) body._retryAfter = parseInt(retryAfter, 10) || null;
-    return { statusCode: res.status, headers: jsonHeaders, body };
-  }
-
-  const data = await res.json();
-
-  // Cache write (best-effort).
-  try {
-    await cache.put(k, data, TTL_S);
-  } catch (err) {
-    console.warn('cache put error (non-fatal):', err.message);
-  }
-
-  return { statusCode: 200, headers: jsonHeaders, body: data };
-}
-
-// ── Artist images ───────────────────────────────────────────────────────────
-// Deezer is the only source with usable coverage for the long tail (Last.fm
-// serves one placeholder for every artist since 2019; Odesli carries no artist
-// imagery at all), but api.deezer.com sends no Access-Control-Allow-Origin, so
-// the browser can't call it — hence this endpoint.
-//
-// Only the image URL is ever returned. Image bytes are never fetched, stored,
-// or re-served here: the browser hotlinks Deezer's CDN directly, the same way
-// it already does for Odesli-supplied album covers.
+// ── Name folding for exact cross-service matching ───────────────────────────
 
 /**
  * Normalise an artist name for exact matching: NFKD, strip diacritics, drop
@@ -252,6 +167,518 @@ export function normalizeArtist(s) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+/**
+ * Same fold as normalizeArtist, plus stripping the edition/reissue qualifiers
+ * services routinely disagree on ("Deluxe Edition", "Remastered", …) before
+ * comparing titles across services. Mirrors normalizeAlbumStr in the frontend
+ * (frontend/src/js/api.js) — kept as its own copy for the same reason.
+ */
+export function normalizeAlbumTitle(s) {
+  if (!s) return '';
+  return s
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s*[-–—:]\s*(single|ep|album|remaster(?:ed)?|deluxe(?:\s+edition)?|expanded(?:\s+edition)?|bonus\s+tracks?|anniversary\s+edition|special\s+edition)\s*$/i, '')
+    .replace(/\s*\((?:deluxe|remaster(?:ed)?|expanded|bonus\s+tracks?|anniversary|special|edition|version)[^)]*\)/gi, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// ── Upstream fetch helper ────────────────────────────────────────────────────
+// Every extractor fetches exactly one upstream URL (a service's own album page,
+// or a free keyless JSON API) through this, so the timeout, UA, and response
+// size cap live in one place rather than N near-duplicates.
+
+const FETCH_TIMEOUT_MS = 8_000;   // under nginx's 10s proxy_read_timeout for /v1/album
+const MAX_RESPONSE_BYTES = 512 * 1024; // album pages run 25-800KB in practice; well clear of that
+
+/** Thrown when the upstream fetch itself failed (network/timeout/non-2xx) — as
+ * opposed to a successful fetch whose body just didn't contain what we wanted.
+ * The distinction matters: the former should be retryable by the client
+ * (isRetryableResolveError in frontend/src/js/storage.js), the latter shouldn't. */
+export class UpstreamFetchError extends Error {
+  constructor(status) {
+    super(`upstream fetch failed (${status || 'network'})`);
+    this.status = status; // 0/undefined = network/timeout, else the upstream's HTTP status
+  }
+}
+
+/** Read a Response body up to maxBytes, streaming when the runtime supports it
+ * (real fetch/undici) and falling back to res.text() for test fixtures that
+ * don't implement a streamable .body. */
+async function readLimitedText(res, maxBytes) {
+  if (!res.body || typeof res.body.getReader !== 'function') return res.text();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let out = '';
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    out += decoder.decode(value, { stream: true });
+    if (total > maxBytes) { reader.cancel().catch(() => {}); break; }
+  }
+  return out;
+}
+
+/**
+ * Fetch one upstream URL and return its body as text.
+ * Throws UpstreamFetchError on timeout, network failure, or a non-2xx status
+ * — callers let that propagate up to the request handler, which maps it to a
+ * retryable {_error}. A successful-but-empty/unparseable body is the caller's
+ * problem (extraction genuinely failed), not this helper's.
+ */
+export async function fetchUpstream(url, fetchImpl = fetch, opts = {}) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    let res;
+    try {
+      res = await fetchImpl(url, {
+        method: opts.method || 'GET',
+        headers: { 'User-Agent': UA, 'Accept': '*/*', ...opts.headers },
+        body: opts.body,
+        signal: ctrl.signal,
+      });
+    } catch {
+      throw new UpstreamFetchError(0);
+    }
+    if (!res.ok) throw new UpstreamFetchError(res.status);
+    try {
+      // Read inside the same try/finally as the fetch itself, so the abort
+      // timer covers the body read too — a slow/stalled body would otherwise
+      // hang past FETCH_TIMEOUT_MS since the timer was cleared right after
+      // headers arrived.
+      return await readLimitedText(res, MAX_RESPONSE_BYTES);
+    } catch {
+      throw new UpstreamFetchError(0); // aborted mid-read = same as a timeout
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Per-service metadata extraction ─────────────────────────────────────────
+// Each extractor takes the parsed album URL and returns either:
+//   - { serviceAlbumId, title, artist, cover, year, tags } on success
+//   - null when the fetch succeeded but the page/response didn't look like an
+//     album (markup changed, or it wasn't actually an album URL) — non-retryable
+// A failed *fetch* (network/timeout/non-2xx) throws UpstreamFetchError instead,
+// which the caller treats as retryable.
+
+function metaTag(html, prop) {
+  // Tolerant of attribute order and single/double quotes — property/content
+  // can appear in either order in the wild. The quote character is captured
+  // and back-referenced so an unescaped apostrophe/quote inside the content
+  // (e.g. "Guns N' Roses") can't prematurely close the match.
+  let m = html.match(new RegExp(`<meta[^>]*(?:property|name)=["']${prop}["'][^>]*content=(["'])(.*?)\\1`, 'i'));
+  if (m) return decodeHtmlEntities(m[2]);
+  m = html.match(new RegExp(`<meta[^>]*content=(["'])(.*?)\\1[^>]*(?:property|name)=["']${prop}["']`, 'i'));
+  return m ? decodeHtmlEntities(m[2]) : null;
+}
+
+function decodeHtmlEntities(s) {
+  return s
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&'); // must decode last — otherwise "&amp;quot;" double-decodes to a literal quote
+}
+
+async function extractSpotify(urlObj, fetchImpl) {
+  const id = urlObj.pathname.match(/\/album\/([A-Za-z0-9]+)/)?.[1];
+  if (!id) return null;
+  // The main open.spotify.com page is a bare client-rendered shell (verified
+  // live — no title, no og: tags beyond og:site_name). The /embed variant is
+  // server-rendered with a Next.js __NEXT_DATA__ blob carrying the full entity.
+  const text = await fetchUpstream(`https://open.spotify.com/embed/album/${id}`, fetchImpl);
+  const m = text.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!m) return null;
+  let entity;
+  try { entity = JSON.parse(m[1])?.props?.pageProps?.state?.data?.entity; } catch { return null; }
+  if (!entity?.title) return null;
+  const images = entity.visualIdentity?.image || [];
+  const cover  = images.slice().sort((a, b) => (b.maxWidth || 0) - (a.maxWidth || 0))[0]?.url || null;
+  const year   = typeof entity.releaseDate === 'string' ? entity.releaseDate.slice(0, 4) : null;
+  return {
+    serviceAlbumId: id,
+    title:  entity.title || null,
+    artist: entity.subtitle || null,
+    cover,
+    year:   year || null,
+    tags:   [],
+  };
+}
+
+async function extractApple(urlObj, fetchImpl) {
+  // Apple album URLs can carry more than one numeric segment (e.g. a track
+  // anchor "?i=123" alongside the album id, or a numeric album title like
+  // "/album/1984/..."). The album id is always the LAST numeric path segment.
+  const matches = [...urlObj.pathname.matchAll(/\/(\d+)(?=\/|$)/g)];
+  const id = matches.length ? matches[matches.length - 1][1] : null;
+  if (!id) return null;
+  const text = await fetchUpstream(`${ITUNES_BASE}/lookup?id=${id}&entity=album`, fetchImpl);
+  let data;
+  try { data = JSON.parse(text); } catch { return null; }
+  // Validate the lookup actually returned the id we asked for — iTunes'
+  // /lookup can return unrelated results when the id doesn't match an album.
+  const item = (data?.results || []).find(r =>
+    r.wrapperType === 'collection' && r.collectionType === 'Album' && String(r.collectionId) === id);
+  if (!item?.collectionName) return null;
+  const cover = item.artworkUrl100 ? item.artworkUrl100.replace(/\d+x\d+bb\.(jpg|png)$/, '600x600bb.$1') : null;
+  return {
+    serviceAlbumId: id,
+    title:  item.collectionName || null,
+    artist: item.artistName || null,
+    cover,
+    year:   item.releaseDate ? item.releaseDate.slice(0, 4) : null,
+    tags:   item.primaryGenreName ? [item.primaryGenreName] : [],
+  };
+}
+
+async function extractDeezer(urlObj, fetchImpl) {
+  const id = urlObj.pathname.match(/\/album\/(\d+)/)?.[1];
+  if (!id) return null;
+  const text = await fetchUpstream(`${DEEZER_BASE}/album/${id}`, fetchImpl);
+  let data;
+  try { data = JSON.parse(text); } catch { return null; }
+  if (data?.error) {
+    // Deezer reports quota-exceeded as an HTTP-200 envelope (error.code === 4),
+    // not a real 429 — treat it as retryable rather than "this isn't an album".
+    if (data.error.code === 4) throw new UpstreamFetchError(429);
+    return null;
+  }
+  if (!data?.title) return null;
+  return {
+    serviceAlbumId: id,
+    title:  data.title || null,
+    artist: data.artist?.name || null,
+    cover:  data.cover_xl || data.cover_big || null,
+    year:   data.release_date ? data.release_date.slice(0, 4) : null,
+    tags:   (data.genres?.data || []).map(g => g.name).filter(Boolean),
+  };
+}
+
+async function extractTidal(urlObj, fetchImpl) {
+  const id   = urlObj.pathname.match(/\/album\/(\d+)/)?.[1] || null;
+  const text = await fetchUpstream(urlObj.toString(), fetchImpl);
+  const ogTitle = metaTag(text, 'og:title');
+  if (!ogTitle) return null;
+  // Observed live: "<Artist> - <Album>". Split on the first " - " only, since
+  // either half can itself legitimately contain a hyphen.
+  const sep = ogTitle.indexOf(' - ');
+  return {
+    serviceAlbumId: id,
+    title:  (sep > -1 ? ogTitle.slice(sep + 3) : ogTitle).trim() || null,
+    artist: sep > -1 ? ogTitle.slice(0, sep).trim() : null,
+    cover:  metaTag(text, 'og:image'),
+    year:   null,
+    tags:   [],
+  };
+}
+
+async function extractYoutube(urlObj, fetchImpl) {
+  const text = await fetchUpstream(`https://www.youtube.com/oembed?url=${encodeURIComponent(urlObj.toString())}&format=json`, fetchImpl);
+  let data;
+  try { data = JSON.parse(text); } catch { return null; }
+  if (!data?.title) return null;
+  // Auto-generated "topic" channels (the common case for an album playlist)
+  // suffix the artist name with " - Topic" — not part of the artist's name.
+  const artist = (data.author_name || '').replace(/\s*-\s*Topic$/i, '').trim() || null;
+  return {
+    serviceAlbumId: urlObj.searchParams.get('list') || urlObj.pathname.match(/\/browse\/([\w-]+)/)?.[1] || null,
+    title:  data.title || null,
+    artist,
+    cover:  data.thumbnail_url || null,
+    year:   null,
+    tags:   [],
+  };
+}
+
+async function extractPandora(urlObj, fetchImpl) {
+  const text = await fetchUpstream(urlObj.toString(), fetchImpl);
+  const ogTitle = metaTag(text, 'og:title');
+  if (!ogTitle) return null;
+  // UNVERIFIED — Pandora is US-geofenced and every probe from a non-US host
+  // during development came back geo-blocked, so this pattern ("<Title> by
+  // <Artist>", the shape Pandora's own og:title used historically) could not
+  // be confirmed against a live page. Falls through to a title-only record
+  // rather than guessing at an artist split that might be wrong. If Pandora
+  // never actually extracts in production (the Pi itself may face the same
+  // geo-block), that's a real gap — see the production smoke suite.
+  const m = ogTitle.match(/^(.*)\s+by\s+(.*)$/i);
+  return {
+    serviceAlbumId: null,
+    title:  (m ? m[1] : ogTitle).trim() || null,
+    artist: m ? m[2].trim() : null,
+    cover:  metaTag(text, 'og:image'),
+    year:   null,
+    tags:   [],
+  };
+}
+
+// Exported (not just internal) so a test can assert every SERVICE_HOSTS value
+// has a matching entry here — catches drift automatically if a host is added
+// without its extractor, or vice versa.
+export const EXTRACTORS = {
+  spotify: extractSpotify,
+  apple:   extractApple,
+  deezer:  extractDeezer,
+  tidal:   extractTidal,
+  youtube: extractYoutube,
+  pandora: extractPandora,
+};
+
+function slugFromPath(pathname) {
+  return pathname.replace(/^\/+|\/+$/g, '').replace(/\//g, '-') || 'unknown';
+}
+
+// ── Cross-service link discovery ────────────────────────────────────────────
+// Given the {artist, title} just extracted from the pasted page, look up the
+// exact album on the two services with a free keyless search API. Best-effort:
+// any failure here just means one fewer link on the record, never a failed add.
+
+// Deezer's query syntax uses double quotes as field delimiters; a literal "
+// inside the artist/title would prematurely close the field, corrupting the
+// query for every field after it.
+const stripQuotes = s => s.replace(/"/g, '');
+
+async function crossLinkDeezer(artist, title, fetchImpl) {
+  const q = `artist:"${stripQuotes(artist)}" album:"${stripQuotes(title)}"`;
+  const text = await fetchUpstream(`${DEEZER_BASE}/search/album?q=${encodeURIComponent(q)}&limit=5`, fetchImpl);
+  const data = JSON.parse(text);
+  if (data?.error) throw new UpstreamFetchError(data.error.code === 4 ? 429 : 502);
+  const wantArtist = normalizeArtist(artist);
+  const wantTitle  = normalizeAlbumTitle(title);
+  const candidates = (data?.data || []).filter(it =>
+    normalizeArtist(it.artist?.name) === wantArtist && normalizeAlbumTitle(it.title) === wantTitle);
+  // Prefer a real album over a single/EP that happens to share the exact
+  // normalised title (e.g. a title-track single released ahead of the LP).
+  const match = candidates.find(it => it.record_type !== 'single' && it.record_type !== 'ep') || candidates[0];
+  if (!match) return null;
+  return { url: match.link || `https://www.deezer.com/album/${match.id}` };
+}
+
+async function crossLinkApple(artist, title, fetchImpl) {
+  const term = encodeURIComponent(`${artist} ${title}`);
+  const text = await fetchUpstream(`${ITUNES_BASE}/search?term=${term}&entity=album&limit=5`, fetchImpl);
+  const data = JSON.parse(text);
+  const wantArtist = normalizeArtist(artist);
+  const wantTitle  = normalizeAlbumTitle(title);
+  const candidates = (data?.results || []).filter(it =>
+    normalizeArtist(it.artistName) === wantArtist && normalizeAlbumTitle(it.collectionName) === wantTitle);
+  // iTunes suffixes single/EP releases in the title itself (already stripped
+  // by normalizeAlbumTitle) — fall back to the raw collectionName to tell
+  // them apart when more than one candidate ties on the normalised name.
+  const match = candidates.find(it => !/-\s*(single|ep)$/i.test(it.collectionName || '')) || candidates[0];
+  if (!match?.collectionViewUrl) return null;
+  return { url: match.collectionViewUrl };
+}
+
+// ── Spotify Client Credentials (app-only auth) ──────────────────────────────
+// A separate, lighter-weight OAuth flow from the user-facing PKCE login in
+// frontend/src/js/auth.js: this one has no user, no consent screen, and can
+// only ever read Spotify's public catalog (search, browse) — never a user's
+// library or playlists. Exists purely so the resolver can cross-link to
+// Spotify the same way it already does for Deezer/Apple. Entirely optional:
+// when SPOTIFY_CLIENT_ID/SECRET aren't set, crossLinkSpotify just no-ops.
+
+let _spotifyToken = null;        // { value, expiresAt } — in-memory only, never persisted
+let _spotifyTokenPromise = null; // in-flight mint, so concurrent requests share one token fetch
+
+async function getSpotifyAppToken(fetchImpl) {
+  const clientId     = process.env.SPOTIFY_CLIENT_ID;
+  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+
+  if (_spotifyToken && _spotifyToken.expiresAt > Date.now() + 10_000) {
+    return _spotifyToken.value;
+  }
+  if (!_spotifyTokenPromise) {
+    _spotifyTokenPromise = (async () => {
+      const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+      const text = await fetchUpstream(`${SPOTIFY_ACCOUNTS_BASE}/api/token`, fetchImpl, {
+        method: 'POST',
+        headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'grant_type=client_credentials',
+      });
+      const data = JSON.parse(text);
+      _spotifyToken = { value: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 };
+      return _spotifyToken.value;
+    })();
+    try {
+      return await _spotifyTokenPromise;
+    } finally {
+      _spotifyTokenPromise = null;
+    }
+  }
+  return _spotifyTokenPromise;
+}
+
+/** Test hook — clears the cached app token so a fresh mint is exercised. */
+export function _resetSpotifyToken() { _spotifyToken = null; _spotifyTokenPromise = null; }
+
+async function crossLinkSpotify(artist, title, fetchImpl) {
+  const token = await getSpotifyAppToken(fetchImpl);
+  if (!token) return null; // not configured — inert, not a failure
+
+  const q = encodeURIComponent(`album:${title} artist:${artist}`);
+  const text = await fetchUpstream(`${SPOTIFY_API_BASE}/search?type=album&limit=5&q=${q}`, fetchImpl, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  const data = JSON.parse(text);
+
+  const wantArtist = normalizeArtist(artist);
+  const wantTitle  = normalizeAlbumTitle(title);
+  const candidates = (data?.albums?.items || []).filter(it =>
+    normalizeAlbumTitle(it.name) === wantTitle &&
+    (it.artists || []).some(a => normalizeArtist(a.name) === wantArtist));
+  const match = candidates.find(it => it.album_type === 'album') || candidates[0];
+  if (!match) return null;
+  return { url: match.external_urls?.spotify || null, nativeUri: `spotify:album:${match.id}` };
+}
+
+// ── Core: /v1/album ──────────────────────────────────────────────────────────
+
+/**
+ * Resolve one album request. Transport-agnostic: adapters pass parsed inputs
+ * and a cache adapter, and translate the returned shape onto their wire format.
+ *
+ * @param {object}   p
+ * @param {string}   p.method   HTTP method ('GET' | 'OPTIONS' | …)
+ * @param {string}   p.origin   Origin request header (for CORS)
+ * @param {string}   p.url      ?url= query value — the pasted album page
+ * @param {string}   p.token    x-gp-token header, signed over `url` (unchanged
+ *                              from the retired /v1/resolve — same binding string)
+ * @param {{get(k):Promise<any>, put(k,body,ttlS):Promise<void>}} p.cache
+ * @param {typeof fetch} [p.fetchImpl]  injectable for tests
+ * @returns {Promise<{statusCode:number, headers:object, body:any}>}
+ */
+export async function albumRequest({ method, origin, url, token, cache, fetchImpl = fetch }) {
+  const cors = corsHeaders(origin || '');
+
+  if (method === 'OPTIONS') {
+    return { statusCode: 204, headers: cors, body: null };
+  }
+
+  const jsonHeaders = { 'content-type': 'application/json', ...cors };
+
+  if (!verifyToken(token || '', url || '')) {
+    return { statusCode: 403, headers: jsonHeaders, body: { _error: 'forbidden' } };
+  }
+  if (!url) {
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'missing url' } };
+  }
+
+  let parsed;
+  try { parsed = new URL(url); } catch { return { statusCode: 400, headers: jsonHeaders, body: { _error: 'bad url' } }; }
+
+  const service = serviceForHost(parsed.hostname);
+  if (!service) {
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'unsupported url' } };
+  }
+
+  const k = `album:v1:${normalizeUrl(url)}`;
+
+  try {
+    const hit = await cache.get(k);
+    if (hit) return { statusCode: 200, headers: jsonHeaders, body: hit };
+  } catch (err) {
+    console.warn('cache get error (non-fatal):', err.message);
+  }
+
+  let extracted;
+  try {
+    extracted = await EXTRACTORS[service](parsed, fetchImpl);
+  } catch (err) {
+    if (err instanceof UpstreamFetchError) {
+      const status = err.status;
+      if (!status) return { statusCode: 503, headers: jsonHeaders, body: { _error: 'network' } };
+      if (status === 429 || status >= 500) {
+        // Transient upstream failure — worth a client-side retry.
+        return { statusCode: status, headers: jsonHeaders, body: { _error: status } };
+      }
+      // Permanent upstream failure (404/403/400/…) — report as our own 422,
+      // never the raw upstream status. Passing a bare 404 through would trip
+      // fail2ban's gp-scanner jail (bans any IP producing 3 HTTP 404s), which
+      // is meant to catch scanners hitting unknown paths on OUR server, not
+      // real users whose pasted link happens to 404 upstream.
+      return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+    }
+    console.warn('extraction error (treated as failed extraction):', err.message);
+    extracted = null;
+  }
+
+  if (!extracted?.title) {
+    // Fetched fine, but couldn't find an album in the response — markup
+    // changed, or this wasn't really an album URL. Not worth retrying.
+    return { statusCode: 422, headers: jsonHeaders, body: { _error: 'extraction-failed' } };
+  }
+
+  const serviceAlbumId = extracted.serviceAlbumId || slugFromPath(parsed.pathname);
+  const links = { [service]: { url } };
+  if (service === 'spotify') links.spotify.nativeUri = `spotify:album:${serviceAlbumId}`;
+
+  // Tracks whether any cross-link job actually threw (network/quota/etc.), as
+  // opposed to running fine and finding no match — the two need different
+  // cache TTLs (see the cache.put call below): a real failure deserves a
+  // quick retry, a genuine no-match doesn't need re-checking for 60 days.
+  let crossLinkHadFailure = false;
+  if (extracted.artist && extracted.title) {
+    const jobs = [];
+    const onFail = () => { crossLinkHadFailure = true; };
+    if (service !== 'deezer') {
+      jobs.push(crossLinkDeezer(extracted.artist, extracted.title, fetchImpl)
+        .then(r => { if (r) links.deezer = r; }).catch(onFail));
+    }
+    if (service !== 'apple') {
+      jobs.push(crossLinkApple(extracted.artist, extracted.title, fetchImpl)
+        .then(r => { if (r) links.apple = r; }).catch(onFail));
+    }
+    if (service !== 'spotify') {
+      jobs.push(crossLinkSpotify(extracted.artist, extracted.title, fetchImpl)
+        .then(r => { if (r) links.spotify = r; }).catch(onFail));
+    }
+    await Promise.all(jobs);
+  }
+
+  const body = {
+    id:     `${service}:${serviceAlbumId}`,
+    service,
+    title:  extracted.title,
+    artist: extracted.artist || null,
+    cover:  extracted.cover || null,
+    year:   extracted.year || null,
+    tags:   extracted.tags || [],
+    links,
+  };
+
+  try {
+    await cache.put(k, body, crossLinkHadFailure ? PARTIAL_TTL_S : ALBUM_TTL_S);
+  } catch (err) {
+    console.warn('cache put error (non-fatal):', err.message);
+  }
+
+  return { statusCode: 200, headers: jsonHeaders, body };
+}
+
+// ── Artist images ───────────────────────────────────────────────────────────
+// Deezer is the only source with usable coverage for the long tail (Last.fm
+// serves one placeholder for every artist since 2019), but api.deezer.com sends
+// no Access-Control-Allow-Origin, so the browser can't call it — hence this
+// endpoint. `albumId` is Deezer's own numeric album id, which /v1/album hands
+// the client for free in links.deezer.url whenever cross-linking found a match.
+//
+// Only the image URL is ever returned. Image bytes are never fetched, stored,
+// or re-served here: the browser hotlinks Deezer's CDN directly, the same way
+// it already does for album covers.
 
 // Deezer serves a generic blank for artists with no photo. Two forms observed:
 // an empty id segment, and the MD5 of the empty string.
@@ -278,12 +705,12 @@ export function pickArtistImage(candidates, name) {
 }
 
 /**
- * Resolve an artist image URL. Same contract as resolveRequest: adapters pass
+ * Resolve an artist image URL. Same contract as albumRequest: adapters pass
  * parsed inputs plus a cache adapter and translate the return shape.
  *
  * Two-stage lookup:
- *   1. albumId (a Deezer album id, which Odesli hands us for free on resolve)
- *      → /album/{id} → artist.picture_xl. Exact — no name matching at all.
+ *   1. albumId (a Deezer album id) → /album/{id} → artist.picture_xl. Exact —
+ *      no name matching at all.
  *   2. otherwise → /search/artist → strict normalised-name match.
  *
  * @returns {Promise<{statusCode:number, headers:object, body:any}>}
@@ -320,7 +747,6 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
     console.warn('cache get error (non-fatal):', err.message);
   }
 
-  const opts = { headers: { 'User-Agent': UA, 'Accept': 'application/json' } };
   let image  = null;
   let genres = [];
 
@@ -328,27 +754,25 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
   // this is the same /album/{id} response already being fetched for the
   // artist image, and Deezer includes genres.data[].name on it. Stage 2
   // (search/artist) has no genre data, so genres stay [] unless Stage 1 ran.
+  // Routed through fetchUpstream (same as albumRequest's extractors) so both
+  // calls share its timeout and response-size cap instead of running unbounded.
   if (albumId) {
     try {
-      const res = await fetchImpl(`${DEEZER_BASE}/album/${albumId}`, opts);
-      if (res.ok) {
-        const data = await res.json();
-        const pic  = data?.artist?.picture_xl || data?.artist?.picture_big || null;
-        if (!isBlankArtistImage(pic)) image = pic;
-        genres = (data?.genres?.data || []).map(g => g.name).filter(Boolean);
-      }
+      const text = await fetchUpstream(`${DEEZER_BASE}/album/${albumId}`, fetchImpl);
+      const data = JSON.parse(text);
+      const pic  = data?.artist?.picture_xl || data?.artist?.picture_big || null;
+      if (!isBlankArtistImage(pic)) image = pic;
+      genres = (data?.genres?.data || []).map(g => g.name).filter(Boolean);
     } catch { /* fall through to search */ }
   }
 
   // Stage 2 — strict name match.
   if (!image) {
     try {
-      const q   = new URLSearchParams({ q: name, limit: '5' });
-      const res = await fetchImpl(`${DEEZER_BASE}/search/artist?${q}`, opts);
-      if (res.ok) {
-        const data = await res.json();
-        image = pickArtistImage(data?.data, name);
-      }
+      const q    = new URLSearchParams({ q: name, limit: '5' });
+      const text = await fetchUpstream(`${DEEZER_BASE}/search/artist?${q}`, fetchImpl);
+      const data = JSON.parse(text);
+      image = pickArtistImage(data?.data, name);
     } catch {
       return { statusCode: 503, headers: jsonHeaders, body: { _error: 'network' } };
     }

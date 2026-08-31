@@ -9,17 +9,22 @@
 import { test, expect } from '@playwright/test';
 import { watchForErrors, seedAlbums } from './helpers.js';
 
-// One real, long-lived album per service, verified resolvable via the public
-// Odesli API (api.song.link) while writing this suite:
-//   curl 'https://api.song.link/v1-alpha.1/links?url=<encoded>&userCountry=US'
-// All four returned 200 with a populated entitiesByUniqueId.
+// One real, long-lived album per service, verified live while writing this
+// suite by fetching each page/API directly (see backend/resolver-core.mjs for
+// the extraction routine each one exercises) — spotify (embed page), apple
+// (iTunes lookup), tidal and deezer (page + API) all confirmed to extract a
+// non-null title/artist.
 //
-// youtube is intentionally omitted: the public Odesli API never returned a
-// youtubeMusic link for any anonymous request tried here (checked against 4
-// popular albums), so no candidate URL could be confirmed resolvable from
-// this environment. The live resolver may carry a server-side ODESLI_KEY
-// with fuller platform coverage — add a verified youtube URL here once
-// confirmed directly against https://api.groovepede.gregolsky.pl.
+// youtube and pandora are intentionally omitted:
+//  - youtube: no specific album-playlist URL was confirmed live during
+//    development (the oEmbed endpoint itself works — verified against a
+//    plain video URL — just not a specific album candidate). Add a verified
+//    one here once confirmed against a live YouTube Music album page.
+//  - pandora: Pandora is US-geofenced and every probe from a non-US host
+//    during development came back geo-blocked, so the extractor's og:title
+//    pattern could not be confirmed live at all. The Pi resolver itself may
+//    face the same geo-block depending on where it's hosted — this is the
+//    test that would catch it, once a candidate URL can be verified.
 const SERVICE_ALBUMS = [
   { slug: 'spotify', url: 'https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp' },
   { slug: 'apple', url: 'https://music.apple.com/us/album/random-access-memories/617154241' },
@@ -50,7 +55,7 @@ test.describe('resolves a real link per service', () => {
       await page.fill('#url-input', url);
 
       const [response] = await Promise.all([
-        page.waitForResponse((res) => res.url().includes('/v1/resolve')),
+        page.waitForResponse((res) => res.url().includes('/v1/album')),
         page.click('[data-action="add"]'),
       ]);
       expect(response.status(), `resolver returned ${response.status()} for ${url}`).toBe(200);
@@ -60,6 +65,11 @@ test.describe('resolves a real link per service', () => {
       // with class `.card--pending` (see src/js/render.js, src/js/app.js).
       // A dead resolver would still pass a plain ".card is visible" check.
       await expect(page.locator('.card--pending')).toHaveCount(0);
+      // The real canary: extraction can 200 with a body that has no title/artist
+      // (markup changed) — that's a 422 from the resolver, not this branch, but
+      // guard the actual rendered text too since that's what a user sees.
+      await expect(page.locator('.card .card-title')).not.toHaveText(/^unknown album$/i);
+      await expect(page.locator('.card .card-artist')).not.toBeEmpty();
 
       expect(errors).toEqual([]);
     });

@@ -67,6 +67,9 @@ describe('extractAlbumId', () => {
   it('returns null for garbage', () => {
     expect(extractAlbumId('not a url')).toBeNull();
   });
+  it('extracts id from a locale-prefixed intl-XX share-sheet URL', () => {
+    expect(extractAlbumId('https://open.spotify.com/intl-de/album/4aawyAB9vmqN3uQ7FjRGTy')).toBe('4aawyAB9vmqN3uQ7FjRGTy');
+  });
 });
 
 describe('parseMusicLink', () => {
@@ -202,44 +205,43 @@ describe('parseMusicLink', () => {
     expect(r.url).toBeUndefined();
   });
 
-  // ── Amazon Music ──────────────────────────────────────────────────────────────
-  it('accepts Amazon Music album URL', () => {
-    const r = parseMusicLink('https://music.amazon.com/albums/B08XYZ1234');
-    expect(r.service).toBe('amazon');
-    expect(r.error).toBeUndefined();
-  });
-  it('rejects Amazon Music track URL', () => {
-    const r = parseMusicLink('https://music.amazon.com/tracks/B08XYZ5678');
-    expect(r.error).toBeTruthy();
-    expect(r.url).toBeUndefined();
-  });
-  it('accepts Amazon Music regional-domain album URL', () => {
-    const r = parseMusicLink('https://music.amazon.co.uk/albums/B08XYZ1234');
-    expect(r.service).toBe('amazon');
-    expect(r.error).toBeUndefined();
-  });
-
   // ── Pandora ───────────────────────────────────────────────────────────────────
+  // Real shape confirmed live: /artist/<artist-slug>/<album-slug>/AL<id> —
+  // there is no literal "/album/" segment. The AL id prefix is what actually
+  // distinguishes an album from an artist page or a track page.
   it('accepts Pandora album URL', () => {
-    const r = parseMusicLink('https://www.pandora.com/album/some-album/AL1234567890');
+    const r = parseMusicLink('https://www.pandora.com/artist/daft-punk/discovery/AL1234567890');
     expect(r.service).toBe('pandora');
     expect(r.error).toBeUndefined();
   });
   it('rejects Pandora artist URL', () => {
-    const r = parseMusicLink('https://www.pandora.com/artist/some-artist/AR1234567890');
+    const r = parseMusicLink('https://www.pandora.com/artist/some-artist');
+    expect(r.error).toBeTruthy();
+    expect(r.url).toBeUndefined();
+  });
+  it('rejects Pandora track URL', () => {
+    const r = parseMusicLink('https://www.pandora.com/artist/daft-punk/one-more-time/TR1234567890');
     expect(r.error).toBeTruthy();
     expect(r.url).toBeUndefined();
   });
 
-  // ── SoundCloud ────────────────────────────────────────────────────────────────
-  it('accepts SoundCloud sets (album) URL', () => {
-    const r = parseMusicLink('https://soundcloud.com/artist-name/sets/album-name');
-    expect(r.service).toBe('soundcloud');
-    expect(r.error).toBeUndefined();
+  // ── Amazon Music / SoundCloud — dropped, not in the registry ────────────────────
+  // Neither album page has any server-rendered metadata to extract (verified —
+  // pure client-rendered JS shells, and SoundCloud's oEmbed 404s), so both are
+  // rejected with a named reason rather than accepted.
+  it('rejects Amazon Music with a specific error', () => {
+    const r = parseMusicLink('https://music.amazon.com/albums/B08XYZ1234');
+    expect(r.error).toMatch(/amazon music/i);
+    expect(r.url).toBeUndefined();
   });
-  it('rejects SoundCloud track URL (no /sets/)', () => {
-    const r = parseMusicLink('https://soundcloud.com/artist-name/track-name');
-    expect(r.error).toBeTruthy();
+  it('rejects Amazon Music on any regional domain', () => {
+    const r = parseMusicLink('https://music.amazon.co.uk/albums/B08XYZ1234');
+    expect(r.error).toMatch(/amazon music/i);
+    expect(r.url).toBeUndefined();
+  });
+  it('rejects SoundCloud with a specific error', () => {
+    const r = parseMusicLink('https://soundcloud.com/artist-name/sets/album-name');
+    expect(r.error).toMatch(/soundcloud/i);
     expect(r.url).toBeUndefined();
   });
 
@@ -248,14 +250,12 @@ describe('parseMusicLink', () => {
   // SERVICES without ever being exercised here, instead of shipping untested.
   it('accepts a representative URL for every service in the registry', () => {
     const fixtures = {
-      spotify:    'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy',
-      apple:      'https://music.apple.com/us/album/ok-computer/1097861328',
-      youtube:    'https://music.youtube.com/playlist?list=OLAK5uy_abc123',
-      deezer:     'https://www.deezer.com/album/302127',
-      tidal:      'https://tidal.com/album/26026362',
-      amazon:     'https://music.amazon.com/albums/B08XYZ1234',
-      pandora:    'https://www.pandora.com/album/some-album/AL1234567890',
-      soundcloud: 'https://soundcloud.com/artist-name/sets/album-name',
+      spotify: 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy',
+      apple:   'https://music.apple.com/us/album/ok-computer/1097861328',
+      youtube: 'https://music.youtube.com/playlist?list=OLAK5uy_abc123',
+      deezer:  'https://www.deezer.com/album/302127',
+      tidal:   'https://tidal.com/album/26026362',
+      pandora: 'https://www.pandora.com/artist/daft-punk/discovery/AL1234567890',
     };
     for (const svc of SERVICES) {
       expect(fixtures, `no fixture URL for service "${svc.slug}"`).toHaveProperty(svc.slug);
@@ -690,6 +690,11 @@ describe('getPreferredService / setPreferredService', () => {
     setPreferredService('tidal');
     setPreferredService('youtube');
     expect(getPreferredService()).toBe('youtube');
+  });
+
+  it('falls back to the default when the stored preference is a service dropped from the registry', () => {
+    setPreferredService('amazon'); // stale value from before amazon was dropped
+    expect(getPreferredService()).toBe('spotify');
   });
 });
 

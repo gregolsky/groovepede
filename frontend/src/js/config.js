@@ -15,17 +15,15 @@ export const SYNC_LAST_KEY     = 'gp_sync_last';
 export const SYNC_PENDING_KEY  = 'gp_sync_pending';
 export const PREF_SERVICE_KEY  = 'gp_pref_service';
 
-// Resolver proxy — server-side Odesli proxy that bypasses the CORS block.
-// All resolution goes through this; ODESLI_BASE no longer points at Odesli directly.
-// See: specs/resolver-proxy.md, backend/
-export const ODESLI_BASE = 'https://api.groovepede.gregolsky.pl';
+// Resolver — server-side album-page fetch + extraction that bypasses the CORS
+// block (browsers can't fetch another service's album page directly).
+// All resolution goes through this. See: specs/resolver-proxy.md, backend/
+export const RESOLVER_BASE = 'https://api.groovepede.gregolsky.pl';
 // ECDSA-P256 private key (PKCS8 DER, base64) used to sign x-gp-token per request.
 // Injected at build time — never in source. Set VITE_GP_PRIVATE_KEY in .env.local
 // for dev, or as a GitHub Actions secret for CI. Ships in the bundle at runtime
 // (see specs/resolver-proxy.md § Security for the threat model).
 export const GP_PRIVATE_KEY = import.meta.env.VITE_GP_PRIVATE_KEY ?? '';
-// The Odesli API key lives server-side (ODESLI_KEY in backend/.env) and is never
-// exposed to the client — the resolver adds it to its own outbound call.
 
 export const MUSICBRAINZ_BASE  = 'https://musicbrainz.org/ws/2';
 export const COVERART_BASE     = 'https://coverartarchive.org';
@@ -33,8 +31,8 @@ export const COVERART_BASE     = 'https://coverartarchive.org';
 // Per-service throttle policy. minIntervalMs = 60_000 / rpm (with headroom).
 // isRateLimited / retryAfterOf are wired in api.js per-service.
 export const THROTTLE = {
-  // Odesli: 60/min per IP; 1 100 ms ≈ 54/min — comfortably under the limit.
-  odesli:      { minIntervalMs: 1_100,  cooldownMs: 60_000, maxCooldownMs: 300_000 },
+  // Our own resolver: nginx allows 10r/s per IP; 1 100 ms ≈ 54/min — comfortably under it.
+  resolver:    { minIntervalMs: 1_100,  cooldownMs: 60_000, maxCooldownMs: 300_000 },
   // MusicBrainz: ~1 req/s guideline; 1 200 ms is safe.
   musicbrainz: { minIntervalMs: 1_200,  cooldownMs: 60_000, maxCooldownMs: 300_000 },
   // Last.fm: generous ceiling (~300/min); pace at 200 ms (5/s) to avoid bursts.

@@ -108,4 +108,4 @@ if [ -n "$LATEST" ]; then
 fi
 
 echo
-echo "✓ Deployed to $TARGET. Point the PWA ODESLI_BASE at https://$DOMAIN if you haven't."
+echo "✓ Deployed to $TARGET. Point the PWA RESOLVER_BASE at https://$DOMAIN if you haven't."

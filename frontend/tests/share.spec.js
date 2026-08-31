@@ -3,29 +3,19 @@ import { stubExternals, KEYS } from './helpers.js';
 
 const ALBUM_ID    = 'shareTestAlbum1xxxxxx'; // 22 chars for Spotify ID
 const SHARE_URL   = `https://open.spotify.com/album/${ALBUM_ID}`;
-const ODESLI_ID   = `SPOTIFY_ALBUM::${ALBUM_ID}`;
+const RECORD_ID   = `spotify:${ALBUM_ID}`;
 
-function makeOdesliResponse() {
+function makeShareAlbumResponse() {
   return {
-    entityUniqueId: ODESLI_ID,
-    userCountry: 'US',
-    entitiesByUniqueId: {
-      [ODESLI_ID]: {
-        id: ALBUM_ID,
-        type: 'album',
-        title: 'Share Test Album',
-        artistName: 'Share Artist',
-        thumbnailUrl: 'https://img/cover',
-        apiProvider: 'spotify',
-        platforms: ['spotify'],
-      },
-    },
-    linksByPlatform: {
-      spotify: {
-        url: SHARE_URL,
-        nativeAppUriMobile: `spotify:album:${ALBUM_ID}`,
-        entityUniqueId: ODESLI_ID,
-      },
+    id: RECORD_ID,
+    service: 'spotify',
+    title: 'Share Test Album',
+    artist: 'Share Artist',
+    cover: 'https://img/cover',
+    year: null,
+    tags: [],
+    links: {
+      spotify: { url: SHARE_URL, nativeUri: `spotify:album:${ALBUM_ID}` },
     },
   };
 }
@@ -52,7 +42,7 @@ function fakeStandalone(context) {
   });
 }
 
-// This spec's Odesli fixture is its own (a distinct album id, so the share
+// This spec's resolver fixture is its own (a distinct album id, so the share
 // target's dedupe path is exercised), but every other external comes from the
 // shared list.
 async function stubApis(context) {
@@ -60,14 +50,14 @@ async function stubApis(context) {
     route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ id: 'u1', display_name: 'Test User', images: [] }) })
   );
-  await stubExternals(context, { odesli: makeOdesliResponse() });
+  await stubExternals(context, { resolver: makeShareAlbumResponse() });
 }
 
 /** Hold the resolver open so the loading phase can be observed. */
 async function slowResolver(context, ms = 1500) {
   await context.route('**/api.groovepede.gregolsky.pl/**', async route => {
     await new Promise(r => setTimeout(r, ms));
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeOdesliResponse()) });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeShareAlbumResponse()) });
   });
 }
 
@@ -120,8 +110,8 @@ test('share-target overlay disappears and card is highlighted when window.close(
 
   await expect(page.locator('#share-overlay')).toBeVisible({ timeout: 6000 });
   await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: 3000 });
-  await expect(page.locator(`[id="card-${ODESLI_ID}"]`)).toBeVisible({ timeout: 1000 });
-  await expect(page.locator(`[id="card-${ODESLI_ID}"]`)).toHaveClass(/card--highlight/);
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: 1000 });
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toHaveClass(/card--highlight/);
 });
 
 // ── Share via browser tab (not standalone): same overlay, no window.close ──────
@@ -136,8 +126,8 @@ test('share-target in browser tab resolves the overlay and highlights the card',
   // fades out into the queue instead of closing the window.
   await expect(page.locator('#share-overlay')).toBeVisible({ timeout: 6000 });
   await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: 3000 });
-  await expect(page.locator(`[id="card-${ODESLI_ID}"]`)).toBeVisible({ timeout: 6000 });
-  await expect(page.locator(`[id="card-${ODESLI_ID}"]`)).toHaveClass(/card--highlight/);
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: 6000 });
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toHaveClass(/card--highlight/);
 });
 
 // ── Non-success outcomes are no longer silent ─────────────────────────────────
@@ -152,7 +142,7 @@ test('sharing an album that is already queued says so', async ({ page, context }
       cover: 'https://img/cover', year: '2024', tags: [], addedAt: new Date().toISOString(),
       links: { spotify: { url, nativeUri: null } },
     }]));
-  }, { keys: KEYS, url: SHARE_URL, id: ODESLI_ID });
+  }, { keys: KEYS, url: SHARE_URL, id: RECORD_ID });
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
 
@@ -214,5 +204,5 @@ test('share-target works without being logged in', async ({ page, context }) => 
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
 
-  await expect(page.locator(`[id="card-${ODESLI_ID}"]`)).toBeVisible({ timeout: 6000 });
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: 6000 });
 });

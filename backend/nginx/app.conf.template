@@ -110,6 +110,10 @@ server {
         proxy_set_header Origin            $http_origin;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 10s;
+        # /v1/album fetches the pasted album page itself (8s budget, AbortSignal-
+        # bounded) and then up to two cross-linking lookups in parallel (8s each)
+        # — worst case ~16s end to end. 10s was fine for the old Odesli-only
+        # proxy but would cut that off mid-request, so this is comfortably above it.
+        proxy_read_timeout 25s;
     }
 }

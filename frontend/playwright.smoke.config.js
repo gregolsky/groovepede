@@ -15,5 +15,5 @@ export default defineConfig({
   workers: 1, // the resolver is a home Raspberry Pi — don't hammer it in parallel
   retries: 1,
   reporter: [['list'], ['html', { outputFolder: 'playwright-report-smoke', open: 'never' }]],
-  timeout: 60_000, // real network, real Odesli round-trips
+  timeout: 60_000, // real network, real page-fetch + extraction round-trips
 });

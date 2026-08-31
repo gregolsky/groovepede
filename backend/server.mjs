@@ -16,7 +16,7 @@
 
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { resolveRequest, artistRequest } from './resolver-core.mjs';
+import { albumRequest, artistRequest } from './resolver-core.mjs';
 
 const PORT    = parseInt(process.env.PORT || '8787', 10);
 const DB_PATH = process.env.DB_PATH || '/data/cache.db';
@@ -102,18 +102,17 @@ export async function handleRequest(req, res, { cache, port = PORT }) {
       return;
     }
 
-    // The only resolve endpoint — matches what the PWA calls.
-    if (u.pathname !== '/v1/resolve') {
+    // The only album-metadata endpoint — matches what the PWA calls.
+    if (u.pathname !== '/v1/album') {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end('{"_error":"not found"}');
       return;
     }
 
-    const { statusCode, headers, body } = await resolveRequest({
+    const { statusCode, headers, body } = await albumRequest({
       method: req.method,
       origin: req.headers.origin || '',
       url:    u.searchParams.get('url') || '',
-      cc:     u.searchParams.get('userCountry') || 'US',
       token:  req.headers['x-gp-token'] || '',
       cache,
     });

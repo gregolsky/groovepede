@@ -10,7 +10,7 @@ const ALBUMS = [
 async function seedWithAlbums(context, albums = ALBUMS) {
   await seedAlbums(context, albums);
   await loginAs(context);
-  await stubExternals(context, { odesli: null });
+  await stubExternals(context, { resolver: null });
 }
 
 // ── Done from list view ───────────────────────────────────────────────────────

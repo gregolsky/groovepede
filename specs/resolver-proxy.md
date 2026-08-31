@@ -1,77 +1,130 @@
-# Groovepede Resolver Proxy — Spec
+# Groovepede Resolver — Spec
 
 **Status:** shipped  
 **Owner:** `backend/`
 
 > This spec originally described an AWS Lambda + CloudFront + WAF + DynamoDB
-> deployment. That stack was removed in `1c07ecc`; the resolver is now
-> self-hosted on a Raspberry Pi. The problem, the handler contract and the
-> security model below are unchanged and still current — for how the Pi
-> deployment is built, run and deployed, see `backend/README.md`.
+> deployment that proxied Odesli. That stack was removed in `1c07ecc`; the
+> resolver moved to a self-hosted Raspberry Pi. Odesli's public API was then
+> deprecated outright (`401 PUBLIC_API_ACCESS_DEPRECATED`, 2026-08), so the
+> resolver was rewritten again: instead of proxying a third party, it fetches
+> the pasted album page itself and extracts the metadata directly. The
+> problem this doc describes, the endpoint, and the security model are all
+> current as of that rewrite — for how the Pi deployment is built, run and
+> deployed, see `backend/README.md`.
 
 ---
 
 ## Problem
 
-Odesli (`api.song.link`) returns `Access-Control-Allow-Origin` only for its own
-frontends (`odesli.co`, `song.link`). A browser fetch from
-`groovepede.gregolsky.pl` gets a `200` back but **no ACAO header**, so the
-browser blocks the response. The app catches the TypeError as
-`{ _error: 'network' }`, which is retryable — so pending stubs retry forever and
-never resolve.
+Two, layered:
 
-This affects every album added via any service, because all resolution goes
-through Odesli.
-
-An Odesli API key does **not** fix the problem — CORS is origin-based, not
-key-based.
+1. **CORS.** The browser can't fetch another service's album page directly —
+   `open.spotify.com`, `music.apple.com`, etc. send no
+   `Access-Control-Allow-Origin` for `groovepede.gregolsky.pl`. Whatever reads
+   the page has to run server-side.
+2. **No third party does this for us anymore.** Odesli (`api.song.link`) used
+   to solve exactly this — resolve a pasted link to metadata plus equivalent
+   links on every other service — for free, keyless, from any origin (via our
+   own CORS-adding proxy). Its public API is now `401`-deprecated. There is no
+   drop-in replacement: every alternative either wants a paid key, doesn't
+   cover the services we need, or (Spotify's own oEmbed) gives a title but no
+   artist.
 
 ---
 
 ## Solution
 
-A server-side proxy calls Odesli without an `Origin` header, with a named
-`User-Agent`, and re-emits the JSON with the correct ACAO header. Odesli's
-response shape is preserved verbatim, so the client data model is unchanged.
+The resolver fetches the pasted album page itself, runs a small per-service
+extraction routine, then looks up the same album on Deezer and Apple/iTunes
+(free keyless search APIs) plus Spotify (Client Credentials app-auth — optional,
+degrades to a no-op when unconfigured) to rebuild cross-service links. Amazon
+Music and SoundCloud were dropped from the registry entirely: both album pages
+are pure client-rendered JS shells with no server-rendered metadata at all
+(verified live — no `og:` tags, no JSON-LD, and SoundCloud's oEmbed endpoint
+404s outright), so there is nothing here to extract from either.
 
 ```
 Browser (Origin: https://groovepede.gregolsky.pl)
-  │  GET /v1/resolve?url=…&userCountry=US
+  │  GET /v1/album?url=…
   │  Header: x-gp-token: <signed token>
   ▼
 nginx on the Pi  (api.groovepede.gregolsky.pl)
   │  TLS (Let's Encrypt) · per-IP rate limit · fail2ban
   ▼
 resolver (node:http)
-  ├─ token verify · origin allowlist · host allowlist
+  ├─ token verify · origin allowlist · host allowlist (→ service slug)
   ├─ SQLite cache lookup (TTL 60 days)
-  │   hit  → return cached body
+  │   hit  → return cached record
   │   miss ↓
-  ├─ fetch https://api.song.link/v1-alpha.1/links?…
-  │   UA: Groovepede-Resolver/1.0 (+https://groovepede.gregolsky.pl)
-  │   non-200 → passthrough error (app retry logic handles it)
-  └─ write to SQLite · return body
+  ├─ EXTRACT: fetch the album's own page/API for that service
+  │   spotify → embed page's __NEXT_DATA__ · apple → itunes.apple.com/lookup
+  │   deezer  → api.deezer.com/album/{id} · tidal/pandora → og: tags
+  │   youtube → youtube.com/oembed
+  │   fetch failure, transient (network/429/5xx) → retryable {_error}
+  │   fetch failure, permanent (upstream 404/403/400/…) → 422 {_error:'not-found'}
+  │     (remapped to our OWN 422, never the raw upstream status — passing a
+  │     bare 404 through would trip fail2ban's any-404 jail on real users)
+  │   fetch OK but no album found → 422 {_error:'extraction-failed'}, NOT retryable
+  ├─ CROSS-LINK: with {artist, title} in hand, query Deezer + Apple search,
+  │   plus Spotify search via a cached Client Credentials app token (skip
+  │   whichever is the source service) — best-effort, never fails the add.
+  │   Any job that actually threw (not just "no match") caches the record for
+  │   1h instead of 60 days, so a retry isn't frozen out.
+  └─ write to SQLite · return the normalized record
 ```
 
 ---
 
 ## Handler contract
 
-**Endpoints:** `GET https://api.groovepede.gregolsky.pl/v1/resolve` (album links)
-and `/v1/artist` (artist image URL); `/healthz` returns `{ ok, commit }`.  
-**Query params:** `/v1/resolve` mirrors Odesli — `url` (required),
-`userCountry` (default `US`). `/v1/artist` takes `name` (required) and an
-optional Deezer `albumId`.  
+**Endpoints:** `GET https://api.groovepede.gregolsky.pl/v1/album` (album
+metadata + cross-links) and `/v1/artist` (artist image URL, unchanged by this
+rewrite); `/healthz` returns `{ ok, commit }`.
+
+**Query params:** `/v1/album` takes `url` (required) — the pasted album page.
+`/v1/artist` takes `name` (required) and an optional Deezer `albumId`.
+
 **Required header:** `x-gp-token: <ts>.<base64url-sig>` (ECDSA-P256; 5-minute
-window; bound to the URL, or to `artist:<name>|<albumId>`)  
-**Response shape:** verbatim Odesli JSON on success; `{ "_error": <status> }` on
-failure. `/v1/artist` returns `{ image: string|null, genres: string[] }` — image
-is a URL only, never image bytes; `genres` comes from the same Deezer
-`/album/{albumId}` lookup already made for the image (Deezer's own genre
-labels, only populated when `albumId` was supplied and matched — otherwise
-`[]`). Cache entries written before this field existed (30-day TTL) return
-without a `genres` key at all — callers must treat it as optional, not assume
-presence.  
+window; bound to the URL, or to `artist:<name>|<albumId>` — signing is
+unchanged from the retired `/v1/resolve`, so `sign.js` needed no client edit).
+
+**Response shape**, `/v1/album` success:
+
+```json
+{
+  "id": "spotify:4aawyAB9vmqN3uQ7FjRGTy",
+  "service": "spotify",
+  "title": "Global Warming",
+  "artist": "Pitbull",
+  "cover": "https://i.scdn.co/image/…",
+  "year": "2012",
+  "tags": ["Dance"],
+  "links": {
+    "spotify": { "url": "…", "nativeUri": "spotify:album:…" },
+    "deezer":  { "url": "…" },
+    "apple":   { "url": "…" }
+  }
+}
+```
+
+`links` holds **exact matches only** — never a search URL; those are built
+client-side on demand (`buildSearchUrl()` in `services.js`), not stored or
+returned by the resolver. Failure: `{ "_error": <status> }` for anything
+retryable (network, 429, 5xx passthrough from the upstream fetch);
+`{ "_error": "not-found" }` (HTTP 422) when the upstream itself returned a
+permanent failure (404/403/400/…) — remapped to our own 422 rather than
+passed through, so it can never trip fail2ban's any-404 ban jail;
+`{ "_error": "extraction-failed" }` (HTTP 422) when the fetch itself succeeded
+but no album could be found in the response — neither is retryable.
+
+`/v1/artist` is unchanged: `{ image: string|null, genres: string[] }` — image
+is a URL only, never image bytes; `genres` rides along for free on the same
+Deezer `/album/{albumId}` lookup used for the image, when `albumId` was
+supplied and matched (otherwise `[]`). Cache entries written before this field
+existed (30-day TTL) return without a `genres` key at all — callers must treat
+it as optional, not assume presence.
+
 **CORS:** explicit origin allowlist —
 `https://groovepede.gregolsky.pl` plus `http://localhost:5173` for dev,
 extendable via `ALLOWED_ORIGINS`. Never `*`.
@@ -79,30 +132,35 @@ extendable via `ALLOWED_ORIGINS`. Never `*`.
 ### Cache keys
 
 ```
-links:{userCountry}:{normalizedUrl}      TTL 60 days
-artist:{normalizedArtistName}            TTL 30 days (negatives cached too)
+album:v1:{normalizedUrl}                 TTL 60 days
+artist:{normalizedArtistName}             TTL 30 days (negatives cached too)
 ```
 
+`album:v1:` is a new prefix — the old `links:{cc}:{url}` entries from the
+Odesli-proxy era are simply never read again, no migration needed.
 `normalizedUrl` strips `si=` and `utm_*` while preserving service-specific
 params (Apple Music album ids are path segments, so they're unaffected).
 
 ### Input allowlist (SSRF hygiene)
 
-The handler rejects any `url` whose host is not one of:
+The handler rejects any `url` whose host is not one of, mapped straight to the
+service it identifies (and therefore which extractor runs):
 
 | Service | Hosts |
 |---|---|
 | Spotify | `open.spotify.com` |
 | Apple Music | `music.apple.com` |
-| YouTube / YT Music | `music.youtube.com`, `youtube.com`, `www.youtube.com` |
 | Deezer | `deezer.com`, `www.deezer.com` |
 | Tidal | `tidal.com`, `listen.tidal.com` |
-| Amazon Music | `music.amazon.com`, `music.amazon.co.uk`, `music.amazon.de` _(etc.)_ |
+| YouTube / YT Music | `music.youtube.com`, `youtube.com`, `www.youtube.com` |
 | Pandora | `pandora.com`, `www.pandora.com` |
-| SoundCloud | `soundcloud.com`, `www.soundcloud.com` |
+
+Amazon Music and SoundCloud are **not** in this list — see Solution above.
 
 `albumId` on `/v1/artist` is validated as digits-only before it reaches a URL
-path.
+path. Outbound cross-linking calls (`api.deezer.com`, `itunes.apple.com`) are
+separate, fixed URLs the resolver constructs itself — never built from the
+pasted URL, so they need no allowlist of their own.
 
 ---
 
@@ -113,6 +171,7 @@ path.
 | `x-gp-token` signature + 5-min replay window | resolver |
 | Origin allowlist (CORS) | resolver |
 | Host allowlist (SSRF) | resolver |
+| Per-upstream-fetch timeout (8s) + response size cap (512KB) | resolver |
 | Per-IP rate limit (`limit_req`) | nginx |
 | Ban on repeated 404s / blocked UAs | fail2ban |
 
@@ -126,17 +185,29 @@ fail2ban.
 *website* from reading a response in the user's browser; it does not stop a
 direct `curl` carrying a valid token. See `backend/README.md` § Security posture.
 
+**New surface from this rewrite:** the resolver now fetches consumer-facing
+HTML pages (not just small JSON APIs) from a residential Pi IP. The fetch
+timeout/size cap above bound the worst case; there is deliberately no
+server-side outbound *pacing* beyond that — the 60-day cache means each album
+is fetched at most once, ever, so volume stays low without it.
+
 ---
 
 ## Client integration
 
-- `frontend/src/js/config.js` — `ODESLI_BASE` points at the resolver;
+- `frontend/src/js/config.js` — `RESOLVER_BASE` points at the resolver;
   `GP_PRIVATE_KEY` comes from `VITE_GP_PRIVATE_KEY` (`.env.local` for dev, a
   GitHub Actions secret for CI). Generate the pair with `cd backend && make keygen`.
 - `frontend/src/js/sign.js` — `signRequestToken(payload)` returns
-  `"<ts>.<base64url(ECDSA-SHA256 over '${ts}\n${payload}')>"`.
-- `frontend/src/js/api.js` — `resolveAlbum` and `fetchDeezerArtistData` are the
-  only callers; every add path funnels through `resolveAlbum`.
+  `"<ts>.<base64url(ECDSA-SHA256 over '${ts}\n${payload}')>"`. Unchanged by
+  this rewrite.
+- `frontend/src/js/api.js` — `resolveAlbum` calls `/v1/album` and adopts the
+  response near-verbatim (no more `linksByPlatform` reshaping — the resolver
+  already returns the client's shape). `resolveAlbumResilient` wraps it with a
+  MusicBrainz fallback and is now used on every interactive resolve (paste,
+  share, refresh), not only the pending-retry loop — extraction is more
+  fragile than a dedicated API was, so a markup change degrades to MusicBrainz
+  instead of a bare error. `fetchDeezerArtistData` calls `/v1/artist`.
 
 ---
 
@@ -144,7 +215,8 @@ direct `curl` carrying a valid token. See `backend/README.md` § Security postur
 
 ```
 backend/
-├── resolver-core.mjs    — transport-agnostic core: token verify, CORS, allowlist, Odesli + artist lookup
+├── resolver-core.mjs    — transport-agnostic core: token verify, CORS, host allowlist,
+│                          per-service extraction, cross-linking, artist lookup
 ├── server.mjs           — node:http + node:sqlite adapter around the core
 ├── Dockerfile           — arm64 image (Node 22, --experimental-sqlite)
 ├── docker-compose.yml   — resolver + nginx + certbot + fail2ban
@@ -157,37 +229,31 @@ backend/
 
 ---
 
-## Layer 2 (future — UPC-based fallback resolver)
-
-When Odesli is unreachable, the resolver could fan out by UPC:
-
-1. Retrieve UPC from the source service (Spotify `/v1/albums/{id}` →
-   `external_ids.upc`)
-2. Fan out: Deezer `GET /album/upc:{upc}`, iTunes `GET /lookup?upc={upc}`,
-   Spotify `GET /search?q=upc:{upc}`
-3. Emit `linksByPlatform` keyed to match `services.js` `odesliKeys`
-
-Gaps: YouTube Music (no UPC lookup), Tidal (needs partner OAuth) — stay
-Odesli-only. Not in current scope; today's fallback is MusicBrainz, client-side.
-
----
-
 ## Tests
 
 **Backend unit** — `backend/resolver-core.test.mjs`, run with
 `node --test backend/resolver-core.test.mjs` (and in CI):
 
-- Cache miss → calls Odesli with app UA + optional key, caches body, returns it
-- Cache hit → no Odesli call
+- Cache miss → extracts, cross-links, caches the record, returns it
+- Cache hit → no upstream fetch at all
 - Unknown host → 400 before any outbound call
-- Odesli non-200 → passthrough (same status, `{ _error: status }`)
-- Missing `url` → 400
+- Upstream fetch failure (non-2xx / network) → retryable passthrough
+- Fetch OK but no album found → 422, non-retryable
+- Cross-linking is skipped for the source service, and its failure is non-fatal
+- One extraction test per service (Spotify, Apple, Deezer, Tidal, YouTube, Pandora)
 - Artist lookup: exact album-id hit, strict name match, mismatch rejection,
-  blank-placeholder handling
+  blank-placeholder handling — unchanged by this rewrite
 
 **App** — `frontend/src/js/api.test.js` stubs the resolver URL;
-`frontend/tests/*.spec.js` stub it through `tests/helpers.js`.
+`frontend/tests/*.spec.js` stub it through `tests/helpers.js`
+(`makeAlbumResponse`, `stubExternals({ resolver })`).
 
 **Post-deploy smoke** — `cd frontend && npm run test:smoke` opens the deployed
-site and exercises a real resolve, which is what catches signing-key drift
-between `VITE_GP_PRIVATE_KEY` and the Pi's `GP_PUBLIC_KEY`.
+site and exercises a real resolve per service, asserting the rendered card
+actually has a title and artist (not just a 200) — the canary for "a service
+changed its markup." YouTube and Pandora are not yet in that list: neither
+extractor's live behavior was confirmed during development (YouTube: no
+specific album-playlist URL verified; Pandora: US-geofenced, every probe from
+outside the US came back geo-blocked — possibly including the Pi itself,
+depending on where it's hosted). See the comment in
+`frontend/tests-smoke/smoke.spec.js`.

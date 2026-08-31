@@ -41,8 +41,8 @@
   </ul>
   <p>This data never leaves your device. Clearing your browser storage or uninstalling the app removes it entirely.</p>
 
-  <h2>Odesli (Songlink)</h2>
-  <p>When you paste an album link, Groovepede sends the URL to the <a href="https://odesli.co" target="_blank" rel="noopener">Odesli / Songlink API</a> to resolve cross-service links (e.g. turn a Spotify link into equivalent Apple Music and YouTube Music links). Odesli receives only the album URL — no personal identifiers. See <a href="https://odesli.co/privacy" target="_blank" rel="noopener">Odesli's privacy policy</a> for details.</p>
+  <h2>Link resolver</h2>
+  <p>When you paste an album link, Groovepede sends the URL to our own self-hosted resolver, which fetches that album's page from the streaming service you pasted it from and reads its title, artist, cover, and release year. It then checks Deezer and Apple Music's own search APIs for the same album, to give you working links on those services too. Only the album URL (and, for cross-linking, its artist and title) is ever sent — no personal identifiers, and no data about you as a listener.</p>
 
   <h2>Spotify (optional)</h2>
   <p>Connecting Spotify is entirely optional. If you choose to connect, Groovepede uses the <a href="https://developer.spotify.com/documentation/web-api" target="_blank" rel="noopener">Spotify Web API</a> with the <code>user-read-private</code> and <code>playlist-modify-private</code> scopes. This lets us display your name and profile picture, and sync your album queue to a private Spotify playlist. We never read your listening history, saved albums, or any other Spotify data.</p>

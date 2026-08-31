@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { stubExternals, makeOdesliResponse, KEYS as STORAGE_KEYS } from './helpers.js';
+import { stubExternals, makeAlbumResponse, KEYS as STORAGE_KEYS } from './helpers.js';
 
-const stubOdesliSuccess = context => stubExternals(context, { odesli: makeOdesliResponse() });
-const stubLastfm        = context => stubExternals(context, { odesli: null });
+const stubResolverSuccess = context => stubExternals(context, { resolver: makeAlbumResponse() });
+const stubLastfm          = context => stubExternals(context, { resolver: null });
 
 // ── Logged-out: app is accessible without Spotify ────────────────────────────
 
@@ -31,8 +31,8 @@ test('shows app when token expired and no refresh token — no login wall', asyn
   await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 });
 
-test('logged-out user can add an album via Odesli', async ({ page, context }) => {
-  await stubOdesliSuccess(context);
+test('logged-out user can add an album via the resolver', async ({ page, context }) => {
+  await stubResolverSuccess(context);
   await stubLastfm(context);
 
   await page.goto('/');
@@ -75,7 +75,7 @@ test('does NOT show login wall when token expired but refresh token exists', asy
   await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
 });
 
-test('adds album successfully after token refresh via Odesli', async ({ page, context }) => {
+test('adds album successfully after token refresh via the resolver', async ({ page, context }) => {
   await context.route('https://accounts.spotify.com/api/token', async route => {
     await route.fulfill({
       status: 200,
@@ -90,7 +90,7 @@ test('adds album successfully after token refresh via Odesli', async ({ page, co
       body: JSON.stringify({ display_name: 'Test User', images: [] }),
     });
   });
-  await stubOdesliSuccess(context);
+  await stubResolverSuccess(context);
   await stubLastfm(context);
 
   await context.addInitScript(({ keys }) => {
@@ -180,13 +180,13 @@ test('clears session when mid-session add fails with invalid_grant', async ({ pa
       body: JSON.stringify({ display_name: 'Test User', images: [] }),
     });
   });
-  // Odesli call itself fails with a non-retryable code (simulate Odesli 404 so no add)
-  // The invalid_grant should still fire from the firstTrackUri Spotify fetch
+  // The invalid_grant should fire from the firstTrackUri Spotify fetch, after
+  // the resolver call itself succeeds.
   await context.route('https://api.groovepede.gregolsky.pl/**', async route => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(makeOdesliResponse()),
+      body: JSON.stringify(makeAlbumResponse()),
     });
   });
   // Spotify firstTrackUri fetch returns 401

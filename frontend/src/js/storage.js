@@ -1,5 +1,7 @@
 import { STORAGE_KEY, DONE_KEY, PREF_SERVICE_KEY } from './config.js';
-import { findServiceByHost, serviceListText } from './services.js';
+import { SERVICES, findServiceByHost, serviceListText } from './services.js';
+
+const DEFAULT_PREF_SERVICE = 'spotify';
 
 // "Spotify, Apple Music, … or SoundCloud" — every service the parser accepts,
 // derived from the registry so an unsupported-link error can never advertise a
@@ -41,8 +43,9 @@ export function filterAlbums(albums, activeFilter, searchQuery) {
 }
 
 export function extractAlbumId(url) {
-  // Full URL: open.spotify.com/album/<id>
-  const urlMatch = url.match(/spotify\.com\/album\/([a-zA-Z0-9]+)/);
+  // Full URL: open.spotify.com/album/<id>, tolerating the locale-prefixed
+  // share-sheet form open.spotify.com/intl-XX/album/<id>.
+  const urlMatch = url.match(/spotify\.com\/(?:intl-[a-z]{2}\/)?album\/([a-zA-Z0-9]+)/);
   if (urlMatch) return urlMatch[1];
   // Spotify URI: spotify:album:<id>
   const uriMatch = url.match(/^spotify:album:([a-zA-Z0-9]+)$/);
@@ -52,9 +55,10 @@ export function extractAlbumId(url) {
   return null;
 }
 
-// Bare Spotify album ID for Web API calls. album.id is now an Odesli
-// entityUniqueId (e.g. "SPOTIFY_ALBUM::<id>"), so it can't be passed to
-// /v1/albums/<id> directly — derive it from the resolved Spotify link.
+// Bare Spotify album ID for Web API calls. album.id is a resolver-assigned
+// id (e.g. "spotify:<id>", or "SPOTIFY_ALBUM::<id>" on records resolved
+// before the Odesli-proxy era), so it can't be passed to /v1/albums/<id>
+// directly — derive it from the resolved Spotify link instead.
 export function spotifyAlbumId(album) {
   const url = album?.links?.spotify?.url;
   return url ? extractAlbumId(url) : null;
@@ -63,7 +67,7 @@ export function spotifyAlbumId(album) {
 export function serializeBackup(albums, done) {
   // Persist the full album record (snapshot), stripping only transient flags.
   // Cover art URL, links, tags, and firstTrackUri are all included so import
-  // is instant — no Odesli re-resolution needed.
+  // is instant — no re-resolution needed.
   const full = albums.map(({ _pending, _error, ...a }) => a);
   return JSON.stringify({ version: 4, exportedAt: new Date().toISOString(), albums: full, done });
 }
@@ -85,7 +89,7 @@ export function parseBackup(text) {
       return stub;
     }
 
-    // v1 / v2 / v4: carry metadata — restore directly without Odesli.
+    // v1 / v2 / v4: carry metadata — restore directly, no resolve needed.
     const upgraded = upgradeAlbumRecord(album); // normalises links.spotify for v1/v2
     const sourceUrl = upgraded.sourceUrl;
     if (!sourceUrl) return null;
@@ -107,7 +111,7 @@ export function parseBackup(text) {
 }
 
 /**
- * Merge a fresh Odesli resolve result into an existing album record.
+ * Merge a fresh resolve result into an existing album record.
  * Overwrites title/artist/cover/year/links; preserves id, sourceUrl,
  * addedAt, tags, and firstTrackUri (those are enriched separately).
  */
@@ -123,7 +127,12 @@ export function mergeRefreshedAlbum(existing, resolved) {
 }
 
 export function getPreferredService() {
-  return localStorage.getItem(PREF_SERVICE_KEY) || 'spotify';
+  const stored = localStorage.getItem(PREF_SERVICE_KEY);
+  // A previously-chosen preference (e.g. amazon/soundcloud, dropped from the
+  // registry) that no longer maps to a registered service falls back to the
+  // default rather than silently rendering nothing selected.
+  if (stored && SERVICES.some(s => s.slug === stored)) return stored;
+  return DEFAULT_PREF_SERVICE;
 }
 /** True when the user has explicitly chosen a preferred service (not just the default). */
 export function hasExplicitPreferredService() {
@@ -165,6 +174,14 @@ export function parseMusicLink(raw) {
     return { error: `Discogs isn't supported yet — paste a link from ${SUPPORTED()}` };
   if (host === 'youtu.be')
     return { error: "That's a track — paste a YouTube playlist link for an album" };
+  // Amazon Music and SoundCloud album pages are pure client-rendered JS shells
+  // with no server-rendered metadata (verified — no og:/JSON-LD, and
+  // SoundCloud's oEmbed endpoint 404s), so the resolver has no way to read
+  // them. A named reason beats the generic "site isn't supported" below.
+  if (host.includes('music.amazon.'))
+    return { error: `Amazon Music links can't be read automatically — paste a link from ${SUPPORTED()}` };
+  if (host === 'soundcloud.com')
+    return { error: `SoundCloud links can't be read automatically — paste a link from ${SUPPORTED()}` };
 
   // Registry lookup — covers all supported services
   const svc = findServiceByHost(host);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SERVICES, serviceNames, serviceListText, joinList, serviceLabel, findServiceByHost, ODESLI_KEY_MAP } from './services.js';
+import { SERVICES, serviceNames, serviceListText, joinList, serviceLabel, findServiceByHost, buildSearchUrl } from './services.js';
 
 describe('serviceNames', () => {
   it('returns every registered service label in registry order', () => {
@@ -9,9 +9,13 @@ describe('serviceNames', () => {
   it('advertises every service the parser accepts (no service left unmentioned)', () => {
     // The whole point of the helper: parsing and copy can't drift apart.
     expect(serviceNames()).toHaveLength(SERVICES.length);
-    expect(serviceNames()).toContain('SoundCloud');
     expect(serviceNames()).toContain('Pandora');
-    expect(serviceNames()).toContain('Amazon Music');
+    expect(serviceNames()).toContain('Tidal');
+  });
+
+  it('does not advertise Amazon Music or SoundCloud (neither is extractable)', () => {
+    expect(serviceNames()).not.toContain('Amazon Music');
+    expect(serviceNames()).not.toContain('SoundCloud');
   });
 });
 
@@ -76,12 +80,29 @@ describe('registry lookups', () => {
   });
 
   it('labels known slugs and returns empty for unknown ones', () => {
-    expect(serviceLabel('soundcloud')).toBe('SoundCloud');
+    expect(serviceLabel('tidal')).toBe('Tidal');
     expect(serviceLabel('nope')).toBe('');
+    expect(serviceLabel('amazon')).toBe(''); // dropped from the registry
+  });
+});
+
+describe('buildSearchUrl', () => {
+  it('builds a search-results URL combining artist and title', () => {
+    const url = buildSearchUrl('tidal', 'Electric Wizard', 'Dopethrone');
+    expect(url).toContain('tidal.com');
+    expect(url).toContain(encodeURIComponent('Electric Wizard Dopethrone'));
   });
 
-  it('maps every Odesli key to a registered slug', () => {
-    const slugs = SERVICES.map(s => s.slug);
-    for (const slug of Object.values(ODESLI_KEY_MAP)) expect(slugs).toContain(slug);
+  it('returns a distinct, plausible URL for every registered service', () => {
+    for (const svc of SERVICES) {
+      const url = buildSearchUrl(svc.slug, 'Radiohead', 'OK Computer');
+      expect(url, `no search URL for "${svc.slug}"`).toBeTruthy();
+      expect(url).toMatch(/^https:\/\//);
+    }
+  });
+
+  it('returns null for an unregistered slug', () => {
+    expect(buildSearchUrl('amazon', 'Radiohead', 'OK Computer')).toBeNull();
+    expect(buildSearchUrl('nope', 'Radiohead', 'OK Computer')).toBeNull();
   });
 });

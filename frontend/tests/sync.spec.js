@@ -83,7 +83,7 @@ function stubSpotify(context) {
 }
 
 // Resolver left unstubbed — the tests here that add an album register their own.
-const stubLastfm = context => stubExternals(context, { odesli: null });
+const stubLastfm = context => stubExternals(context, { resolver: null });
 
 // ── Logged-out sync isolation ─────────────────────────────────────────────────
 
@@ -186,21 +186,21 @@ test('adding an album with sync on triggers a push', async ({ page, context }) =
   })({ context }, async () => {
     await stubSpotify(context);
 
-    // Stub Odesli — add flow now resolves via Odesli, not Spotify albums API
+    // Stub the resolver — add flow now resolves via /v1/album, not Spotify's albums API
     const newId = '4aawyAB9vmqN3uQ7FjRGTy';
-    const odesliId = `SPOTIFY_ALBUM::${newId}`;
     await context.route('https://api.groovepede.gregolsky.pl/**', route => route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        entityUniqueId: odesliId,
-        entitiesByUniqueId: {
-          [odesliId]: { id: newId, type: 'album', title: 'New Album', artistName: 'New Artist',
-            thumbnailUrl: null, apiProvider: 'spotify', platforms: ['spotify'] },
-        },
-        linksByPlatform: {
-          spotify: { url: `https://open.spotify.com/album/${newId}`,
-            nativeAppUriMobile: `spotify:album:${newId}`, entityUniqueId: odesliId },
+        id: `spotify:${newId}`,
+        service: 'spotify',
+        title: 'New Album',
+        artist: 'New Artist',
+        cover: null,
+        year: null,
+        tags: [],
+        links: {
+          spotify: { url: `https://open.spotify.com/album/${newId}`, nativeUri: `spotify:album:${newId}` },
         },
       }),
     }));

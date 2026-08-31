@@ -22,10 +22,14 @@ test('adds album from Spotify URL without being logged in', async ({ page, conte
   await expect(page.locator('.card .card-title')).toContainText('Test Album');
 });
 
-// ── Odesli error paths ────────────────────────────────────────────────────────
+// ── Resolver error paths ───────────────────────────────────────────────────────
+// The add flow falls through to MusicBrainz on any resolver error (see
+// resolveAlbumResilient in api.js) — but stubExternals' default MusicBrainz
+// stub also 404s ("no match"), so both cases below still end up with the
+// resolver's own error, same as before that fallback existed.
 
-test('Odesli 404 shows error and does not add card', async ({ page, context }) => {
-  await stubExternals(context, { odesli: 404 });
+test('resolver 404 shows error and does not add card', async ({ page, context }) => {
+  await stubExternals(context, { resolver: 404 });
 
   await page.goto('/');
   await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
@@ -39,8 +43,8 @@ test('Odesli 404 shows error and does not add card', async ({ page, context }) =
   await expect(page.locator('.card')).not.toBeVisible();
 });
 
-test('Odesli 503 saves a pending card (retryable error)', async ({ page, context }) => {
-  await stubExternals(context, { odesli: 503 });
+test('resolver 503 saves a pending card (retryable error)', async ({ page, context }) => {
+  await stubExternals(context, { resolver: 503 });
 
   await page.goto('/');
   await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();

@@ -56,10 +56,12 @@ describe('serviceLabel', () => {
   it('returns YouTube Music for youtube', () => expect(serviceLabel('youtube')).toBe('YouTube Music'));
   it('returns Deezer for deezer', () => expect(serviceLabel('deezer')).toBe('Deezer'));
   it('returns Tidal for tidal', () => expect(serviceLabel('tidal')).toBe('Tidal'));
-  it('returns Amazon Music for amazon', () => expect(serviceLabel('amazon')).toBe('Amazon Music'));
   it('returns Pandora for pandora', () => expect(serviceLabel('pandora')).toBe('Pandora'));
-  it('returns SoundCloud for soundcloud', () => expect(serviceLabel('soundcloud')).toBe('SoundCloud'));
   it('returns empty string for unknown slug', () => expect(serviceLabel('whatever')).toBe(''));
+  it('returns empty string for a dropped slug (amazon/soundcloud)', () => {
+    expect(serviceLabel('amazon')).toBe('');
+    expect(serviceLabel('soundcloud')).toBe('');
+  });
 });
 
 // ── pickListenTarget ──────────────────────────────────────────────────────────
@@ -69,32 +71,70 @@ describe('serviceLabel', () => {
 describe('pickListenTarget', () => {
   it('reports the preferred service when the album is on it', () => {
     const album = { links: { spotify: { nativeUri: 'spotify:album:abc' }, apple: { url: 'https://music.apple.com/album/abc' } } };
-    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'spotify:album:abc', service: 'spotify' });
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'spotify:album:abc', service: 'spotify', exact: true });
   });
 
   it('names the fallback service when the preferred one has no link', () => {
     const album = { links: { apple: { url: 'https://music.apple.com/album/abc' } } };
-    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://music.apple.com/album/abc', service: 'apple' });
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://music.apple.com/album/abc', service: 'apple', exact: true });
   });
 
   it('keeps the url and service in step when a nativeUri wins over an earlier url', () => {
     const album = { links: { deezer: { url: 'https://deezer.com/album/1' }, tidal: { nativeUri: 'tidal://album/2' } } };
     // nativeUri beats url across services, so the label must say Tidal, not Deezer.
-    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'tidal://album/2', service: 'tidal' });
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'tidal://album/2', service: 'tidal', exact: true });
   });
 
-  it('falls back to the pasted url, tagged with the record’s own service', () => {
+  it('falls back to the pasted url, tagged with the record’s own service, when there is nothing to search for', () => {
     const album = { sourceUrl: 'https://original.com/album', service: 'tidal', links: {} };
-    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://original.com/album', service: 'tidal' });
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://original.com/album', service: 'tidal', exact: true });
   });
 
   it('reports a null service when the pasted url’s service is unknown', () => {
     const album = { sourceUrl: 'https://original.com/album', links: {} };
-    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://original.com/album', service: null });
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://original.com/album', service: null, exact: true });
   });
 
   it('returns nulls when there is nothing to open', () => {
-    expect(pickListenTarget({ links: {} }, 'spotify')).toEqual({ url: null, service: null });
+    expect(pickListenTarget({ links: {} }, 'spotify')).toEqual({ url: null, service: null, exact: true });
+  });
+
+  // ── search fallback (no exact link anywhere, but artist+title are known) ────
+
+  it('builds a search link on the preferred service when no exact link exists', () => {
+    const album = { artist: 'Electric Wizard', title: 'Dopethrone', links: {} };
+    const target = pickListenTarget(album, 'tidal');
+    expect(target.exact).toBe(false);
+    expect(target.service).toBe('tidal');
+    expect(target.url).toContain('tidal.com');
+    expect(target.url).toContain(encodeURIComponent('Electric Wizard Dopethrone'));
+  });
+
+  it('prefers an exact link on another service over a search on the preferred one', () => {
+    const album = { artist: 'Radiohead', title: 'OK Computer', links: { deezer: { url: 'https://deezer.com/album/1' } } };
+    expect(pickListenTarget(album, 'tidal')).toEqual({ url: 'https://deezer.com/album/1', service: 'deezer', exact: true });
+  });
+
+  it('falls back to a registered service’s search when the preferred slug no longer exists (e.g. dropped Amazon/SoundCloud)', () => {
+    const album = { artist: 'Radiohead', title: 'OK Computer', links: {} };
+    const target = pickListenTarget(album, 'amazon');
+    expect(target.exact).toBe(false);
+    expect(target.service).not.toBe('amazon');
+    expect(target.url).toBeTruthy();
+  });
+
+  it('does not offer a search link when artist or title is unknown (nothing to search for)', () => {
+    const album = { artist: null, title: null, sourceUrl: 'https://original.com/album', links: {} };
+    // Falls straight through to the pasted url rather than a garbage search query.
+    expect(pickListenTarget(album, 'tidal')).toEqual({ url: 'https://original.com/album', service: null, exact: true });
+  });
+
+  it('prefers the exact pasted url over a search fallback, even when artist/title are known', () => {
+    // Regression: the pasted url is a link the user knows is right — a search
+    // result is only a guess. When cross-linking hasn't found any exact link
+    // yet, the known-good pasted url must win over building a search link.
+    const album = { artist: 'Electric Wizard', title: 'Dopethrone', sourceUrl: 'https://original.com/album', service: 'tidal', links: {} };
+    expect(pickListenTarget(album, 'spotify')).toEqual({ url: 'https://original.com/album', service: 'tidal', exact: true });
   });
 });
 

@@ -14,8 +14,9 @@ process.env.GP_PUBLIC_KEY = publicKey.export({ format: 'der', type: 'spki' }).to
 
 const core = await import('./resolver-core.mjs');
 const {
-  resolveRequest, verifyToken, normalizeUrl, corsHeaders, _resetPublicKey,
-  artistRequest, normalizeArtist, isBlankArtistImage, pickArtistImage,
+  albumRequest, verifyToken, normalizeUrl, corsHeaders, _resetPublicKey,
+  artistRequest, normalizeArtist, normalizeAlbumTitle, isBlankArtistImage, pickArtistImage,
+  _resetSpotifyToken, SERVICE_HOSTS, EXTRACTORS,
 } = core;
 _resetPublicKey(); // ensure the test key is the one loaded
 
@@ -75,99 +76,595 @@ test('corsHeaders returns {} for an unknown origin', () => {
   assert.deepEqual(corsHeaders('https://evil.example'), {});
 });
 
-// ── resolveRequest ──────────────────────────────────────────────────────────
+// ── normalizeArtist / normalizeAlbumTitle ───────────────────────────────────
+
+test('normalizeArtist folds diacritics, case and punctuation', () => {
+  assert.equal(normalizeArtist('Bölzer'), 'bolzer');
+  assert.equal(normalizeArtist('Zeal & Ardor'), 'zeal ardor');
+});
+
+test('normalizeAlbumTitle strips edition/reissue qualifiers', () => {
+  assert.equal(normalizeAlbumTitle('Dopethrone (Deluxe Edition)'), 'dopethrone');
+  assert.equal(normalizeAlbumTitle('Nevermind - Remastered'), 'nevermind');
+  assert.equal(normalizeAlbumTitle('OK Computer'), 'ok computer');
+});
+
+test('every SERVICE_HOSTS value has a matching EXTRACTORS entry (catches drift automatically)', () => {
+  const services = new Set(SERVICE_HOSTS.values());
+  assert.ok(services.size > 0);
+  for (const service of services) {
+    assert.equal(typeof EXTRACTORS[service], 'function', `no extractor registered for service "${service}"`);
+  }
+});
+
+// ── albumRequest ────────────────────────────────────────────────────────────
 
 const noCache = { get: async () => null, put: async () => {} };
 const failFetch = () => { throw new Error('fetch should not be called'); };
 
-test('resolveRequest: OPTIONS preflight → 204 with CORS', async () => {
-  const r = await resolveRequest({
+const okText = (text) => ({ ok: true, status: 200, text: async () => text, body: null });
+const noMatch = { ok: true, status: 200, text: async () => JSON.stringify({ data: [] }), body: null };
+
+// A minimal Spotify /embed/album/<id> page — the real one is a full Next.js
+// document; only the __NEXT_DATA__ script tag is load-bearing here.
+function spotifyEmbedPage({ title = 'Global Warming', artist = 'Pitbull', releaseDate = '2012-11-16' } = {}) {
+  const blob = { props: { pageProps: { state: { data: { entity: {
+    title, subtitle: artist, releaseDate,
+    visualIdentity: { image: [
+      { url: 'https://i.scdn.co/image/small.jpg', maxWidth: 300 },
+      { url: 'https://i.scdn.co/image/big.jpg', maxWidth: 640 },
+    ] },
+  } } } } } };
+  return `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(blob)}</script></body></html>`;
+}
+
+test('albumRequest: OPTIONS preflight → 204 with CORS', async () => {
+  const r = await albumRequest({
     method: 'OPTIONS', origin: 'https://groovepede.gregolsky.pl',
-    url: SPOTIFY, cc: 'US', token: '', cache: noCache, fetchImpl: failFetch,
+    url: SPOTIFY, token: '', cache: noCache, fetchImpl: failFetch,
   });
   assert.equal(r.statusCode, 204);
   assert.equal(r.headers['access-control-allow-origin'], 'https://groovepede.gregolsky.pl');
 });
 
-test('resolveRequest: missing/invalid token → 403', async () => {
-  const r = await resolveRequest({
-    method: 'GET', origin: '', url: SPOTIFY, cc: 'US',
+test('albumRequest: missing/invalid token → 403', async () => {
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
     token: '', cache: noCache, fetchImpl: failFetch,
   });
   assert.equal(r.statusCode, 403);
   assert.deepEqual(r.body, { _error: 'forbidden' });
 });
 
-test('resolveRequest: unsupported host → 400 (even with a valid token)', async () => {
+test('albumRequest: unsupported host → 400 (even with a valid token)', async () => {
   const bad = 'https://evil.example/album/1';
-  const r = await resolveRequest({
-    method: 'GET', origin: '', url: bad, cc: 'US',
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: bad,
     token: makeToken(bad), cache: noCache, fetchImpl: failFetch,
   });
   assert.equal(r.statusCode, 400);
   assert.deepEqual(r.body, { _error: 'unsupported url' });
 });
 
-test('resolveRequest: cache hit returns cached body, no Odesli call', async () => {
-  const cached = { entityUniqueId: 'X', linksByPlatform: { spotify: {} } };
+test('albumRequest: Amazon Music and SoundCloud are not in the host allowlist', async () => {
+  for (const bad of ['https://music.amazon.com/albums/B08XYZ1234', 'https://soundcloud.com/artist/sets/album']) {
+    const r = await albumRequest({
+      method: 'GET', origin: '', url: bad,
+      token: makeToken(bad), cache: noCache, fetchImpl: failFetch,
+    });
+    assert.equal(r.statusCode, 400, bad);
+  }
+});
+
+test('albumRequest: cache hit returns cached body, no upstream fetch', async () => {
+  const cached = { id: 'spotify:abc', service: 'spotify', title: 'X', artist: 'Y', links: {} };
   const cache = { get: async () => cached, put: async () => { throw new Error('no put on hit'); } };
-  const r = await resolveRequest({
-    method: 'GET', origin: 'https://groovepede.gregolsky.pl', url: SPOTIFY, cc: 'US',
+  const r = await albumRequest({
+    method: 'GET', origin: 'https://groovepede.gregolsky.pl', url: SPOTIFY,
     token: makeToken(SPOTIFY), cache, fetchImpl: failFetch,
   });
   assert.equal(r.statusCode, 200);
   assert.deepEqual(r.body, cached);
 });
 
-test('resolveRequest: cache miss fetches Odesli, caches, returns body', async () => {
-  const odesli = { entityUniqueId: 'Y', linksByPlatform: { spotify: {}, appleMusic: {} } };
+test('albumRequest: cache miss extracts from Spotify embed, cross-links Deezer + Apple, caches', async () => {
   let putKey = null, putBody = null;
   const cache = { get: async () => null, put: async (k, b) => { putKey = k; putBody = b; } };
-  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => odesli, headers: { get: () => null } });
-  const r = await resolveRequest({
-    method: 'GET', origin: 'https://groovepede.gregolsky.pl', url: SPOTIFY, cc: 'US',
+  const fetchImpl = async (url) => {
+    if (url.includes('open.spotify.com/embed/')) return okText(spotifyEmbedPage());
+    if (url.includes('api.deezer.com/search/album')) {
+      return okText(JSON.stringify({ data: [{ id: 302, title: 'Global Warming', link: 'https://www.deezer.com/album/302', artist: { name: 'Pitbull' } }] }));
+    }
+    if (url.includes('itunes.apple.com/search')) {
+      return okText(JSON.stringify({ results: [{ artistName: 'Pitbull', collectionName: 'Global Warming', collectionViewUrl: 'https://music.apple.com/us/album/global-warming/999' }] }));
+    }
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: 'https://groovepede.gregolsky.pl', url: SPOTIFY,
     token: makeToken(SPOTIFY), cache, fetchImpl,
   });
   assert.equal(r.statusCode, 200);
-  assert.deepEqual(r.body, odesli);
-  assert.equal(putBody && putBody.entityUniqueId, 'Y');
-  assert.match(putKey, /^links:US:/);
+  assert.equal(r.body.title, 'Global Warming');
+  assert.equal(r.body.artist, 'Pitbull');
+  assert.equal(r.body.year, '2012');
+  assert.equal(r.body.cover, 'https://i.scdn.co/image/big.jpg'); // largest image wins
+  assert.equal(r.body.id, 'spotify:0c0hlchA9Q66PcL7xlPPfp');
+  assert.equal(r.body.links.spotify.url, SPOTIFY);
+  assert.equal(r.body.links.spotify.nativeUri, 'spotify:album:0c0hlchA9Q66PcL7xlPPfp');
+  assert.equal(r.body.links.deezer.url, 'https://www.deezer.com/album/302');
+  assert.equal(r.body.links.apple.url, 'https://music.apple.com/us/album/global-warming/999');
+  assert.equal(putKey, 'album:v1:' + normalizeUrl(SPOTIFY));
+  assert.equal(putBody.title, 'Global Warming');
 });
 
-test('resolveRequest: Odesli non-200 is passed through with _error + _retryAfter', async () => {
-  const fetchImpl = async () => ({
-    ok: false, status: 429, json: async () => ({}),
-    headers: { get: (h) => (h === 'retry-after' ? '30' : null) },
+test('albumRequest: cross-linking is skipped for the source service itself', async () => {
+  const DEEZER_URL = 'https://www.deezer.com/album/302127';
+  let deezerSearchCalled = false;
+  const fetchImpl = async (url) => {
+    if (url.includes('api.deezer.com/album/302127')) {
+      return okText(JSON.stringify({ title: 'Discovery', artist: { name: 'Daft Punk' }, cover_xl: 'https://cdn/cover.jpg', release_date: '2001-03-07', genres: { data: [{ name: 'Dance' }] } }));
+    }
+    if (url.includes('api.deezer.com/search/album')) { deezerSearchCalled = true; return noMatch; }
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: DEEZER_URL,
+    token: makeToken(DEEZER_URL), cache: noCache, fetchImpl,
   });
-  const r = await resolveRequest({
-    method: 'GET', origin: '', url: SPOTIFY, cc: 'US',
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.title, 'Discovery');
+  assert.equal(r.body.tags[0], 'Dance');
+  assert.equal(r.body.links.deezer.url, DEEZER_URL); // the source link, not a cross-link
+  assert.equal(deezerSearchCalled, false); // never asked Deezer to cross-link to itself
+});
+
+test('albumRequest: cross-link rejects a real but wrong candidate — strict match, not "any result"', async () => {
+  // Deezer/iTunes search is fuzzy and can return a plausible-looking but wrong
+  // hit (different artist, or a same-named album by someone else). Only an
+  // exact normalised artist+title match should be accepted — a non-empty but
+  // wrong result set must behave the same as no match at all.
+  const fetchImpl = async (url) => {
+    if (url.includes('open.spotify.com/embed/')) return okText(spotifyEmbedPage());
+    if (url.includes('api.deezer.com/search/album')) {
+      return okText(JSON.stringify({ data: [
+        { id: 1, title: 'Global Warming', link: 'https://www.deezer.com/album/1', artist: { name: 'Some Other Artist' } },
+      ] }));
+    }
+    if (url.includes('itunes.apple.com/search')) {
+      return okText(JSON.stringify({ results: [
+        { artistName: 'Pitbull', collectionName: 'A Completely Different Album', collectionViewUrl: 'https://music.apple.com/us/album/different/1' },
+      ] }));
+    }
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
+    token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.links.deezer, undefined);
+  assert.equal(r.body.links.apple, undefined);
+});
+
+test('albumRequest: cross-linking failure is non-fatal — record still returns', async () => {
+  const fetchImpl = async (url) => {
+    if (url.includes('open.spotify.com/embed/')) return okText(spotifyEmbedPage());
+    if (url.includes('api.deezer.com/search/album')) throw new Error('deezer is down');
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
+    token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.title, 'Global Warming');
+  assert.equal(r.body.links.deezer, undefined);
+  assert.equal(r.body.links.apple, undefined);
+});
+
+test('albumRequest: caches with a short TTL when a cross-link job actually failed (not just found nothing)', async () => {
+  let putTtl = null;
+  const cache = { get: async () => null, put: async (k, b, ttl) => { putTtl = ttl; } };
+  const fetchImpl = async (url) => {
+    if (url.includes('open.spotify.com/embed/')) return okText(spotifyEmbedPage());
+    if (url.includes('api.deezer.com/search/album')) throw new Error('deezer is down');
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
+    token: makeToken(SPOTIFY), cache, fetchImpl,
+  });
+  assert.equal(putTtl, core.PARTIAL_TTL_S);
+});
+
+test('albumRequest: caches with the full TTL when cross-linking simply found no match (no failure)', async () => {
+  let putTtl = null;
+  const cache = { get: async () => null, put: async (k, b, ttl) => { putTtl = ttl; } };
+  const fetchImpl = async (url) => {
+    if (url.includes('open.spotify.com/embed/')) return okText(spotifyEmbedPage());
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
+    token: makeToken(SPOTIFY), cache, fetchImpl,
+  });
+  assert.equal(putTtl, core.ALBUM_TTL_S);
+});
+
+test('albumRequest: cross-link query strips embedded quotes so the Deezer field syntax is not corrupted', async () => {
+  const TIDAL_URL = 'https://tidal.com/album/88888888';
+  // Artist name contains a literal quote — unstripped, this would break out
+  // of the artist:"..." field early and corrupt the rest of the query.
+  const html = `<html><head>
+    <meta property="og:title" content='Guns N" Roses - Very Special Christmas'>
+  </head></html>`;
+  let deezerQueryUrl = null;
+  const fetchImpl = async (url) => {
+    if (url === TIDAL_URL) return okText(html);
+    if (url.includes('api.deezer.com/search/album')) { deezerQueryUrl = url; return noMatch; }
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: TIDAL_URL,
+    token: makeToken(TIDAL_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  const decodedQuery = decodeURIComponent(new URL(deezerQueryUrl).searchParams.get('q'));
+  assert.equal(decodedQuery, 'artist:"Guns N Roses" album:"Very Special Christmas"');
+});
+
+test('albumRequest: cross-link prefers a real album over a same-named single/EP when both match', async () => {
+  const DEEZER_URL = 'https://www.deezer.com/album/555';
+  const fetchImpl = async (url) => {
+    if (url.includes('api.deezer.com/album/555')) {
+      return okText(JSON.stringify({ title: 'Reputation', artist: { name: 'Taylor Swift' }, release_date: '2017-11-10' }));
+    }
+    if (url.includes('itunes.apple.com/search')) {
+      return okText(JSON.stringify({ results: [
+        { artistName: 'Taylor Swift', collectionName: 'Reputation - Single', collectionViewUrl: 'https://music.apple.com/us/album/reputation-single/1' },
+        { artistName: 'Taylor Swift', collectionName: 'Reputation', collectionViewUrl: 'https://music.apple.com/us/album/reputation/2' },
+      ] }));
+    }
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: DEEZER_URL,
+    token: makeToken(DEEZER_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.links.apple.url, 'https://music.apple.com/us/album/reputation/2');
+});
+
+// ── Spotify Client Credentials cross-linking ────────────────────────────────
+
+test('crossLinkSpotify: no-ops (no fetch, no error) when SPOTIFY_CLIENT_ID/SECRET are unset', async () => {
+  delete process.env.SPOTIFY_CLIENT_ID;
+  delete process.env.SPOTIFY_CLIENT_SECRET;
+  _resetSpotifyToken();
+  const DEEZER_URL = 'https://www.deezer.com/album/302127';
+  const fetchImpl = async (url) => {
+    if (url.includes('api.deezer.com/album/302127')) {
+      return okText(JSON.stringify({ title: 'Discovery', artist: { name: 'Daft Punk' }, release_date: '2001-03-07' }));
+    }
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    if (url.includes('accounts.spotify.com') || url.includes('api.spotify.com')) {
+      throw new Error('should never call Spotify when unconfigured: ' + url);
+    }
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: DEEZER_URL,
+    token: makeToken(DEEZER_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.links.spotify, undefined);
+});
+
+test('crossLinkSpotify: mints a Client Credentials token and finds the album, caching the token across calls', async () => {
+  process.env.SPOTIFY_CLIENT_ID = 'test-client-id';
+  process.env.SPOTIFY_CLIENT_SECRET = 'test-client-secret';
+  _resetSpotifyToken();
+  const DEEZER_URL = 'https://www.deezer.com/album/302127';
+  let tokenMints = 0;
+  const fetchImpl = async (url, opts) => {
+    if (url.includes('api.deezer.com/album/302127')) {
+      return okText(JSON.stringify({ title: 'Discovery', artist: { name: 'Daft Punk' }, release_date: '2001-03-07' }));
+    }
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    if (url.includes('accounts.spotify.com/api/token')) {
+      tokenMints++;
+      assert.equal(opts.method, 'POST');
+      assert.match(opts.headers.Authorization, /^Basic /);
+      return okText(JSON.stringify({ access_token: 'app-token-abc', expires_in: 3600 }));
+    }
+    if (url.includes('api.spotify.com/v1/search')) {
+      assert.equal(opts.headers.Authorization, 'Bearer app-token-abc');
+      return okText(JSON.stringify({ albums: { items: [
+        { name: 'Discovery', album_type: 'album', id: '2noRn2Aes5aoNVsU6iWThc',
+          artists: [{ name: 'Daft Punk' }], external_urls: { spotify: 'https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc' } },
+      ] } }));
+    }
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: DEEZER_URL,
+    token: makeToken(DEEZER_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.links.spotify.url, 'https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc');
+  assert.equal(r.body.links.spotify.nativeUri, 'spotify:album:2noRn2Aes5aoNVsU6iWThc');
+  assert.equal(tokenMints, 1);
+
+  // A second request should reuse the cached in-memory token, not re-mint.
+  const r2 = await albumRequest({
+    method: 'GET', origin: '', url: 'https://www.deezer.com/album/999999999',
+    token: makeToken('https://www.deezer.com/album/999999999'), cache: noCache,
+    fetchImpl: async (url, opts) => {
+      if (url.includes('api.deezer.com/album/999999999')) {
+        return okText(JSON.stringify({ title: 'Homework', artist: { name: 'Daft Punk' }, release_date: '1997-01-20' }));
+      }
+      if (url.includes('itunes.apple.com/search')) return noMatch;
+      if (url.includes('api.spotify.com/v1/search')) {
+        assert.equal(opts.headers.Authorization, 'Bearer app-token-abc');
+        return okText(JSON.stringify({ albums: { items: [] } }));
+      }
+      if (url.includes('accounts.spotify.com')) throw new Error('should reuse cached token, not re-mint');
+      throw new Error('unexpected fetch: ' + url);
+    },
+  });
+  assert.equal(r2.statusCode, 200);
+  assert.equal(tokenMints, 1);
+
+  delete process.env.SPOTIFY_CLIENT_ID;
+  delete process.env.SPOTIFY_CLIENT_SECRET;
+  _resetSpotifyToken();
+});
+
+test('albumRequest: extraction failure (fetched fine, no album found) → 422, non-retryable', async () => {
+  const fetchImpl = async () => okText('<html><body>not an album page</body></html>');
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
+    token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 422);
+  assert.deepEqual(r.body, { _error: 'extraction-failed' });
+});
+
+test('albumRequest: upstream 5xx is passed through as a retryable error', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 503, text: async () => '' });
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
+    token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 503);
+  assert.deepEqual(r.body, { _error: 503 });
+});
+
+test('albumRequest: upstream 429 is passed through as a retryable error', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 429, text: async () => '' });
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
     token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
   });
   assert.equal(r.statusCode, 429);
-  assert.deepEqual(r.body, { _error: 429, _retryAfter: 30 });
+  assert.deepEqual(r.body, { _error: 429 });
 });
 
-test('resolveRequest: Odesli network error → 503 network', async () => {
+test('albumRequest: upstream 404 is remapped to our own 422 (not passed through raw, so it never trips the 404 ban jail)', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 404, text: async () => '' });
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
+    token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 422);
+  assert.deepEqual(r.body, { _error: 'not-found' });
+});
+
+test('albumRequest: upstream network error → 503 network', async () => {
   const fetchImpl = async () => { throw new Error('ECONNRESET'); };
-  const r = await resolveRequest({
-    method: 'GET', origin: '', url: SPOTIFY, cc: 'US',
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SPOTIFY,
     token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
   });
   assert.equal(r.statusCode, 503);
   assert.deepEqual(r.body, { _error: 'network' });
 });
 
+// ── Per-service extraction (through albumRequest) ───────────────────────────
+
+test('albumRequest: Apple — extracts via iTunes lookup, upscales artwork, keeps the genre', async () => {
+  const APPLE_URL = 'https://music.apple.com/us/album/ok-computer/1097861328';
+  const fetchImpl = async (url) => {
+    if (url.includes('itunes.apple.com/lookup')) {
+      return okText(JSON.stringify({ results: [{
+        wrapperType: 'collection', collectionType: 'Album', collectionId: 1097861328,
+        artistName: 'Radiohead', collectionName: 'OK Computer',
+        artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/abc/100x100bb.jpg',
+        releaseDate: '1997-05-21T00:00:00Z', primaryGenreName: 'Alternative',
+      }] }));
+    }
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: APPLE_URL,
+    token: makeToken(APPLE_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.title, 'OK Computer');
+  assert.equal(r.body.artist, 'Radiohead');
+  assert.equal(r.body.year, '1997');
+  assert.equal(r.body.cover, 'https://is1-ssl.mzstatic.com/image/thumb/abc/600x600bb.jpg');
+  assert.deepEqual(r.body.tags, ['Alternative']);
+  assert.equal(r.body.id, 'apple:1097861328');
+});
+
+test('albumRequest: Apple — numeric album title picks the LAST numeric path segment as the id', async () => {
+  // "/album/1984/1440833608" — a numerically-titled album. The id must be
+  // 1440833608 (the last segment), not 1984 (the title, which happens to
+  // also be numeric).
+  const APPLE_URL = 'https://music.apple.com/us/album/1984/1440833608';
+  const fetchImpl = async (url) => {
+    if (url.includes('itunes.apple.com/lookup')) {
+      assert.match(url, /id=1440833608/);
+      return okText(JSON.stringify({ results: [{
+        wrapperType: 'collection', collectionType: 'Album', collectionId: 1440833608,
+        artistName: 'David Bowie', collectionName: '1984',
+      }] }));
+    }
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: APPLE_URL,
+    token: makeToken(APPLE_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.title, '1984');
+  assert.equal(r.body.id, 'apple:1440833608');
+});
+
+test('albumRequest: Apple — rejects a lookup result whose collectionId does not match the requested id', async () => {
+  const APPLE_URL = 'https://music.apple.com/us/album/some-album/123456';
+  const fetchImpl = async (url) => {
+    if (url.includes('itunes.apple.com/lookup')) {
+      // iTunes /lookup can return unrelated results for a stale/bad id.
+      return okText(JSON.stringify({ results: [{
+        wrapperType: 'collection', collectionType: 'Album', collectionId: 999999,
+        artistName: 'Someone Else', collectionName: 'Unrelated Album',
+      }] }));
+    }
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: APPLE_URL,
+    token: makeToken(APPLE_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 422);
+});
+
+test('albumRequest: Tidal — extracts artist/title from og:title, splitting on the first " - "', async () => {
+  const TIDAL_URL = 'https://tidal.com/album/77640617';
+  const html = `<html><head>
+    <meta property="og:title" content="U2 - Achtung Baby">
+    <meta property="og:image" content="https://resources.tidal.com/images/cover.jpg">
+  </head></html>`;
+  const fetchImpl = async (url) => {
+    if (url === TIDAL_URL) return okText(html);
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: TIDAL_URL,
+    token: makeToken(TIDAL_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.artist, 'U2');
+  assert.equal(r.body.title, 'Achtung Baby');
+  assert.equal(r.body.cover, 'https://resources.tidal.com/images/cover.jpg');
+  assert.equal(r.body.id, 'tidal:77640617');
+});
+
+test('albumRequest: Tidal — og:title survives an unescaped apostrophe in the content attribute', async () => {
+  // A naive [^"']* content regex truncates at the apostrophe inside "N'".
+  const TIDAL_URL = 'https://tidal.com/album/11111111';
+  const html = `<html><head>
+    <meta property="og:title" content="Guns N' Roses - Appetite for Destruction">
+    <meta property="og:image" content="https://resources.tidal.com/images/cover2.jpg">
+  </head></html>`;
+  const fetchImpl = async (url) => {
+    if (url === TIDAL_URL) return okText(html);
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: TIDAL_URL,
+    token: makeToken(TIDAL_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.artist, "Guns N' Roses");
+  assert.equal(r.body.title, 'Appetite for Destruction');
+});
+
+test('albumRequest: YouTube — extracts via oEmbed, strips the " - Topic" channel suffix', async () => {
+  const YT_URL = 'https://music.youtube.com/playlist?list=OLAK5uy_abc123';
+  const fetchImpl = async (url) => {
+    if (url.includes('youtube.com/oembed')) {
+      return okText(JSON.stringify({ title: 'Global Warming', author_name: 'Pitbull - Topic', thumbnail_url: 'https://i.ytimg.com/thumb.jpg' }));
+    }
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: YT_URL,
+    token: makeToken(YT_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.title, 'Global Warming');
+  assert.equal(r.body.artist, 'Pitbull');
+  assert.equal(r.body.id, 'youtube:OLAK5uy_abc123');
+});
+
+test('albumRequest: Pandora — splits og:title on "<Title> by <Artist>"', async () => {
+  const PANDORA_URL = 'https://www.pandora.com/artist/daft-punk/discovery/AL123';
+  const html = `<meta property="og:title" content="Discovery by Daft Punk">`;
+  const fetchImpl = async (url) => {
+    if (url === PANDORA_URL) return okText(html);
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: PANDORA_URL,
+    token: makeToken(PANDORA_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.title, 'Discovery');
+  assert.equal(r.body.artist, 'Daft Punk');
+});
+
+test('albumRequest: Deezer extraction errors when the API returns an error body (not a real album)', async () => {
+  const DEEZER_URL = 'https://www.deezer.com/album/999999999';
+  const fetchImpl = async (url) => {
+    if (url.includes('api.deezer.com/album/999999999')) return okText(JSON.stringify({ error: { message: 'no data' } }));
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: DEEZER_URL,
+    token: makeToken(DEEZER_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 422);
+});
+
+test('albumRequest: Deezer quota-exceeded (error.code 4) is retryable, not a permanent 422', async () => {
+  const DEEZER_URL = 'https://www.deezer.com/album/1234';
+  const fetchImpl = async (url) => {
+    if (url.includes('api.deezer.com/album/1234')) {
+      return okText(JSON.stringify({ error: { code: 4, message: 'Quota limit exceeded' } }));
+    }
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: DEEZER_URL,
+    token: makeToken(DEEZER_URL), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 429);
+  assert.deepEqual(r.body, { _error: 429 });
+});
+
 // ── Artist images ───────────────────────────────────────────────────────────
 
 const PIC = 'https://cdn-images.dzcdn.net/images/artist/09bbbb9b4f4cab65db1e69a7d4005aec/1000x1000-000000-80-0-0.jpg';
-
-test('normalizeArtist folds diacritics, case and punctuation', () => {
-  assert.equal(normalizeArtist('Bölzer'), 'bolzer');
-  assert.equal(normalizeArtist('Vígundr'), 'vigundr');
-  assert.equal(normalizeArtist('Zeal & Ardor'), 'zeal ardor');
-  assert.equal(normalizeArtist('  MASTER  BOOT   RECORD '), 'master boot record');
-  assert.equal(normalizeArtist(''), '');
-});
 
 test('isBlankArtistImage: both Deezer placeholder forms are treated as absent', () => {
   // Empty id segment, and the MD5 of the empty string — both observed live.
@@ -226,7 +723,7 @@ test('artistRequest: albumId path is exact — no search call is made', async ()
   const calls = [];
   const fetchImpl = async (url) => {
     calls.push(url);
-    return { ok: true, status: 200, json: async () => ({ artist: { picture_xl: PIC } }) };
+    return okText(JSON.stringify({ artist: { picture_xl: PIC } }));
   };
   const r = await artistRequest({
     method: 'GET', origin: '', name: 'Witch Club Satan', albumId: '542142182',
@@ -239,10 +736,9 @@ test('artistRequest: albumId path is exact — no search call is made', async ()
 });
 
 test('artistRequest: returns genres from the same Deezer album response used for the image', async () => {
-  const fetchImpl = async () => ({
-    ok: true, status: 200,
-    json: async () => ({ artist: { picture_xl: PIC }, genres: { data: [{ name: 'Rock' }, { name: 'Alternative' }] } }),
-  });
+  const fetchImpl = async () => okText(JSON.stringify(
+    { artist: { picture_xl: PIC }, genres: { data: [{ name: 'Rock' }, { name: 'Alternative' }] } }
+  ));
   const r = await artistRequest({
     method: 'GET', origin: '', name: 'Radiohead', albumId: '302127',
     token: artistToken('Radiohead', '302127'), cache: noCache, fetchImpl,
@@ -255,8 +751,8 @@ test('artistRequest: falls back to strict search when the album lookup yields no
   const calls = [];
   const fetchImpl = async (url) => {
     calls.push(url);
-    if (url.includes('/album/')) return { ok: true, status: 200, json: async () => ({ artist: {} }) };
-    return { ok: true, status: 200, json: async () => ({ data: [{ name: 'Hamulec', picture_xl: PIC }] }) };
+    if (url.includes('/album/')) return okText(JSON.stringify({ artist: {} }));
+    return okText(JSON.stringify({ data: [{ name: 'Hamulec', picture_xl: PIC }] }));
   };
   const r = await artistRequest({
     method: 'GET', origin: '', name: 'Hamulec', albumId: '1',
@@ -270,7 +766,7 @@ test('artistRequest: falls back to strict search when the album lookup yields no
 test('artistRequest: no match → image null, and the negative is cached (with empty genres)', async () => {
   let putKey = null, putBody = null;
   const cache = { get: async () => null, put: async (k, b) => { putKey = k; putBody = b; } };
-  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ name: 'Black Bomb A', picture_xl: PIC }] }) });
+  const fetchImpl = async () => okText(JSON.stringify({ data: [{ name: 'Black Bomb A', picture_xl: PIC }] }));
   const r = await artistRequest({
     method: 'GET', origin: '', name: 'Black Limbo', albumId: '',
     token: artistToken('Black Limbo'), cache, fetchImpl,
@@ -303,7 +799,7 @@ test('artistRequest: OPTIONS preflight → 204 with CORS, no token needed', asyn
 });
 
 test('artistRequest: unknown origin gets no CORS headers', async () => {
-  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) });
+  const fetchImpl = async () => okText(JSON.stringify({ data: [] }));
   const r = await artistRequest({
     method: 'GET', origin: 'https://evil.example', name: 'Bölzer', albumId: '',
     token: artistToken('Bölzer'), cache: noCache, fetchImpl,

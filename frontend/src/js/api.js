@@ -1,8 +1,7 @@
-import { LASTFM_KEY, ODESLI_BASE, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
+import { LASTFM_KEY, RESOLVER_BASE, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
 import { signRequestToken } from './sign.js';
 import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
-import { ODESLI_KEY_MAP } from './services.js';
 import { createThrottle } from './throttle.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
@@ -31,7 +30,7 @@ function rateLimitError(res) {
 
 function makeThrottles() {
   return {
-    odesli:      createThrottle({ ...THROTTLE.odesli,      isRateLimited: is429, retryAfterOf: retryAfterMs }),
+    resolver:    createThrottle({ ...THROTTLE.resolver,    isRateLimited: is429, retryAfterOf: retryAfterMs }),
     musicbrainz: createThrottle({ ...THROTTLE.musicbrainz, isRateLimited: is429, retryAfterOf: retryAfterMs }),
     lastfm:      createThrottle({ ...THROTTLE.lastfm }),  // rarely rate-limits; pace only
     spotify:     createThrottle({ ...THROTTLE.spotify,    isRateLimited: is429, retryAfterOf: retryAfterMs }),
@@ -45,12 +44,19 @@ let throttles = makeThrottles();
 /** Override throttles (tests only) — inject no-op / fake-clock instances. */
 export function _setThrottles(t) { throttles = { ...throttles, ...t }; }
 
-// ── Odesli (universal resolver) ───────────────────────────────────────────────
+// ── Resolver (album-page extraction + cross-service links) ───────────────────
 
+/**
+ * Resolve a pasted album URL to a full record. The resolver (backend/) fetches
+ * the album page itself (browsers can't — CORS), extracts title/artist/cover/
+ * year with a per-service routine, and cross-links the two services with a
+ * free keyless search API (Deezer, Apple). Returns the resolver's record with
+ * sourceUrl/addedAt/firstTrackUri layered on, or `{ _error }` on failure.
+ */
 export async function resolveAlbum(inputUrl) {
   try {
-    const params = new URLSearchParams({ url: inputUrl, userCountry: 'US' });
-    const res = await fetch(`${ODESLI_BASE}/v1/resolve?${params}`, {
+    const params = new URLSearchParams({ url: inputUrl });
+    const res = await fetch(`${RESOLVER_BASE}/v1/album?${params}`, {
       headers: { 'x-gp-token': await signRequestToken(inputUrl) },
     });
     if (!res.ok) {
@@ -59,30 +65,16 @@ export async function resolveAlbum(inputUrl) {
     }
     const data = await res.json();
 
-    const primary = data.entitiesByUniqueId?.[data.entityUniqueId] || {};
-
-    // Build normalized links map
-    const links = {};
-    for (const [oKey, entry] of Object.entries(data.linksByPlatform || {})) {
-      const slug = ODESLI_KEY_MAP[oKey];
-      if (!slug) continue;
-      if (links[slug]) continue; // youtube wins over youtubeMusic
-      links[slug] = {
-        url: entry.url,
-        nativeUri: entry.nativeAppUriMobile || entry.nativeAppUriDesktop || null,
-      };
-    }
-
     return {
-      id:            data.entityUniqueId,
+      id:            data.id,
       sourceUrl:     inputUrl,
-      title:         primary.title || null,
-      artist:        primary.artistName || null,
-      cover:         primary.thumbnailUrl || null,
-      year:          null, // Odesli doesn't return release year; enriched separately
-      tags:          [],
+      title:         data.title || null,
+      artist:        data.artist || null,
+      cover:         data.cover || null,
+      year:          data.year || null,
+      tags:          data.tags || [],
       addedAt:       new Date().toISOString(),
-      links,
+      links:         data.links || {},
       firstTrackUri: null, // fetched lazily from Spotify (by add flow / sync.js) when a spotify link exists
     };
   } catch {
@@ -90,7 +82,7 @@ export async function resolveAlbum(inputUrl) {
   }
 }
 
-// ── Resilient resolver (Odesli + MusicBrainz fallback) ───────────────────────
+// ── Resilient resolver (our resolver + MusicBrainz fallback) ─────────────────
 
 /**
  * Map a MusicBrainz url-lookup response to an album record.
@@ -135,7 +127,7 @@ export function parseMbRelease(data, sourceUrl, service) {
  * Genres for an already-known MusicBrainz release. MB's `/url` lookup (used
  * to find the release in the first place) doesn't support `inc=genres` — only
  * relationship includes — so this is a second, separate request. Only called
- * for records MusicBrainz itself resolved (Odesli already failed on them), so
+ * for records MusicBrainz itself resolved (our resolver already failed on them), so
  * it's not a cost paid on every album. Runs inside the same throttled slot as
  * the release lookup that found `mbid` (see resolveAlbumMusicBrainz) rather
  * than taking its own throttles.musicbrainz.run() — nesting a second call
@@ -172,22 +164,22 @@ export async function resolveAlbumMusicBrainz(sourceUrl, service) {
 }
 
 /**
- * Resolve via Odesli (throttled), falling back to MusicBrainz (throttled).
- * Skips Odesli entirely when its throttler is in cooldown.
+ * Resolve via our resolver (throttled), falling back to MusicBrainz (throttled).
+ * Skips the resolver entirely when its throttler is in cooldown.
  * Returns a resolved record or the last error (stub stays pending for next pass).
  */
 export async function resolveAlbumResilient(sourceUrl, { service } = {}) {
-  let lastOdesliErr;
-  if (!throttles.odesli.coolingDown()) {
-    lastOdesliErr = await throttles.odesli.run(() => resolveAlbum(sourceUrl));
-    if (!lastOdesliErr._error) return lastOdesliErr;
+  let lastResolverErr;
+  if (!throttles.resolver.coolingDown()) {
+    lastResolverErr = await throttles.resolver.run(() => resolveAlbum(sourceUrl));
+    if (!lastResolverErr._error) return lastResolverErr;
   } else {
-    lastOdesliErr = { _error: 429 }; // cooldown active = effectively rate-limited
+    lastResolverErr = { _error: 429 }; // cooldown active = effectively rate-limited
   }
   // MusicBrainz fallback (throttled independently)
   const mbRec = await throttles.musicbrainz.run(() => resolveAlbumMusicBrainz(sourceUrl, service));
   if (!mbRec._error) return mbRec;
-  return lastOdesliErr; // both failed — caller leaves stub pending
+  return lastResolverErr; // both failed — caller leaves stub pending
 }
 
 // ── Spotify ───────────────────────────────────────────────────────────────────
@@ -244,7 +236,7 @@ export async function fetchAlbumFirstTrack(albumId) {
 // Fetch Last.fm tags in the background and update the saved album.
 // onUpdate() is called after storage is written so the caller can re-render.
 export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate) {
-  if (!artistName) return; // sparse Odesli entities can resolve with no artist
+  if (!artistName) return; // extraction can succeed with a title but no artist
   const primaryArtist = artistName.split(',')[0].trim();
 
   // Fetch artist + album tags in parallel; artist tags take priority
@@ -253,21 +245,29 @@ export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate
     fetchLastfmAlbum(primaryArtist, albumTitle),
   ]);
 
-  // Merge: artist tags first, then album tags that aren't duplicates
-  const seen = new Set(artistTags);
-  const merged = [...artistTags];
+  const albums = loadAlbums();
+  const album  = albums.find(x => x.id === albumId);
+
+  // Merge: the album's existing (resolver-supplied) tags come first — they're
+  // already curated per-album — then artist tags, then album tags, skipping
+  // duplicates at each step. This is an enrichment pass, not a replacement:
+  // Last.fm coverage is spotty, and overwriting a resolver-supplied genre
+  // with an empty/thinner Last.fm result would be a regression, not enrichment.
+  const existingTags = album?.tags || [];
+  const seen = new Set(existingTags);
+  const merged = [...existingTags];
+  for (const t of artistTags) {
+    if (!seen.has(t)) { merged.push(t); seen.add(t); }
+  }
   for (const t of albumData.tags) {
     if (!seen.has(t)) { merged.push(t); seen.add(t); }
   }
 
-  // Fall back to similar artists if we still have nothing
+  // Fall back to similar artists if we still have nothing at all
   let tags = merged;
   if (!tags.length) {
     tags = await fetchTagsFromSimilarArtists(primaryArtist);
   }
-
-  const albums = loadAlbums();
-  const album  = albums.find(x => x.id === albumId);
 
   // Last.fm coverage thins out fast for obscure artists. Deezer's own (coarser)
   // genre labels fill that gap — but only when Last.fm came up thin, so a
@@ -395,7 +395,7 @@ async function fetchTagsFromSimilarArtists(artist) {
     .map(([name]) => name);
 }
 
-// ── Spotify album search (fills gaps from Odesli asymmetric matching) ─────────
+// ── Spotify album search (fills gaps from extraction/cross-linking misses) ───
 
 /**
  * Normalise an album/artist string for fuzzy matching:
@@ -505,7 +505,7 @@ export async function fetchLastfmArtist(artistName) {
 // Deliberately NOT from Last.fm: artist.getinfo has returned the same
 // placeholder image for every artist since Last.fm dropped artist photos in
 // 2019 (album.getinfo images are still real — it's artist images specifically).
-// Odesli carries no artist imagery either, only album thumbnails.
+// Album-page extraction carries no artist imagery either, only album covers.
 //
 // Order: Spotify (caller, when connected — explicitly licensed and already
 // attributed) → TheAudioDB (browser-direct, CORS-enabled, free) → Deezer via
@@ -542,9 +542,10 @@ export async function fetchAudiodbArtistImage(artistName) {
 
 /**
  * Deezer artist image + genres via our resolver, in a single call. `albumId`
- * (Deezer's own album id, which Odesli hands us for free in links.deezer)
- * makes the lookup exact; without it the resolver falls back to a strict name
- * match and returns no genres (Deezer's search endpoint doesn't carry them).
+ * (Deezer's own album id, which /v1/album hands us for free in links.deezer
+ * whenever cross-linking found a match) makes the lookup exact; without it the
+ * resolver falls back to a strict name match and returns no genres (Deezer's
+ * search endpoint doesn't carry them).
  * Returns `{ image: string|null, genres: string[] }`, a rate-limit error
  * object (`{ _error: 429, ... }`), or `null` on failure.
  */
@@ -555,7 +556,7 @@ export async function fetchDeezerArtistData(artistName, albumId) {
       if (albumId) params.set('albumId', albumId);
       // Signed payload must match exactly what the resolver reconstructs.
       const signed = `artist:${artistName}|${albumId || ''}`;
-      const res = await fetch(`${ODESLI_BASE}/v1/artist?${params}`, {
+      const res = await fetch(`${RESOLVER_BASE}/v1/artist?${params}`, {
         headers: { 'x-gp-token': await signRequestToken(signed) },
       });
       if (!res.ok) return res.status === 429 ? rateLimitError(res) : null;

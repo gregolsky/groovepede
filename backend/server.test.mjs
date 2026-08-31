@@ -69,16 +69,17 @@ test('handleRequest: /healthz reports GIT_SHA when set', async (t) => {
   assert.deepEqual(JSON.parse(res.body), { ok: true, commit: 'abc123' });
 });
 
-test('handleRequest: /v1/resolve delegates to resolveRequest with parsed params', async () => {
-  const url = 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy';
+test('handleRequest: /v1/album delegates to albumRequest with parsed params', async () => {
+  const url = 'https://www.deezer.com/album/302127';
   const token = makeToken(url);
   const req = mockReq({
-    url: `/v1/resolve?url=${encodeURIComponent(url)}&userCountry=GB`,
+    url: `/v1/album?url=${encodeURIComponent(url)}`,
     headers: { 'x-gp-token': token, origin: 'https://groovepede.gregolsky.pl' },
   });
   const res = mockRes();
-  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ entityUniqueId: 'X' }), headers: { get: () => null } });
-  // resolveRequest defaults fetchImpl to global fetch — stub it globally for this one call.
+  const deezerAlbum = { title: 'Discovery', artist: { name: 'Daft Punk' }, cover_xl: 'https://cdn/x.jpg', release_date: '2001-03-07' };
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify(deezerAlbum) });
+  // albumRequest defaults fetchImpl to global fetch — stub it globally for this one call.
   const realFetch = globalThis.fetch;
   globalThis.fetch = fetchImpl;
   try {
@@ -87,7 +88,7 @@ test('handleRequest: /v1/resolve delegates to resolveRequest with parsed params'
     globalThis.fetch = realFetch;
   }
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(JSON.parse(res.body), { entityUniqueId: 'X' });
+  assert.equal(JSON.parse(res.body).title, 'Discovery');
 });
 
 test('handleRequest: /v1/artist delegates to artistRequest with parsed params', async () => {
@@ -98,7 +99,7 @@ test('handleRequest: /v1/artist delegates to artistRequest with parsed params', 
   });
   const res = mockRes();
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) });
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ data: [] }), body: null });
   try {
     await handleRequest(req, res, { cache: noCache });
   } finally {
@@ -124,13 +125,13 @@ test('handleRequest: root path also 404s', async () => {
 });
 
 test('handleRequest: cache/fetch errors degrade gracefully, not a 500', async () => {
-  // resolveRequest itself catches both cache errors (non-fatal, logged) and
+  // albumRequest itself catches both cache errors (non-fatal, logged) and
   // fetch errors (→ 503 {_error:'network'}) — this confirms the whole chain
   // degrades gracefully rather than reaching handleRequest's own catch-all.
   const throwingCache = { get: async () => { throw new Error('db is on fire'); }, put: async () => {} };
   const url = 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy';
   const req = mockReq({
-    url: `/v1/resolve?url=${encodeURIComponent(url)}`,
+    url: `/v1/album?url=${encodeURIComponent(url)}`,
     headers: { 'x-gp-token': makeToken(url) },
   });
   const res = mockRes();

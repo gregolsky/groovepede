@@ -1,7 +1,21 @@
 // Central registry for all supported music services.
-// ODESLI_KEY_MAP, SERVICE_LABELS, and the per-host album-matching rules in
-// parseMusicLink are all derived from this single list — add a service here
-// and it flows through everywhere automatically.
+// SERVICE_LABELS and the per-host album-matching rules in parseMusicLink are
+// all derived from this single list — add a service here and it flows through
+// everywhere automatically.
+//
+// Amazon Music and SoundCloud are NOT here. Both album pages turned out to be
+// pure client-rendered JS shells with no server-rendered metadata at all
+// (verified live — no og: tags, no JSON-LD, and SoundCloud's oEmbed endpoint
+// 404s outright), so the resolver has no way to extract a title/artist from
+// either and neither can be supported. See backend/resolver-core.mjs.
+//
+// `searchUrl(artist, title)` builds a search-results link, used when an album
+// doesn't have an exact cross-service link (see pickListenTarget in render.js)
+// — these are best-effort search pages, not guaranteed to land on the right
+// result, which is why the Listen button labels them "Find on X" rather than
+// "Listen".
+
+const q = (s) => encodeURIComponent(s || '');
 
 export const SERVICES = [
   {
@@ -16,7 +30,7 @@ export const SERVICES = [
       if (/\/(show|episode)\//.test(url)) return "That's a podcast — paste an album link instead";
       return "Couldn't find an album in that Spotify link";
     },
-    odesliKeys: ['spotify'],
+    searchUrl: (artist, title) => `https://open.spotify.com/search/${q(`${artist} ${title}`)}/albums`,
   },
   {
     slug: 'apple',
@@ -29,7 +43,7 @@ export const SERVICES = [
       if (/\/playlist\//.test(url)) return "That's a playlist — paste an album link instead";
       return "Couldn't find an album in that Apple Music link";
     },
-    odesliKeys: ['appleMusic'],
+    searchUrl: (artist, title) => `https://music.apple.com/us/search?term=${q(`${artist} ${title}`)}`,
   },
   {
     slug: 'youtube',
@@ -38,7 +52,7 @@ export const SERVICES = [
     // Any YouTube URL is valid EXCEPT /watch (which is a single track)
     albumMatch: (url) => !/\/watch/.test(url),
     nonAlbumError: () => "That's a track — paste a YouTube playlist link for an album",
-    odesliKeys: ['youtube', 'youtubeMusic'],
+    searchUrl: (artist, title) => `https://music.youtube.com/search?q=${q(`${artist} ${title}`)}`,
   },
   {
     slug: 'deezer',
@@ -46,7 +60,7 @@ export const SERVICES = [
     hosts: ['deezer.com'],
     albumMatch: (url) => /\/album\//.test(url),
     nonAlbumError: () => null,
-    odesliKeys: ['deezer'],
+    searchUrl: (artist, title) => `https://www.deezer.com/search/${q(`${artist} ${title}`)}`,
   },
   {
     slug: 'tidal',
@@ -54,31 +68,20 @@ export const SERVICES = [
     hosts: ['tidal.com', 'listen.tidal.com'],
     albumMatch: (url) => /\/album\//.test(url),
     nonAlbumError: () => null,
-    odesliKeys: ['tidal'],
-  },
-  {
-    slug: 'amazon',
-    label: 'Amazon Music',
-    hosts: ['music.amazon.com', 'music.amazon.co.uk', 'music.amazon.de', 'music.amazon.fr', 'music.amazon.co.jp'],
-    albumMatch: (url) => /\/albums\//.test(url),
-    nonAlbumError: () => null,
-    odesliKeys: ['amazonMusic'],
+    searchUrl: (artist, title) => `https://tidal.com/search?q=${q(`${artist} ${title}`)}`,
   },
   {
     slug: 'pandora',
     label: 'Pandora',
     hosts: ['pandora.com'],
-    albumMatch: (url) => /\/album\//.test(url),
+    // Pandora album URLs never contain literal "/album/" — the real shape,
+    // confirmed live, is /artist/<artist-slug>/<album-slug>/AL<id>
+    // (e.g. /artist/daft-punk/discovery/ALnj5w9vqJX7gvZ). The AL id prefix
+    // is what actually distinguishes an album from an artist page
+    // (/artist/<slug>) or a track page (…/TR<id>).
+    albumMatch: (url) => /\/artist\/[^/]+\/[^/]+\/AL/i.test(url),
     nonAlbumError: () => null,
-    odesliKeys: ['pandora'],
-  },
-  {
-    slug: 'soundcloud',
-    label: 'SoundCloud',
-    hosts: ['soundcloud.com'],
-    albumMatch: (url) => /\/sets\//.test(url),
-    nonAlbumError: () => null,
-    odesliKeys: ['soundcloud'],
+    searchUrl: (artist, title) => `https://www.pandora.com/search/${q(`${artist} ${title}`)}`,
   },
 ];
 
@@ -140,10 +143,12 @@ export function joinList(items, { sep = ', ', conj = 'and' } = {}) {
   return items.slice(0, -1).join(sep) + `${sep}${conj} ` + items[items.length - 1];
 }
 
-// Odesli linksByPlatform key → internal slug (e.g. 'appleMusic' → 'apple')
-export const ODESLI_KEY_MAP = {};
-for (const svc of SERVICES) {
-  for (const key of svc.odesliKeys) {
-    if (!(key in ODESLI_KEY_MAP)) ODESLI_KEY_MAP[key] = svc.slug;
-  }
+/**
+ * Best-effort search-results link for a service the album has no exact link
+ * for. Returns null for an unregistered slug — callers treat that the same as
+ * "no link at all" rather than opening a broken URL.
+ */
+export function buildSearchUrl(slug, artist, title) {
+  const svc = SERVICES.find(s => s.slug === slug);
+  return svc ? svc.searchUrl(artist, title) : null;
 }

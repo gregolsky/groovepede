@@ -1,25 +1,19 @@
 import { test, expect } from '@playwright/test';
-import { stubExternals, KEYS } from './helpers.js';
+import { stubExternals, makeAlbumResponse, KEYS } from './helpers.js';
 
-function stubOdesli(context) {
-  const entityId = 'SPOTIFY_ALBUM::abc123def456ghi789jklm';
+function stubResolver(context) {
   return context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        entityUniqueId: entityId,
-        userCountry: 'US',
-        entitiesByUniqueId: {
-          [entityId]: { id: 'abc123def456ghi789jklm', type: 'album', title: 'Hero Test Album',
-            artistName: 'Hero Artist', thumbnailUrl: 'https://img/cover',
-            apiProvider: 'spotify', platforms: ['spotify'] },
+      body: JSON.stringify(makeAlbumResponse({
+        id: 'spotify:abc123def456ghi789jklm',
+        title: 'Hero Test Album',
+        artist: 'Hero Artist',
+        links: {
+          spotify: { url: 'https://open.spotify.com/album/abc123def456ghi789jklm', nativeUri: 'spotify:album:abc123def456ghi789jklm' },
         },
-        linksByPlatform: {
-          spotify: { url: 'https://open.spotify.com/album/abc123def456ghi789jklm',
-            nativeAppUriMobile: 'spotify:album:abc123def456ghi789jklm', entityUniqueId: entityId },
-        },
-      }),
+      })),
     })
   );
 }
@@ -27,7 +21,7 @@ function stubOdesli(context) {
 // Externals only — the resolver is left unstubbed here because most tests in
 // this file register their own resolver route (a specific status or payload)
 // and Playwright resolves the last-registered route first.
-const stubLastfm = context => stubExternals(context, { odesli: null });
+const stubLastfm = context => stubExternals(context, { resolver: null });
 
 const SPOTIFY_URL = 'https://open.spotify.com/album/abc123def456ghi789jklm';
 
@@ -55,7 +49,7 @@ test('empty queue shows hero with bg.jpg landing, not a login wall', async ({ pa
 });
 
 test('hero collapses to populated app once an album is added', async ({ page, context }) => {
-  await stubOdesli(context);
+  await stubResolver(context);
   await stubLastfm(context);
 
   await page.goto('/');
@@ -138,25 +132,21 @@ test('Profile icon in header opens the profile overlay with import option', asyn
 
 test('importing a JSON backup from the hero populates the queue', async ({ page, context }) => {
   await stubLastfm(context);
-  // Stub Odesli so resolvePending can resolve the imported pending stub
-  const importEntityId = 'SPOTIFY_ALBUM::imported1xxxxxxxxxxxx';
+  // The backup below already carries title/artist, so parseBackup restores it
+  // directly (never becomes a pending stub) — this route is defensive, in case
+  // that ever changes, rather than one this specific test actually exercises.
   await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        entityUniqueId: importEntityId,
-        userCountry: 'US',
-        entitiesByUniqueId: {
-          [importEntityId]: { id: 'imported1xxxxxxxxxxxx', type: 'album', title: 'Imported Album',
-            artistName: 'Imported Artist', thumbnailUrl: 'https://img/cover',
-            apiProvider: 'spotify', platforms: ['spotify'] },
+      body: JSON.stringify(makeAlbumResponse({
+        id: 'spotify:imported1xxxxxxxxxxxx',
+        title: 'Imported Album',
+        artist: 'Imported Artist',
+        links: {
+          spotify: { url: 'https://open.spotify.com/album/imported1', nativeUri: 'spotify:album:imported1' },
         },
-        linksByPlatform: {
-          spotify: { url: 'https://open.spotify.com/album/imported1',
-            nativeAppUriMobile: 'spotify:album:imported1', entityUniqueId: importEntityId },
-        },
-      }),
+      })),
     })
   );
   const backup = {
@@ -196,10 +186,10 @@ test('importing a JSON backup from the hero populates the queue', async ({ page,
   await expect(page.locator('.landing')).not.toBeAttached();
 });
 
-test('importing falls back to MusicBrainz when Odesli is unavailable', async ({ page, context }) => {
+test('importing falls back to MusicBrainz when the resolver is unavailable', async ({ page, context }) => {
   await stubLastfm(context);
 
-  // Odesli returns 503 (server error) — non-retryable, triggers immediate MB fallback.
+  // Resolver returns 503 (server error) — retryable, but resolveAlbumResilient tries MB immediately.
   // 429 retry/backoff timing is covered by unit tests; E2E just validates the MB path.
   await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 503, contentType: 'application/json', body: '{"code":503}' })
@@ -253,7 +243,7 @@ test('importing falls back to MusicBrainz when Odesli is unavailable', async ({ 
 test('unresolvable import link is dropped and shown in the summary modal', async ({ page, context }) => {
   await stubLastfm(context);
 
-  // Odesli returns a non-retryable 404 — album not found
+  // Resolver returns a non-retryable 404 — album not found
   await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 404, contentType: 'application/json', body: '{"code":404}' })
   );
@@ -337,16 +327,43 @@ test('Listen button offers the service the album IS on when it is not on the pre
   await expect(page.locator('.explore-album .btn-listen--alt')).toContainText('Listen on Apple Music');
 });
 
-test('Listen button is disabled only when the album has no link anywhere', async ({ page, context }) => {
+test('Listen button offers a search link when artist/title are known but no exact link exists', async ({ page, context }) => {
   await stubLastfm(context);
 
+  // No exact link on any service, but artist+title ARE known — the button
+  // should offer a best-effort search rather than just giving up.
   const album = {
-    id: 'ORPHAN_ALBUM::none',
+    id: 'SEARCHABLE_ALBUM::none',
     title: 'Linkless Album',
     artist: 'Some Artist',
     sourceUrl: null,
     links: {},
     cover: null, year: '2024', tags: [], addedAt: new Date().toISOString(),
+  };
+  await context.addInitScript(({ keys, al }) => {
+    localStorage.setItem(keys.ALBUMS, JSON.stringify([al]));
+  }, { keys: KEYS, al: album });
+
+  await page.goto('/');
+  await expect(page.locator('.stats')).toBeVisible();
+
+  const listenBtn = page.locator('.btn-listen--search');
+  await expect(listenBtn).toBeVisible();
+  await expect(listenBtn).toBeEnabled();
+  await expect(listenBtn).toContainText('Find on');
+  await expect(page.locator('.btn-listen--unavailable')).toHaveCount(0);
+});
+
+test('Listen button is disabled only when there is truly nothing to open (no link, no artist/title to search)', async ({ page, context }) => {
+  await stubLastfm(context);
+
+  const album = {
+    id: 'ORPHAN_ALBUM::none',
+    title: null,
+    artist: null,
+    sourceUrl: null,
+    links: {},
+    cover: null, year: null, tags: [], addedAt: new Date().toISOString(),
   };
   await context.addInitScript(({ keys, al }) => {
     localStorage.setItem(keys.ALBUMS, JSON.stringify([al]));
@@ -364,7 +381,7 @@ test('Listen button is disabled only when the album has no link anywhere', async
 test('resolution resumes when user returns to tab (visibilitychange)', async ({ page, context }) => {
   await stubLastfm(context);
 
-  // Odesli is unavailable; MB resolves on the second request (simulating resumed resolution)
+  // Resolver is unavailable; MB resolves on the second request (simulating resumed resolution)
   let mbCallCount = 0;
   await context.route('https://api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 503, contentType: 'application/json', body: '{"code":503}' })

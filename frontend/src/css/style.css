@@ -411,6 +411,10 @@ body::after {
    the button reads as "this opens somewhere else" at a glance. */
 .btn-listen--alt { background: transparent; border-color: var(--accent-border); color: var(--accent); font-weight: 600; }
 .btn-listen--alt:hover { background: rgba(15,210,135,.10); border-color: var(--accent); box-shadow: none; }
+/* No exact link anywhere — this opens a search, not the album itself, so it's
+   styled a step further from --alt: dashed border, muted text, no accent tint. */
+.btn-listen--search { background: transparent; border-color: var(--border-2); border-style: dashed; color: var(--text-dim); font-weight: 600; }
+.btn-listen--search:hover { background: var(--surface-2); border-color: var(--text-faint); box-shadow: none; }
 .btn-done { color: var(--text-dim); border-color: var(--border-2); font-size: 12px; }
 .btn-done:hover { color: var(--text); border-color: var(--text-faint); }
 

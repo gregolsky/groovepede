@@ -28,30 +28,18 @@ const json = (body, status = 200) => ({
   body: typeof body === 'string' ? body : JSON.stringify(body),
 });
 
-/** An Odesli/resolver response shaped exactly like the real one. */
-export function makeOdesliResponse({ title = 'Test Album', artist = 'Test Artist', ...overrides } = {}) {
-  const entityId = `SPOTIFY_ALBUM::${SPOTIFY_ALBUM_ID}`;
+/** A /v1/album response shaped exactly like the real resolver's (backend/resolver-core.mjs). */
+export function makeAlbumResponse({ title = 'Test Album', artist = 'Test Artist', ...overrides } = {}) {
   return {
-    entityUniqueId: entityId,
-    userCountry: 'US',
-    pageUrl: `https://song.link/s/${SPOTIFY_ALBUM_ID}`,
-    entitiesByUniqueId: {
-      [entityId]: {
-        id: SPOTIFY_ALBUM_ID,
-        type: 'album',
-        title,
-        artistName: artist,
-        thumbnailUrl: 'https://example.com/cover.jpg',
-        apiProvider: 'spotify',
-        platforms: ['spotify'],
-      },
-    },
-    linksByPlatform: {
-      spotify: {
-        url: SPOTIFY_URL,
-        nativeAppUriMobile: `spotify:album:${SPOTIFY_ALBUM_ID}`,
-        entityUniqueId: entityId,
-      },
+    id: `spotify:${SPOTIFY_ALBUM_ID}`,
+    service: 'spotify',
+    title,
+    artist,
+    cover: 'https://example.com/cover.jpg',
+    year: null,
+    tags: [],
+    links: {
+      spotify: { url: SPOTIFY_URL, nativeUri: `spotify:album:${SPOTIFY_ALBUM_ID}` },
     },
     ...overrides,
   };
@@ -64,10 +52,10 @@ export function makeOdesliResponse({ title = 'Test Album', artist = 'Test Artist
  *
  * @param {import('@playwright/test').BrowserContext} context
  * @param {object}  [opts]
- * @param {object|number|null} [opts.odesli]  resolver response body, or a bare
- *        HTTP status to fail with. null leaves the resolver unstubbed.
+ * @param {object|number|null} [opts.resolver]  /v1/album response body, or a
+ *        bare HTTP status to fail with. null leaves the resolver unstubbed.
  */
-export async function stubExternals(context, { odesli = makeOdesliResponse() } = {}) {
+export async function stubExternals(context, { resolver = makeAlbumResponse() } = {}) {
   // Artist images (browser-direct) — "no such artist".
   await context.route('https://www.theaudiodb.com/**', route => route.fulfill(json({ artists: null })));
   // Last.fm tags / artist info — empty payload, no tags applied.
@@ -75,9 +63,9 @@ export async function stubExternals(context, { odesli = makeOdesliResponse() } =
   // MusicBrainz is only reached as the resolver's fallback; 404 = "no match".
   await context.route('https://musicbrainz.org/**', route => route.fulfill(json({}, 404)));
 
-  if (odesli !== null) {
+  if (resolver !== null) {
     await context.route('https://api.groovepede.gregolsky.pl/**', route =>
-      route.fulfill(typeof odesli === 'number' ? json({}, odesli) : json(odesli))
+      route.fulfill(typeof resolver === 'number' ? json({}, resolver) : json(resolver))
     );
   }
 }
