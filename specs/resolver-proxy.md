@@ -79,15 +79,19 @@ resolver (node:http)
 ## Handler contract
 
 **Endpoints:** `GET https://api.groovepede.gregolsky.pl/v1/album` (album
-metadata + cross-links) and `/v1/artist` (artist image URL, unchanged by this
-rewrite); `/healthz` returns `{ ok, commit }`.
+metadata + cross-links), `/v1/artist` (artist image URL), and `/v1/tracks`
+(Deezer tracklist — sources the Explore card's tracklist for every album, not
+only ones connected to a Spotify account; there is no user login anywhere in
+the app); `/healthz` returns `{ ok, commit }`.
 
 **Query params:** `/v1/album` takes `url` (required) — the pasted album page.
 `/v1/artist` takes `name` (required) and an optional Deezer `albumId`.
+`/v1/tracks` takes `albumId` (required) — Deezer's numeric album id.
 
 **Required header:** `x-gp-token: <ts>.<base64url-sig>` (ECDSA-P256; 5-minute
-window; bound to the URL, or to `artist:<name>|<albumId>` — signing is
-unchanged from the retired `/v1/resolve`, so `sign.js` needed no client edit).
+window; bound to the URL, to `artist:<name>|<albumId>`, or to
+`tracks:<albumId>` — signing is unchanged from the retired `/v1/resolve`, so
+`sign.js` needed no client edit).
 
 **Response shape**, `/v1/album` success:
 
@@ -125,6 +129,17 @@ supplied and matched (otherwise `[]`). Cache entries written before this field
 existed (30-day TTL) return without a `genres` key at all — callers must treat
 it as optional, not assume presence.
 
+`/v1/tracks` success: `{ "tracks": [{ "number": 1, "name": "Airbag",
+"duration_ms": 284000 }, …] }` — sourced from the same Deezer `/album/{id}`
+endpoint `/v1/album`'s own cross-linking hits, just a different field
+(`tracks.data[]`); Deezer's `duration` (seconds) is converted to
+`duration_ms` so the client needs no unit conversion. An album with no
+tracks in Deezer's response returns `{ "tracks": [] }`, not an error.
+Failure modes mirror `/v1/album`: retryable `{ "_error": <status> }` for
+network/429/5xx (including Deezer's HTTP-200 quota-exceeded envelope, mapped
+to 429), non-retryable `{ "_error": "not-found" }` (422) for a bad/unknown
+`albumId` or a remapped upstream 4xx.
+
 **CORS:** explicit origin allowlist —
 `https://groovepede.gregolsky.pl` plus `http://localhost:5173` for dev,
 extendable via `ALLOWED_ORIGINS`. Never `*`.
@@ -134,6 +149,7 @@ extendable via `ALLOWED_ORIGINS`. Never `*`.
 ```
 album:v1:{normalizedUrl}                 TTL 60 days
 artist:{normalizedArtistName}             TTL 30 days (negatives cached too)
+tracks:{deezerAlbumId}                    TTL 30 days
 ```
 
 `album:v1:` is a new prefix — the old `links:{cc}:{url}` entries from the
@@ -157,10 +173,10 @@ service it identifies (and therefore which extractor runs):
 
 Amazon Music and SoundCloud are **not** in this list — see Solution above.
 
-`albumId` on `/v1/artist` is validated as digits-only before it reaches a URL
-path. Outbound cross-linking calls (`api.deezer.com`, `itunes.apple.com`) are
-separate, fixed URLs the resolver constructs itself — never built from the
-pasted URL, so they need no allowlist of their own.
+`albumId` on `/v1/artist` and `/v1/tracks` is validated as digits-only before
+it reaches a URL path. Outbound cross-linking calls (`api.deezer.com`,
+`itunes.apple.com`) are separate, fixed URLs the resolver constructs itself —
+never built from the pasted URL, so they need no allowlist of their own.
 
 ---
 
@@ -208,6 +224,10 @@ is fetched at most once, ever, so volume stays low without it.
   share, refresh), not only the pending-retry loop — extraction is more
   fragile than a dedicated API was, so a markup change degrades to MusicBrainz
   instead of a bare error. `fetchDeezerArtistData` calls `/v1/artist`.
+  `fetchAlbumTracks` calls `/v1/tracks`, keyed on `deezerAlbumId(album)` (the
+  numeric id parsed out of `links.deezer.url`) — this replaced a Spotify Web
+  API call that only worked for logged-in users with a Spotify-linked album;
+  the resolver version works for every album, unconditionally.
 
 ---
 
@@ -243,6 +263,8 @@ backend/
 - One extraction test per service (Spotify, Apple, Deezer, Tidal, YouTube, Pandora)
 - Artist lookup: exact album-id hit, strict name match, mismatch rejection,
   blank-placeholder handling — unchanged by this rewrite
+- Tracklist lookup: cache hit/miss, seconds→ms duration mapping, Deezer
+  quota-exceeded envelope → retryable 429, bad/unknown `albumId` → 400/422
 
 **App** — `frontend/src/js/api.test.js` stubs the resolver URL;
 `frontend/tests/*.spec.js` stub it through `tests/helpers.js`

@@ -12,9 +12,6 @@
  */
 
 export const KEYS = {
-  TOKEN:   'gp_token',
-  EXPIRY:  'gp_expiry',
-  REFRESH: 'gp_refresh',
   ALBUMS:  'gp_albums',
   DONE:    'gp_done',
 };
@@ -76,19 +73,6 @@ export async function seedAlbums(context, albums, done) {
     localStorage.setItem(keys.ALBUMS, JSON.stringify(albums));
     if (done !== undefined) localStorage.setItem(keys.DONE, String(done));
   }, { keys: KEYS, albums, done });
-}
-
-/**
- * Put the app in a logged-in state: a valid (non-expired) token plus the /me
- * response the boot sequence fetches.
- */
-export async function loginAs(context, profile = { display_name: 'Test User', images: [] }) {
-  await context.addInitScript(({ keys }) => {
-    localStorage.setItem(keys.TOKEN, 'valid_token');
-    localStorage.setItem(keys.EXPIRY, String(Date.now() + 3600000));
-  }, { keys: KEYS });
-
-  await context.route('https://api.spotify.com/v1/me', route => route.fulfill(json(profile)));
 }
 
 /** Three albums with distinct titles, artists and tags — enough to test filtering. */

@@ -16,7 +16,7 @@
 
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { albumRequest, artistRequest } from './resolver-core.mjs';
+import { albumRequest, artistRequest, tracksRequest } from './resolver-core.mjs';
 
 const PORT    = parseInt(process.env.PORT || '8787', 10);
 const DB_PATH = process.env.DB_PATH || '/data/cache.db';
@@ -93,6 +93,19 @@ export async function handleRequest(req, res, { cache, port = PORT }) {
         method:  req.method,
         origin:  req.headers.origin || '',
         name:    u.searchParams.get('name') || '',
+        albumId: u.searchParams.get('albumId') || '',
+        token:   req.headers['x-gp-token'] || '',
+        cache,
+      });
+      res.writeHead(r.statusCode, r.headers);
+      res.end(r.body == null ? '' : JSON.stringify(r.body));
+      return;
+    }
+
+    if (u.pathname === '/v1/tracks') {
+      const r = await tracksRequest({
+        method:  req.method,
+        origin:  req.headers.origin || '',
         albumId: u.searchParams.get('albumId') || '',
         token:   req.headers['x-gp-token'] || '',
         cache,

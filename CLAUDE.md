@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Groovepede is a local-first PWA for managing a universal album listening queue. Paste links from Spotify, Apple Music, YouTube Music, Tidal, Deezer, and more — no account required. Built with Vite + vanilla ES modules, deployed via GitHub Pages.
+Groovepede is a local-first PWA for managing a universal album listening queue. Paste links from Spotify, Apple Music, YouTube Music, Tidal, Deezer, and more — no account required, ever. Built with Vite + vanilla ES modules, deployed via GitHub Pages.
 
-Spotify is an optional connected service for users who want to sync their queue to a Spotify playlist. All other functionality (adding albums, browsing by genre, artist info) works without any login.
+There is no login and no user accounts anywhere in the app. Spotify is just one of the supported services: pasted links resolve and cross-link the same way any other service's do, via the resolver's server-side Client Credentials app-auth (`backend/`) — no user OAuth, no consent screen.
 
 ## Repository layout
 
@@ -23,15 +23,13 @@ Two top-level workspaces:
 - **`frontend/src/index.html`** — single-page app shell (Vite entry point)
 - **`frontend/src/css/style.css`** — all styles, imported via JS
 - **`frontend/src/js/app.js`** — entry point: state management, event delegation, boot sequence
-- **`frontend/src/js/auth.js`** — Spotify OAuth PKCE flow (no backend); login is optional
-- **`frontend/src/js/api.js`** — calls our resolver (album-page extraction + cross-service links, see `backend/`) + Spotify Web API + Last.fm API
+- **`frontend/src/js/api.js`** — calls our resolver (album-page extraction + cross-service links + tracklists, see `backend/`) + Last.fm API
 - **`frontend/src/js/render.js`** — pure HTML string rendering (no virtual DOM, no templates)
 - **`frontend/src/js/storage.js`** — localStorage read/write for albums, listen count, preferred service; link parsing, backup (de)serialisation, and `filterAlbums` (the visible-list source of truth)
 - **`frontend/src/js/services.js`** — the supported-service registry; service labels, per-host album matching, search-link templates (`buildSearchUrl`), the profile's "Listen on" options and every user-facing service list (`serviceListText`) all derive from it. Static markup can't call it — when adding a service, also update `src/faq.html` (both the `<details>` copy and the FAQPage JSON-LD) and the meta descriptions in `src/index.html`. A service can only be added here if its album page (or a free keyless API) actually exposes extractable metadata — see `backend/resolver-core.mjs`'s per-service extractors.
 - **`frontend/src/js/sign.js`** — ECDSA-P256 request signing for the resolver's `x-gp-token`
 - **`frontend/src/js/throttle.js`** — per-service pacing + 429 cooldown used by every outbound API call
-- **`frontend/src/js/config.js`** — API keys, storage keys, OAuth config, resolver base URL, throttle policy
-- **`frontend/src/js/sync.js`** — optional Spotify playlist sync (only active when user is logged in)
+- **`frontend/src/js/config.js`** — API keys, storage keys, resolver base URL, throttle policy
 - **`frontend/public/sw.js`** — service worker for offline/PWA support (copied verbatim to dist)
 - **`frontend/public/manifest.json`** — PWA manifest
 - **`frontend/public/favicon.png`** — app icon
@@ -60,7 +58,7 @@ npm run test:e2e   # Run Playwright E2E tests
 npm test           # Run all tests (unit + E2E)
 ```
 
-For local dev, update `REDIRECT` in `frontend/src/js/config.js` to `http://localhost:5173/` and add that URI to your Spotify Developer app. The resolver itself needs no API key — see `backend/README.md` for running it locally (or point `RESOLVER_BASE` at the deployed one).
+The resolver itself needs no API key from the client's perspective — see `backend/README.md` for running it locally (or point `RESOLVER_BASE` at the deployed one).
 
 ## Conventions
 
@@ -81,7 +79,7 @@ For local dev, update `REDIRECT` in `frontend/src/js/config.js` to `http://local
     any newly-called external host **there**, not per spec file, or the suite
     starts hitting the real network. Per-test overrides still work: Playwright
     resolves the last-registered route first.
-  - Cover auth flows and key user interactions; Spotify login is optional so logged-out paths must be covered too
+  - Cover key user interactions end-to-end; there is no login anywhere in the app, so no auth state to branch on
 
 ## Pre-push checklist
 

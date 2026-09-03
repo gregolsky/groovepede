@@ -27,7 +27,7 @@ const SPOTIFY_URL = 'https://open.spotify.com/album/abc123def456ghi789jklm';
 
 // ── Hero shown on empty queue ─────────────────────────────────────────────────
 
-test('empty queue shows hero with bg.jpg landing, not a login wall', async ({ page, context }) => {
+test('empty queue shows hero with bg.jpg landing', async ({ page, context }) => {
   await stubLastfm(context);
   await page.goto('/');
 
@@ -38,14 +38,9 @@ test('empty queue shows hero with bg.jpg landing, not a login wall', async ({ pa
   // At least one feature card
   await expect(page.locator('.landing-feature')).toHaveCount(3);
 
-  // App is NOT blocked — add CTA is available without login
+  // Primary CTA is the add button — no account needed
   await expect(page.locator('[data-action="toggle-add"]')).toBeVisible();
-
-  // Primary CTA is the add button, not a login wall
-  await expect(page.locator('.landing-cta')).toBeVisible();
   await expect(page.locator('.landing-cta[data-action="toggle-add"]')).toBeVisible();
-  // Spotify connect is NOT shown in the landing (it lives in preferences only)
-  await expect(page.locator('.landing [data-action="login"]')).toHaveCount(0);
 });
 
 test('hero collapses to populated app once an album is added', async ({ page, context }) => {
@@ -106,14 +101,14 @@ test('reloading with albums in storage goes straight to populated app (no hero)'
   await expect(page.locator('.landing')).not.toBeAttached();
 });
 
-// ── Import reachable from hero (logged-out bug regression) ───────────────────
+// ── Import reachable from hero ────────────────────────────────────────────────
 
-test('logged-out user can open profile from hero and access Import', async ({ page, context }) => {
+test('user can open profile from hero and access Import', async ({ page, context }) => {
   await stubLastfm(context);
   await page.goto('/');
   await expect(page.locator('.landing')).toBeVisible();
 
-  // Profile is reachable from the auth area even when logged out
+  // Profile is reachable from the auth area
   await page.click('[data-action="open-profile"]');
   await expect(page.locator('.profile')).toBeVisible();
   await expect(page.locator('[data-action="import-data"]')).toBeVisible();

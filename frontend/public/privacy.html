@@ -29,7 +29,7 @@
   <p class="updated">Last updated: June 2026</p>
 
   <h2>What Groovepede is</h2>
-  <p>Groovepede is a local-first progressive web app (PWA) for queuing albums from any streaming service. It has no backend server, no database, and no user accounts. All data stays on your device. Spotify is an optional connected service for users who want to sync their queue to a Spotify playlist.</p>
+  <p>Groovepede is a local-first progressive web app (PWA) for queuing albums from any streaming service. It has no login and no user accounts at all. All data stays on your device.</p>
 
   <h2>Data we collect</h2>
   <p>We collect no personal data. Groovepede stores the following <strong>only in your browser's <code>localStorage</code></strong>:</p>
@@ -37,16 +37,11 @@
     <li>Album metadata you add (title, artist, cover image URL, release year, Last.fm genre tags, streaming service links)</li>
     <li>Your listen count</li>
     <li>Your preferred listening service setting</li>
-    <li>Your Spotify OAuth tokens (access token, refresh token) — only stored if you choose to connect Spotify; used solely to sync your queue to a Spotify playlist</li>
   </ul>
   <p>This data never leaves your device. Clearing your browser storage or uninstalling the app removes it entirely.</p>
 
   <h2>Link resolver</h2>
-  <p>When you paste an album link, Groovepede sends the URL to our own self-hosted resolver, which fetches that album's page from the streaming service you pasted it from and reads its title, artist, cover, and release year. It then checks Deezer and Apple Music's own search APIs for the same album, to give you working links on those services too. Only the album URL (and, for cross-linking, its artist and title) is ever sent — no personal identifiers, and no data about you as a listener.</p>
-
-  <h2>Spotify (optional)</h2>
-  <p>Connecting Spotify is entirely optional. If you choose to connect, Groovepede uses the <a href="https://developer.spotify.com/documentation/web-api" target="_blank" rel="noopener">Spotify Web API</a> with the <code>user-read-private</code> and <code>playlist-modify-private</code> scopes. This lets us display your name and profile picture, and sync your album queue to a private Spotify playlist. We never read your listening history, saved albums, or any other Spotify data.</p>
-  <p>Authentication uses the <a href="https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow" target="_blank" rel="noopener">PKCE flow</a> — no client secret is stored or transmitted.</p>
+  <p>When you paste an album link, Groovepede sends the URL to our own self-hosted resolver, which fetches that album's page from the streaming service you pasted it from and reads its title, artist, cover, and release year. It then checks Deezer, Apple Music, and Spotify's own search APIs for the same album, to give you working links on those services too. The Spotify lookup uses app-level Client Credentials auth — there is no user login involved, and Groovepede never has access to any Spotify account's data. Only the album URL (and, for cross-linking, its artist and title) is ever sent — no personal identifiers, and no data about you as a listener.</p>
 
   <h2>Last.fm</h2>
   <p>Groovepede calls the <a href="https://www.last.fm/api" target="_blank" rel="noopener">Last.fm API</a> anonymously (no user account required) to fetch genre tags, artist bios, and similar artist suggestions. These requests include only artist and album names — no personal identifiers.</p>

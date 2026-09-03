@@ -20,16 +20,6 @@ function makeShareAlbumResponse() {
   };
 }
 
-function seedLoggedIn() {
-  return async ({ context }, use) => {
-    await context.addInitScript(({ keys }) => {
-      localStorage.setItem(keys.TOKEN,  'valid_token');
-      localStorage.setItem(keys.EXPIRY, String(Date.now() + 3600000));
-    }, { keys: KEYS });
-    await use();
-  };
-}
-
 function fakeStandalone(context) {
   return context.addInitScript(() => {
     const orig = window.matchMedia.bind(window);
@@ -46,10 +36,6 @@ function fakeStandalone(context) {
 // target's dedupe path is exercised), but every other external comes from the
 // shared list.
 async function stubApis(context) {
-  await context.route('https://api.spotify.com/v1/me', route =>
-    route.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ id: 'u1', display_name: 'Test User', images: [] }) })
-  );
   await stubExternals(context, { resolver: makeShareAlbumResponse() });
 }
 
@@ -64,7 +50,6 @@ async function slowResolver(context, ms = 1500) {
 // ── The loading phase — the reason this overlay exists ─────────────────────────
 
 test('share-target shows the adding overlay before the album resolves', async ({ page, context }) => {
-  await seedLoggedIn()({ context }, async () => {});
   await fakeStandalone(context);
   await stubApis(context);
   await slowResolver(context);   // registered last, so it wins over stubApis
@@ -88,7 +73,6 @@ test('share-target shows the adding overlay before the album resolves', async ({
 // ── Share in standalone (PWA) mode shows overlay ───────────────────────────────
 
 test('share-target shows confirmation overlay in standalone mode', async ({ page, context }) => {
-  await seedLoggedIn()({ context }, async () => {});
   await fakeStandalone(context);
   await stubApis(context);
 
@@ -101,7 +85,6 @@ test('share-target shows confirmation overlay in standalone mode', async ({ page
 });
 
 test('share-target overlay disappears and card is highlighted when window.close() does not close', async ({ page, context }) => {
-  await seedLoggedIn()({ context }, async () => {});
   await fakeStandalone(context);
   await stubApis(context);
   await context.addInitScript(() => { window.close = () => {}; });
@@ -117,7 +100,6 @@ test('share-target overlay disappears and card is highlighted when window.close(
 // ── Share via browser tab (not standalone): same overlay, no window.close ──────
 
 test('share-target in browser tab resolves the overlay and highlights the card', async ({ page, context }) => {
-  await seedLoggedIn()({ context }, async () => {});
   await stubApis(context);
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
@@ -133,7 +115,6 @@ test('share-target in browser tab resolves the overlay and highlights the card',
 // ── Non-success outcomes are no longer silent ─────────────────────────────────
 
 test('sharing an album that is already queued says so', async ({ page, context }) => {
-  await seedLoggedIn()({ context }, async () => {});
   await fakeStandalone(context);
   await stubApis(context);
   await context.addInitScript(({ keys, url, id }) => {
@@ -150,7 +131,6 @@ test('sharing an album that is already queued says so', async ({ page, context }
 });
 
 test('sharing an unresolvable link explains the failure instead of doing nothing', async ({ page, context }) => {
-  await seedLoggedIn()({ context }, async () => {});
   await fakeStandalone(context);
   await stubApis(context);
   await context.route('**/api.groovepede.gregolsky.pl/**', route =>
@@ -169,7 +149,6 @@ test('sharing an unresolvable link explains the failure instead of doing nothing
 });
 
 test('sharing while the resolver is down still confirms the link was saved', async ({ page, context }) => {
-  await seedLoggedIn()({ context }, async () => {});
   await fakeStandalone(context);
   await stubApis(context);
   await context.addInitScript(() => { window.close = () => {}; });
@@ -195,14 +174,4 @@ test('a shared link that is not an album is rejected on the overlay', async ({ p
   const overlay = page.locator('#share-overlay');
   await expect(overlay).toHaveClass(/share-overlay--error/, { timeout: 6000 });
   await expect(overlay.locator('.share-overlay__sub')).toContainText('track');
-});
-
-// ── Share works without Spotify login ─────────────────────────────────────────
-
-test('share-target works without being logged in', async ({ page, context }) => {
-  await stubApis(context);
-
-  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
-
-  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: 6000 });
 });

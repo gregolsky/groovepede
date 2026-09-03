@@ -2,7 +2,7 @@
 
 ## Goal
 
-Universal album listening queue. Users paste links from any supported music service, choose their preferred listening app, and tap Listen. No login required. Spotify OAuth is opt-in for the existing playlist-sync feature only.
+Universal album listening queue. Users paste links from any supported music service, choose their preferred listening app, and tap Listen. No login, no accounts, anywhere.
 
 ---
 
@@ -53,8 +53,6 @@ the resolver has no way to read them.
   // no exact entry above are built on the fly by services.js's buildSearchUrl()
   // at render time (see pickListenTarget in render.js) — never persisted, so
   // every album retroactively gains them as new services/templates are added.
-
-  firstTrackUri?: string,   // spotify:track:<id> — used by sync.js; only set on Spotify-sourced albums
 }
 ```
 
@@ -77,14 +75,6 @@ Records with an existing `links` key are passed through unchanged (idempotent).
 | `gp_albums` | JSON array | Album queue |
 | `gp_done` | number string | Lifetime listened count |
 | `gp_pref_service` | string slug | Preferred listening service (default: `'spotify'`) |
-| `gp_sync_enabled` | boolean string | Spotify sync on/off |
-| `gp_sync_playlist_id` | string | Spotify playlist ID for sync |
-| `gp_sync_last` | number string | Timestamp of last sync |
-| `gp_sync_pending` | boolean string | Re-enable sync after the scope re-auth round trip |
-| `gp_token` | string | Spotify access token |
-| `gp_expiry` | number string | Access token expiry (epoch ms) |
-| `gp_refresh` | string | Spotify refresh token |
-| `gp_verifier` | string | PKCE code verifier (removed after the code exchange) |
 
 All keys are defined in `frontend/src/js/config.js`.
 
@@ -115,6 +105,15 @@ free keyless search APIs.
   every interactive resolve (paste, share, refresh), not just the pending-retry loop
 - See `backend/resolver-core.mjs` and `backend/README.md`
 
+### Tracklist
+
+`fetchAlbumTracks(albumId)` in `api.js` calls the resolver's `GET
+/v1/tracks?albumId=<deezer id>` (same auth/caching model as `/v1/album`,
+30-day TTL) to source the Explore card's tracklist from Deezer server-side —
+`api.deezer.com` sends no CORS header, so the browser can't call it directly.
+`albumId` is Deezer's own numeric album id, read off `links.deezer.url` via
+`deezerAlbumId()`; no id means no tracklist fetch.
+
 ### Last.fm
 
 - **Endpoints used**: `album.getinfo` and `artist.gettoptags` (tags),
@@ -127,16 +126,10 @@ free keyless search APIs.
 
 ### Artist images
 
-Chain, first hit wins: Spotify (only when connected) → TheAudioDB
-(browser-direct, CORS-enabled) → Deezer via the resolver's `/v1/artist`
-(`api.deezer.com` sends no CORS header) → initials avatar. Only image URLs are
-handled; the browser loads the image from the source's own CDN.
-
-### Spotify (optional)
-
-- **OAuth**: PKCE, no backend; scopes: `user-read-private`, `playlist-modify-private`
-- **Used for**: sync queue → private Spotify playlist
-- **Not required** to add albums or use Listen button
+Chain, first hit wins: TheAudioDB (browser-direct, CORS-enabled) → Deezer via
+the resolver's `/v1/artist` (`api.deezer.com` sends no CORS header) → initials
+avatar. Only image URLs are handled; the browser loads the image from the
+source's own CDN.
 
 ---
 
@@ -191,15 +184,13 @@ Re-exported from `render.js` for convenience.
 user input
   → parseMusicLink()             // validate + normalize
   → resolveAlbumResilient(url)   // resolver, falling back to MusicBrainz on any error
-  → saveResolvedAlbum()          // dedupe by id, persist, schedule sync, enrich
-      → attachFirstTrackUri()  // Spotify only, when logged in
+  → saveResolvedAlbum()          // dedupe by id, persist, enrich
       → enrichWithLastfm()     // async: fill tags
   → rerender()
 ```
 
-No Spotify API call required. Spotify sync (`schedulePush`) fires only if
-`tokenValid()`. When the resolver is unreachable with a retryable error, a
-pending stub is saved instead and retried by `resolvePending()` on next open.
+When the resolver is unreachable with a retryable error, a pending stub is
+saved instead and retried by `resolvePending()` on next open.
 
 ---
 
@@ -223,8 +214,8 @@ Preferred service set in profile overlay; persisted to `gp_pref_service`.
 { "version": 4, "exportedAt": "<ISO>", "albums": [...], "done": 42 }
 ```
 
-Exports carry the full album record (cover, links, tags, `firstTrackUri`), so an
-import restores instantly with no re-resolution.
+Exports carry the full album record (cover, links, tags), so an import
+restores instantly with no re-resolution.
 
 Versions 1–4 are accepted on import:
 

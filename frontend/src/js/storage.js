@@ -55,19 +55,10 @@ export function extractAlbumId(url) {
   return null;
 }
 
-// Bare Spotify album ID for Web API calls. album.id is a resolver-assigned
-// id (e.g. "spotify:<id>", or "SPOTIFY_ALBUM::<id>" on records resolved
-// before the Odesli-proxy era), so it can't be passed to /v1/albums/<id>
-// directly — derive it from the resolved Spotify link instead.
-export function spotifyAlbumId(album) {
-  const url = album?.links?.spotify?.url;
-  return url ? extractAlbumId(url) : null;
-}
-
 export function serializeBackup(albums, done) {
   // Persist the full album record (snapshot), stripping only transient flags.
-  // Cover art URL, links, tags, and firstTrackUri are all included so import
-  // is instant — no re-resolution needed.
+  // Cover art URL, links, and tags are all included so import is instant —
+  // no re-resolution needed.
   const full = albums.map(({ _pending, _error, ...a }) => a);
   return JSON.stringify({ version: 4, exportedAt: new Date().toISOString(), albums: full, done });
 }
@@ -113,7 +104,7 @@ export function parseBackup(text) {
 /**
  * Merge a fresh resolve result into an existing album record.
  * Overwrites title/artist/cover/year/links; preserves id, sourceUrl,
- * addedAt, tags, and firstTrackUri (those are enriched separately).
+ * addedAt, and tags (those are enriched separately).
  */
 export function mergeRefreshedAlbum(existing, resolved) {
   return {

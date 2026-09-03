@@ -16,7 +16,7 @@ const core = await import('./resolver-core.mjs');
 const {
   albumRequest, verifyToken, normalizeUrl, corsHeaders, _resetPublicKey,
   artistRequest, normalizeArtist, normalizeAlbumTitle, isBlankArtistImage, pickArtistImage,
-  _resetSpotifyToken, SERVICE_HOSTS, EXTRACTORS,
+  _resetSpotifyToken, SERVICE_HOSTS, EXTRACTORS, tracksRequest,
 } = core;
 _resetPublicKey(); // ensure the test key is the one loaded
 
@@ -775,6 +775,133 @@ test('artistRequest: no match → image null, and the negative is cached (with e
   assert.deepEqual(r.body, { image: null, genres: [] });
   assert.equal(putKey, 'artist:black limbo');
   assert.deepEqual(putBody, { image: null, genres: [] });
+});
+
+// ── Tracklists ──────────────────────────────────────────────────────────────
+
+const tracksToken = (albumId) => makeToken(`tracks:${albumId}`);
+
+test('tracksRequest: missing/invalid token → 403', async () => {
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: '', cache: noCache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 403);
+});
+
+test('tracksRequest: token bound to a different albumId is rejected', async () => {
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('999'), cache: noCache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 403);
+});
+
+test('tracksRequest: non-numeric albumId → 400 (never reaches the URL path)', async () => {
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '../../evil',
+    token: tracksToken('../../evil'), cache: noCache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 400);
+  assert.deepEqual(r.body, { _error: 'bad albumId' });
+});
+
+test('tracksRequest: cache hit → no upstream fetch at all', async () => {
+  const cached = { tracks: [{ number: 1, name: 'Airbag', duration_ms: 284000 }] };
+  const cache = { get: async () => cached, put: async () => { throw new Error('should not put on a hit'); } };
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, cached);
+});
+
+test('tracksRequest: cache miss → fetches Deezer, maps duration seconds→ms, and caches the result', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return okText(JSON.stringify({ tracks: { data: [
+      { track_position: 1, title: 'Airbag', duration: 284 },
+      { track_position: 2, title: 'Paranoid Android', duration: 383 },
+    ] } }));
+  };
+  let putKey = null, putBody = null, putTtl = null;
+  const cache = { get: async () => null, put: async (k, b, ttl) => { putKey = k; putBody = b; putTtl = ttl; } };
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { tracks: [
+    { number: 1, name: 'Airbag', duration_ms: 284000 },
+    { number: 2, name: 'Paranoid Android', duration_ms: 383000 },
+  ] });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /\/album\/302127$/);
+  assert.equal(putKey, 'tracks:302127');
+  assert.deepEqual(putBody, r.body);
+  assert.equal(putTtl, 60 * 60 * 24 * 30);
+});
+
+test('tracksRequest: Deezer quota-exceeded envelope (HTTP-200, error.code 4) → retryable 429', async () => {
+  const fetchImpl = async () => okText(JSON.stringify({ error: { code: 4, message: 'Quota limit exceeded' } }));
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 429);
+  assert.deepEqual(r.body, { _error: 429 });
+});
+
+test('tracksRequest: unknown album (Deezer error envelope, non-quota) → 422 not-found', async () => {
+  const fetchImpl = async () => okText(JSON.stringify({ error: { code: 800, message: 'no data' } }));
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '999999999',
+    token: tracksToken('999999999'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 422);
+  assert.deepEqual(r.body, { _error: 'not-found' });
+});
+
+test('tracksRequest: upstream 404 is remapped to our own 422 (never trips the ban jail)', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 404, text: async () => '' });
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 422);
+  assert.deepEqual(r.body, { _error: 'not-found' });
+});
+
+test('tracksRequest: upstream 429 is passed through as a retryable error', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 429, text: async () => '' });
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 429);
+  assert.deepEqual(r.body, { _error: 429 });
+});
+
+test('tracksRequest: upstream network error → 503 network', async () => {
+  const fetchImpl = async () => { throw new Error('ECONNRESET'); };
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 503);
+  assert.deepEqual(r.body, { _error: 'network' });
+});
+
+test('tracksRequest: album with no tracks field → empty tracks array, not an error', async () => {
+  const fetchImpl = async () => okText(JSON.stringify({ title: 'Some Album' }));
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { tracks: [] });
 });
 
 test('artistRequest: cache hit short-circuits the Deezer call, incl. a pre-genres cached entry', async () => {

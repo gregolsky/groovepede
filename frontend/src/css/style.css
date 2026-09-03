@@ -159,14 +159,6 @@ body::after {
   transition: border-color .15s, color .15s, background .15s;
 }
 .auth-btn:hover { border-color: #554e46; color: var(--text); background: var(--surface); }
-.auth-btn.secondary { border-color: var(--border); color: var(--text-faint); font-weight: 400; }
-.auth-btn.secondary:hover { border-color: var(--border-2); color: var(--text-dim); background: var(--surface); }
-.auth-btn--small { height: 30px; padding: 0 12px; font-size: 11px; border-radius: 6px; }
-.user-pill { display: flex; align-items: center; gap: 8px; }
-.user-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
-/* Truncate: a long Spotify display_name would otherwise grow the header
-   without bound (it's rendered straight from the API). */
-.user-name { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Stats ───────────────────────────────────────────────────────────────────── */
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
@@ -1151,75 +1143,15 @@ body::after {
 .pref-service-option.active { border-color: var(--accent); color: var(--accent); }
 .pref-service-option input[type="radio"] { display: none; }
 
-/* ── Sync section ────────────────────────────────────────────────────────────── */
-.profile-sync { width: 100%; margin-bottom: 16px; }
-.profile-sync-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-.profile-sync-label { display: flex; flex-direction: column; gap: 4px; }
-.profile-sync-title { font-size: 14px; font-weight: 500; color: var(--text-dim); }
-.sync-status { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); letter-spacing: 0.02em; }
-.sync-status--active { color: var(--accent); }
-.sync-status--error  { color: var(--danger); }
-
-.sync-toggle {
-  position: relative;
-  width: 40px;
-  height: 22px;
-  background: var(--border-2);
-  border: none;
-  border-radius: 11px;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.2s;
-  padding: 0;
-}
-.sync-toggle--on { background: var(--accent); }
-.sync-toggle-knob {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform 0.2s;
-  display: block;
-}
-.sync-toggle--on .sync-toggle-knob { transform: translateX(18px); }
-
-.profile-advanced { width: 100%; margin-top: 8px; }
-.profile-advanced-summary { font-size: 12px; color: var(--text-faint); cursor: pointer; list-style: none; padding: 10px 0; user-select: none; }
-.profile-advanced-summary::-webkit-details-marker { display: none; }
-.profile-advanced-summary::after { content: ' ›'; }
-.profile-advanced[open] .profile-advanced-summary::after { content: ' ↑'; }
-.profile-advanced-body { display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; }
-.profile-advanced-desc { font-size: 12px; color: var(--text-faint); line-height: 1.6; }
-
-/* ── User avatar button ──────────────────────────────────────────────────────── */
-.user-avatar-btn { background: none; border: none; padding: 0; cursor: pointer; display: flex; align-items: center; border-radius: 50%; transition: opacity 0.15s; }
-.user-avatar-btn:hover { opacity: 0.8; }
-.user-avatar-btn svg { width: 30px; height: 30px; color: var(--text-dim); }
-
 /* ── Profile overlay ─────────────────────────────────────────────────────────── */
 .profile { padding-bottom: 64px; }
 .profile-nav { display: flex; align-items: center; margin-bottom: 32px; }
 .profile-back { background: none; border: none; color: var(--text-dim); font-size: 14px; font-family: var(--font-body); cursor: pointer; padding: 0; }
 .profile-back:hover { color: var(--text); }
 .profile-body { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.profile-avatar { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
-.profile-name { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: -0.03em; }
-.profile-id { font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); margin-bottom: 12px; letter-spacing: 0.02em; }
 .profile-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; margin-bottom: 24px; }
 .profile-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 .profile-actions-desc { font-size: 12px; color: var(--text-faint); line-height: 1.6; margin: 10px 0 0; }
-.profile-actions--bottom { margin-top: 16px; }
 .profile-action-btn {
   width: 100%;
   height: 40px;
@@ -1233,16 +1165,8 @@ body::after {
   transition: border-color .15s, color .15s, background .15s;
 }
 .profile-action-btn:hover { border-color: var(--border-2); color: var(--text); background: var(--surface-2); }
-.profile-actions--bottom .auth-btn { width: 100%; justify-content: center; }
 
-/* ── Logged-out connect section in profile ───────────────────────────────────── */
-.profile-connect { width: 100%; padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 16px; }
-.profile-connect-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
-.profile-connect-desc { font-size: 13px; color: var(--text-faint); line-height: 1.6; margin-bottom: 12px; }
-.profile-connect-btn { display: inline-flex; }
-
-/* ── Logged-out auth area ────────────────────────────────────────────────────── */
-.auth-area-logged-out { display: flex; align-items: center; gap: 8px; }
+/* ── Auth area (profile icon) ────────────────────────────────────────────────── */
 .profile-icon-btn {
   background: transparent;
   border: 1px solid var(--border);

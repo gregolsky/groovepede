@@ -1,6 +1,4 @@
-import { hasSession } from './auth.js';
 import { loadAlbums, loadDone, filterAlbums } from './storage.js';
-import { isSyncEnabled, getSyncStatus, getPlaylistId } from './sync.js';
 import { SERVICES, serviceLabel, serviceListText, joinList, buildSearchUrl } from './services.js';
 
 const SPOTIFY_ICON = 'M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.8 3.3-7.3 1.7-20-12.2-45.2-15-74.9-8.2-2.9.7-5.7-1.1-6.4-4-.7-2.9 1.1-5.7 4-6.4 32.5-7.4 60.4-4.2 82.9 9.5 2.5 1.6 3.3 4.9 1.7 7.4zm10.3-22.8c-2 3.1-6.1 4.1-9.2 2.1-22.9-14.1-57.8-18.1-84.9-9.9-3.4 1-7.1-.9-8.2-4.3-1-3.4.9-7.1 4.3-8.2 31-9.4 69.5-4.9 95.8 11.2 3.1 2 4.1 6.1 2.2 9.1zm.9-23.7C108.4 59 63.5 57.6 37.8 65.5c-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.7-9 79.1-7.3 110.3 11 3.7 2.2 4.9 6.9 2.7 10.5-2.1 3.7-6.9 4.9-10.5 2.7z';
@@ -213,28 +211,13 @@ function renderListenBtn(album, prefService, { showService = false } = {}) {
 
 // ── Auth area ─────────────────────────────────────────────────────────────────
 
-export function renderAuthArea(el, userProfile) {
-  if (!hasSession()) {
-    el.innerHTML = `
-      <div class="auth-area-logged-out">
-        <button class="profile-icon-btn" data-action="open-profile" aria-label="Profile &amp; settings" title="Profile, listening service, backups">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
-          </svg>
-        </button>
-        <button class="auth-btn auth-btn--small" data-action="login" title="Optional — lets you sync your queue to a private Spotify playlist">${spotifyIcon(14, 14)} Connect Spotify</button>
-      </div>`;
-    return;
-  }
-  const img  = userProfile?.images?.[0]?.url;
-  const name = userProfile?.display_name || '';
+export function renderAuthArea(el) {
   el.innerHTML = `
-    <div class="user-pill">
-      <button class="user-avatar-btn" data-action="open-profile" aria-label="Your profile" title="Profile, listening service, sync &amp; backups">
-        ${img ? `<img class="user-avatar" src="${attr(img)}" alt="">` : spotifyIcon(20, 20)}
-      </button>
-      ${name ? `<span class="user-name">${name}</span>` : ''}
-    </div>`;
+    <button class="profile-icon-btn" data-action="open-profile" aria-label="Profile &amp; settings" title="Profile, listening service, backups">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+      </svg>
+    </button>`;
 }
 
 // ── Empty-state hero (shown when queue has 0 albums) ─────────────────────────
@@ -342,10 +325,6 @@ function renderHero({ loadingAdd, addError, addOpen }) {
           <p>Tap any album for its tracklist, the artist's bio, and similar artists worth queueing next.</p>
         </div>
         <div class="landing-extra">
-          <h4>Optional Spotify sync</h4>
-          <p>Connect Spotify to mirror your queue into a private playlist &mdash; backed up, and there on every device.</p>
-        </div>
-        <div class="landing-extra">
           <h4>Take your queue with you</h4>
           <p>Export the whole queue as a JSON file and import it anywhere. It's your data, in a format you can read.</p>
         </div>
@@ -384,40 +363,6 @@ function renderHero({ loadingAdd, addError, addOpen }) {
 
 // ── Profile overlay ───────────────────────────────────────────────────────────
 
-function renderSyncSection() {
-  const enabled = isSyncEnabled();
-  const { status, lastSyncedAt, lastError } = getSyncStatus();
-
-  let statusLine = '';
-  if (enabled) {
-    if (status === 'syncing') {
-      statusLine = '<span class="sync-status sync-status--active">Syncing…</span>';
-    } else if (status === 'error') {
-      statusLine = `<span class="sync-status sync-status--error">${attr(lastError || 'Sync failed')}</span>`;
-    } else if (lastSyncedAt) {
-      const secs = Math.round((Date.now() - lastSyncedAt) / 1000);
-      const ago  = secs < 60 ? 'just now' : secs < 3600 ? Math.floor(secs / 60) + 'm ago' : Math.floor(secs / 3600) + 'h ago';
-      statusLine = `<span class="sync-status">Synced ${ago}</span>`;
-    } else {
-      statusLine = '<span class="sync-status">Not synced yet</span>';
-    }
-  }
-
-  return `
-    <div class="profile-sync">
-      <div class="profile-sync-row">
-        <div class="profile-sync-label">
-          <span class="profile-sync-title">Sync to Spotify playlist</span>
-          ${enabled ? statusLine : '<span class="sync-status">Mirrors your queue to a private playlist, “Groovepede Queue”</span>'}
-        </div>
-        <button class="sync-toggle ${enabled ? 'sync-toggle--on' : ''}" data-action="toggle-sync" aria-pressed="${enabled}"
-            title="${enabled ? 'Stop mirroring your queue to Spotify (the playlist stays)' : 'Mirror your queue to a private Spotify playlist'}">
-          <span class="sync-toggle-knob"></span>
-        </button>
-      </div>
-    </div>`;
-}
-
 /**
  * Every service, straight from the registry. It used to be a hardcoded six,
  * which left Pandora and SoundCloud unselectable — and since adding an album
@@ -439,11 +384,7 @@ function renderPrefServiceSection(prefService) {
     </div>`;
 }
 
-function renderProfile(userProfile, prefService) {
-  const loggedIn = hasSession();
-  const img    = userProfile?.images?.[0]?.url;
-  const name   = userProfile?.display_name || '';
-  const id     = userProfile?.id || '';
+function renderProfile(prefService) {
   const albums = loadAlbums();
   const tags   = tagsByFrequency(albums);
   return `
@@ -452,38 +393,18 @@ function renderProfile(userProfile, prefService) {
         <button class="profile-back" data-action="close-profile">← Back</button>
       </div>
       <div class="profile-body">
-        ${loggedIn && img ? `<img class="profile-avatar" src="${attr(img)}" alt="">` : ''}
-        ${loggedIn && name ? `<div class="profile-name">${name}</div>` : ''}
-        ${loggedIn && id   ? `<div class="profile-id">@${attr(id)}</div>` : ''}
         <div class="profile-stats">
           <div class="stat"><div class="stat-num">${albums.length}</div><div class="stat-label">queued</div></div>
           <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
           <div class="stat"><div class="stat-num">${tags.length}</div><div class="stat-label">tags</div></div>
         </div>
         ${renderPrefServiceSection(prefService)}
-        ${loggedIn ? renderSyncSection() : `
-        <div class="profile-connect">
-          <div class="profile-connect-label">Sync to Spotify (optional)</div>
-          <div class="profile-connect-desc">Connect to back up your queue as a private Spotify playlist and keep it in sync across devices.</div>
-          <button class="auth-btn profile-connect-btn" data-action="login">${spotifyIcon(14, 14)} Connect with Spotify</button>
-        </div>`}
         <div class="profile-actions">
           <button class="profile-action-btn" data-action="export-data" title="Download your whole queue as a JSON backup file">Export queue</button>
           <button class="profile-action-btn" data-action="import-data" title="Load a backup file — replaces your current queue">Import queue</button>
           <input type="file" id="profile-import-input" accept="application/json" style="display:none">
         </div>
         <p class="profile-actions-desc">Backups are plain JSON and include every album, so importing restores your queue instantly &mdash; on this device or another.</p>
-        ${loggedIn ? `
-        <details class="profile-advanced">
-          <summary class="profile-advanced-summary">Advanced</summary>
-          <div class="profile-advanced-body">
-            <p class="profile-advanced-desc">Restore replaces your current queue with the contents of your Spotify playlist. This cannot be undone.</p>
-            <button class="profile-action-btn" data-action="restore-sync" ${!isSyncEnabled() || !getPlaylistId() ? 'disabled' : ''} title="Overwrite this device's queue with the Spotify playlist">Restore from Spotify playlist</button>
-          </div>
-        </details>
-        <div class="profile-actions profile-actions--bottom">
-          <button class="auth-btn secondary" data-action="logout">Log out of Spotify</button>
-        </div>` : ''}
       </div>
     </div>`;
 }
@@ -592,13 +513,13 @@ export function renderShareOverlay({ phase, service, album, message }) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary, refreshingId }) {
+export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary, refreshingId }) {
   const albums  = loadAlbums();
   // Same helper app.js resolves data-index against — see filterAlbums's comment.
   const visible = filterAlbums(albums, activeFilter, searchQuery);
 
   if (profileOpen) {
-    el.innerHTML = renderProfile(userProfile, prefService);
+    el.innerHTML = renderProfile(prefService);
     return;
   }
 

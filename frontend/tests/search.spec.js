@@ -1,9 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { stubExternals, seedAlbums, loginAs, SAMPLE_ALBUMS as ALBUMS } from './helpers.js';
+import { stubExternals, seedAlbums, SAMPLE_ALBUMS as ALBUMS } from './helpers.js';
 
 async function seedWithAlbums(context, albums = ALBUMS) {
   await seedAlbums(context, albums);
-  await loginAs(context);
   await stubExternals(context, { resolver: null });
 }
 

@@ -21,7 +21,7 @@ Groovepede is a minimalist, local-first PWA inbox for Spotify albums. Save album
 
 ## How to use
 
-1. Open [groovepede](https://groovepede.gregolsky.pl/) and connect your Spotify account
+1. Open [groovepede](https://groovepede.gregolsky.pl/) — no account or login needed
 2. Install it as an app (tap "Add to Home Screen" on mobile, or the install icon in your browser's address bar)
 3. In the Spotify app, find an album you want to listen to, tap **Share → Groovepede**
 4. When you're ready to listen, tap **Listen** to open it directly in Spotify
@@ -31,8 +31,6 @@ Groovepede is a minimalist, local-first PWA inbox for Spotify albums. Save album
 
 Vite for dev server and production builds. No framework, no runtime dependencies. Deployed via GitHub Pages.
 
-- Spotify OAuth using the [PKCE flow](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow) — no backend required, no secrets stored
-- [Spotify Web API](https://developer.spotify.com/documentation/web-api) for album metadata
 - [Last.fm API](https://www.last.fm/api) for genre tags, artist bios, and similar artist recommendations
 - Service worker for offline support and PWA installability
 - `localStorage` for persistent album storage
@@ -43,10 +41,8 @@ If you want to run your own instance:
 
 1. Fork this repo
 2. Enable GitHub Pages on the `main` branch
-3. Create a [Spotify Developer app](https://developer.spotify.com/dashboard) and set the redirect URI to your Pages URL
-4. Replace the `CLIENT_ID` value in `frontend/src/js/config.js` with your own
-5. Push — that's it
+3. Push — that's it
 
 ## Privacy
 
-Groovepede only requests the `user-read-private` Spotify scope (needed to display your name and avatar). It never reads your listening history, playlists, or any other Spotify data. Your album queue is stored locally in your browser and never leaves your device.
+There's no login and no account, so there's nothing tied to your identity. Your album queue is stored locally in your browser and never leaves your device.

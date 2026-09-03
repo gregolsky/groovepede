@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { stubExternals, seedAlbums, loginAs } from './helpers.js';
+import { stubExternals, seedAlbums } from './helpers.js';
 
 const ALBUMS = [
   { id: 'a1', title: 'Kind of Blue',  artist: 'Miles Davis',    url: '', cover: null, year: '1959', tags: [], addedAt: new Date().toISOString() },
@@ -9,7 +9,6 @@ const ALBUMS = [
 
 async function seedWithAlbums(context, albums = ALBUMS) {
   await seedAlbums(context, albums);
-  await loginAs(context);
   await stubExternals(context, { resolver: null });
 }
 

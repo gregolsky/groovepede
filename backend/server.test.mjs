@@ -109,6 +109,25 @@ test('handleRequest: /v1/artist delegates to artistRequest with parsed params', 
   assert.deepEqual(JSON.parse(res.body), { image: null, genres: [] });
 });
 
+test('handleRequest: /v1/tracks delegates to tracksRequest with parsed params', async () => {
+  const token = makeToken('tracks:302127');
+  const req = mockReq({
+    url: '/v1/tracks?albumId=302127',
+    headers: { 'x-gp-token': token },
+  });
+  const res = mockRes();
+  const deezerAlbum = { tracks: { data: [{ track_position: 1, title: 'Airbag', duration: 284 }] } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify(deezerAlbum), body: null });
+  try {
+    await handleRequest(req, res, { cache: noCache });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(JSON.parse(res.body), { tracks: [{ number: 1, name: 'Airbag', duration_ms: 284000 }] });
+});
+
 test('handleRequest: unknown path → 404 {"_error":"not found"}', async () => {
   const req = mockReq({ url: '/v1/does-not-exist' });
   const res = mockRes();

@@ -1,6 +1,5 @@
 import { LASTFM_KEY, RESOLVER_BASE, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
 import { signRequestToken } from './sign.js';
-import { getToken, refreshAccessToken } from './auth.js';
 import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
 import { createThrottle } from './throttle.js';
 
@@ -33,7 +32,6 @@ function makeThrottles() {
     resolver:    createThrottle({ ...THROTTLE.resolver,    isRateLimited: is429, retryAfterOf: retryAfterMs }),
     musicbrainz: createThrottle({ ...THROTTLE.musicbrainz, isRateLimited: is429, retryAfterOf: retryAfterMs }),
     lastfm:      createThrottle({ ...THROTTLE.lastfm }),  // rarely rate-limits; pace only
-    spotify:     createThrottle({ ...THROTTLE.spotify,    isRateLimited: is429, retryAfterOf: retryAfterMs }),
     audiodb:     createThrottle({ ...THROTTLE.audiodb }), // shared free key; pace only
     deezer:      createThrottle({ ...THROTTLE.deezer,     isRateLimited: is429, retryAfterOf: retryAfterMs }),
   };
@@ -51,7 +49,7 @@ export function _setThrottles(t) { throttles = { ...throttles, ...t }; }
  * the album page itself (browsers can't — CORS), extracts title/artist/cover/
  * year with a per-service routine, and cross-links the two services with a
  * free keyless search API (Deezer, Apple). Returns the resolver's record with
- * sourceUrl/addedAt/firstTrackUri layered on, or `{ _error }` on failure.
+ * sourceUrl/addedAt layered on, or `{ _error }` on failure.
  */
 export async function resolveAlbum(inputUrl) {
   try {
@@ -75,7 +73,6 @@ export async function resolveAlbum(inputUrl) {
       tags:          data.tags || [],
       addedAt:       new Date().toISOString(),
       links:         data.links || {},
-      firstTrackUri: null, // fetched lazily from Spotify (by add flow / sync.js) when a spotify link exists
     };
   } catch {
     return { _error: 'network' };
@@ -119,7 +116,6 @@ export function parseMbRelease(data, sourceUrl, service) {
     tags:          [],
     addedAt:       new Date().toISOString(),
     links,
-    firstTrackUri: null,
   };
 }
 
@@ -180,57 +176,6 @@ export async function resolveAlbumResilient(sourceUrl, { service } = {}) {
   const mbRec = await throttles.musicbrainz.run(() => resolveAlbumMusicBrainz(sourceUrl, service));
   if (!mbRec._error) return mbRec;
   return lastResolverErr; // both failed — caller leaves stub pending
-}
-
-// ── Spotify ───────────────────────────────────────────────────────────────────
-
-const SPOTIFY_API = 'https://api.spotify.com/v1';
-
-/**
- * One Spotify Web API call: sends the bearer token, refreshes it once on 401 and
- * retries, and normalises every failure to `{ _error }`.
- *
- * Returns `null` — not an `_error` object — when the token could not be
- * refreshed. Callers rely on that distinction: sync.js's handleErr() maps null
- * to "Auth failed" and disables further pushes.
- *
- * A body is only sent when one is given, so GET requests carry no
- * Content-Type header.
- */
-async function _spotifyRequest(method, path, body) {
-  const makeReq = () => fetch(SPOTIFY_API + path, {
-    method,
-    headers: {
-      Authorization: 'Bearer ' + getToken(),
-      ...(body !== undefined && { 'Content-Type': 'application/json' }),
-    },
-    ...(body !== undefined && { body: JSON.stringify(body) }),
-  });
-
-  let res = await makeReq();
-  if (res.status === 401) {
-    if (!await refreshAccessToken()) return null;
-    res = await makeReq();
-  }
-  if (res.status === 429) return rateLimitError(res);
-  if (!res.ok) return { _error: res.status };
-  if (method === 'GET') return res.json();
-
-  // Playlist mutations answer 200-with-empty-body and 204, which res.json()
-  // rejects on — so those go through text() and treat empty as {}.
-  const text = await res.text();
-  return text ? JSON.parse(text) : {};
-}
-
-const spotifyRequest = (method, path, body) => throttles.spotify.run(() => _spotifyRequest(method, path, body));
-
-export async function spotifyGet(path)        { return spotifyRequest('GET',  path); }
-export async function spotifyPost(path, body) { return spotifyRequest('POST', path, body); }
-export async function spotifyPut(path, body)  { return spotifyRequest('PUT',  path, body); }
-
-export async function fetchAlbumFirstTrack(albumId) {
-  const data = await spotifyGet('/albums/' + albumId + '/tracks?limit=1');
-  return data?.items?.[0]?.uri || null;
 }
 
 // Fetch Last.fm tags in the background and update the saved album.
@@ -395,8 +340,6 @@ async function fetchTagsFromSimilarArtists(artist) {
     .map(([name]) => name);
 }
 
-// ── Spotify album search (fills gaps from extraction/cross-linking misses) ───
-
 /**
  * Normalise an album/artist string for fuzzy matching:
  * - Unicode NFKD + strip combining diacritics
@@ -417,62 +360,27 @@ export function normalizeAlbumStr(s) {
 }
 
 /**
- * Returns true when a Spotify search result item is a confident match for the
- * resolved artist + title.
- * @param {{ name: string, artists: Array<{name:string}> }} item  Spotify search result
- * @param {string} artist  Resolved artist name
- * @param {string} title   Resolved album title
+ * A Deezer album's tracklist via our resolver (api.deezer.com sends no CORS
+ * header, so the browser can't call it directly). `albumId` is Deezer's own
+ * numeric album id — see deezerAlbumId() below.
+ * Returns `[]` on failure (including no match/no id) or a rate-limit error
+ * object (`{ _error: 429, ... }`) on 429, so the throttle can back off;
+ * never throws.
  */
-export function spotifyAlbumMatches(item, artist, title) {
-  const normTitle = normalizeAlbumStr(title);
-  const normItem  = normalizeAlbumStr(item.name);
-  if (!normTitle || normTitle !== normItem) return false;
-
-  const normArtist = normalizeAlbumStr(artist);
-  return (item.artists || []).some(a => {
-    const na = normalizeAlbumStr(a.name);
-    return na === normArtist || na.includes(normArtist) || normArtist.includes(na);
-  });
-}
-
-/**
- * Search Spotify for an album by artist + title and return a
- * `{ url, nativeUri }` entry (suitable for `links.spotify`) when a confident
- * match is found, or null otherwise.
- * Only callable when a Spotify token is valid (caller is responsible).
- */
-export async function searchSpotifyAlbum(artist, title) {
-  if (!artist || !title) return null;
-  const q = `album:${title} artist:${artist}`;
-  const data = await spotifyGet('/search?type=album&limit=5&q=' + encodeURIComponent(q));
-  if (!data || data._error) return null;
-  const items = data.albums?.items || [];
-  const match = items.find(item => spotifyAlbumMatches(item, artist, title));
-  if (!match) return null;
-  return {
-    url:       match.external_urls?.spotify || null,
-    nativeUri: match.uri || null,
-  };
-}
-
 export async function fetchAlbumTracks(albumId) {
-  const data = await spotifyGet('/albums/' + albumId);
-  if (!data?.tracks?.items) return [];
-  return data.tracks.items.map(t => ({
-    number:      t.track_number,
-    name:        t.name,
-    duration_ms: t.duration_ms,
-  }));
-}
-
-export async function fetchSpotifyArtist(artistId) {
-  const data = await spotifyGet('/artists/' + artistId);
-  if (!data) return null;
-  return {
-    image:       data.images?.[0]?.url || null,
-    genres:      (data.genres || []).slice(0, 5),
-    spotifyUrl:  data.external_urls?.spotify || null,
-  };
+  if (!albumId) return [];
+  return throttles.deezer.run(async () => {
+    try {
+      const params = new URLSearchParams({ albumId });
+      const signed = `tracks:${albumId}`;
+      const res = await fetch(`${RESOLVER_BASE}/v1/tracks?${params}`, {
+        headers: { 'x-gp-token': await signRequestToken(signed) },
+      });
+      if (!res.ok) return res.status === 429 ? rateLimitError(res) : [];
+      const data = await res.json();
+      return data?.tracks || [];
+    } catch { return []; }
+  });
 }
 
 export async function fetchLastfmArtist(artistName) {

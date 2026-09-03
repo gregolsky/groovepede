@@ -31,6 +31,7 @@ export const ITUNES_BASE   = 'https://itunes.apple.com';
 export const SPOTIFY_ACCOUNTS_BASE = 'https://accounts.spotify.com';
 export const SPOTIFY_API_BASE      = 'https://api.spotify.com/v1';
 export const ARTIST_TTL_S  = 60 * 60 * 24 * 30;            // 30 days — artist photos are near-static
+export const TRACKS_TTL_S  = 60 * 60 * 24 * 30;            // 30 days — tracklists are as near-static as artist photos
 
 const TOKEN_WINDOW_S = 300; // 5-minute replay window
 
@@ -483,10 +484,10 @@ async function crossLinkApple(artist, title, fetchImpl) {
 }
 
 // ── Spotify Client Credentials (app-only auth) ──────────────────────────────
-// A separate, lighter-weight OAuth flow from the user-facing PKCE login in
-// frontend/src/js/auth.js: this one has no user, no consent screen, and can
-// only ever read Spotify's public catalog (search, browse) — never a user's
-// library or playlists. Exists purely so the resolver can cross-link to
+// App-only OAuth: no user, no consent screen, and can only ever read
+// Spotify's public catalog (search, browse) — never a user's library or
+// playlists. There is no other Spotify auth flow anywhere in this app — the
+// whole app is login-free. Exists purely so the resolver can cross-link to
 // Spotify the same way it already does for Deezer/Apple. Entirely optional:
 // when SPOTIFY_CLIENT_ID/SECRET aren't set, crossLinkSpotify just no-ops.
 
@@ -784,6 +785,93 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
   // either, and re-asking on every explore would be pure waste.
   try {
     await cache.put(k, body, ARTIST_TTL_S);
+  } catch (err) {
+    console.warn('cache put error (non-fatal):', err.message);
+  }
+
+  return { statusCode: 200, headers: jsonHeaders, body };
+}
+
+// ── Tracklists ──────────────────────────────────────────────────────────────
+// Same problem as artistRequest: api.deezer.com sends no CORS header, so the
+// browser can't call it directly. albumId is Deezer's own numeric album id
+// (the client already has it for free in links.deezer.url whenever
+// cross-linking found a match, via deezerAlbumId() in frontend/src/js/api.js).
+// This used to be sourced from the Spotify Web API with a user's OAuth token
+// (frontend/src/js/auth.js, retired) — moving it here means it works for every
+// album, not only ones a logged-in user had linked to Spotify.
+
+/**
+ * Resolve a Deezer album's tracklist.
+ *
+ * @returns {Promise<{statusCode:number, headers:object, body:any}>}
+ *          body is `{ tracks: Array<{number, name, duration_ms}> }`.
+ */
+export async function tracksRequest({ method, origin, albumId, token, cache, fetchImpl = fetch }) {
+  const cors = corsHeaders(origin || '');
+
+  if (method === 'OPTIONS') {
+    return { statusCode: 204, headers: cors, body: null };
+  }
+
+  const jsonHeaders = { 'content-type': 'application/json', ...cors };
+
+  if (!verifyToken(token || '', `tracks:${albumId || ''}`)) {
+    return { statusCode: 403, headers: jsonHeaders, body: { _error: 'forbidden' } };
+  }
+
+  if (!albumId) {
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'missing albumId' } };
+  }
+  // albumId goes straight into a URL path; only ever a Deezer numeric id.
+  if (!/^\d+$/.test(albumId)) {
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'bad albumId' } };
+  }
+
+  const k = `tracks:${albumId}`;
+
+  try {
+    const hit = await cache.get(k);
+    if (hit) return { statusCode: 200, headers: jsonHeaders, body: hit };
+  } catch (err) {
+    console.warn('cache get error (non-fatal):', err.message);
+  }
+
+  let data;
+  try {
+    const text = await fetchUpstream(`${DEEZER_BASE}/album/${albumId}`, fetchImpl);
+    data = JSON.parse(text);
+  } catch (err) {
+    if (err instanceof UpstreamFetchError) {
+      const status = err.status;
+      if (!status) return { statusCode: 503, headers: jsonHeaders, body: { _error: 'network' } };
+      if (status === 429 || status >= 500) {
+        return { statusCode: status, headers: jsonHeaders, body: { _error: status } };
+      }
+      // Same fail2ban-safety remap as albumRequest — never pass a bare
+      // upstream 404/403/400 through as our own HTTP status.
+      return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+    }
+    return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+  }
+
+  if (data?.error) {
+    // Deezer reports quota-exceeded as an HTTP-200 envelope (error.code === 4),
+    // not a real 429 — treat it as retryable rather than "no such album".
+    if (data.error.code === 4) return { statusCode: 429, headers: jsonHeaders, body: { _error: 429 } };
+    return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+  }
+
+  const tracks = (data?.tracks?.data || []).map(t => ({
+    number:      t.track_position ?? null,
+    name:        t.title || null,
+    duration_ms: typeof t.duration === 'number' ? t.duration * 1000 : null,
+  }));
+
+  const body = { tracks };
+
+  try {
+    await cache.put(k, body, TRACKS_TTL_S);
   } catch (err) {
     console.warn('cache put error (non-fatal):', err.message);
   }

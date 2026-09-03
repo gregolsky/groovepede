@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, spotifyAlbumMatches, searchSpotifyAlbum, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistData, deezerAlbumId, fetchArtistImage, enrichWithLastfm, cleanTags } from './api.js';
+import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistData, fetchAlbumTracks, deezerAlbumId, fetchArtistImage, enrichWithLastfm, cleanTags } from './api.js';
 import { loadAlbums } from './storage.js';
 
 // ── throttle helpers ──────────────────────────────────────────────────────────
@@ -120,15 +120,6 @@ describe('resolveAlbum', () => {
     expect(result.year).toBeNull();
   });
 
-  it('sets firstTrackUri to null (resolved by sync later)', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true,
-      json: async () => RESOLVER_RESPONSE,
-    });
-    const result = await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
-    expect(result.firstTrackUri).toBeNull();
-  });
-
   it('sets sourceUrl to the input URL', async () => {
     const inputUrl = 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy';
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
@@ -210,10 +201,9 @@ describe('parseMbRelease', () => {
     expect(parseMbRelease({}, 'url', 'spotify')).toBeNull();
   });
 
-  it('initialises tags as empty array and firstTrackUri as null', () => {
+  it('initialises tags as an empty array', () => {
     const rec = parseMbRelease(MB_RESPONSE, 'https://open.spotify.com/album/5Oc87gybQZkVeqogIFXzMd', 'spotify');
     expect(rec.tags).toEqual([]);
-    expect(rec.firstTrackUri).toBeNull();
   });
 });
 
@@ -375,120 +365,6 @@ describe('normalizeAlbumStr', () => {
   it('returns empty string for null/undefined', () => {
     expect(normalizeAlbumStr(null)).toBe('');
     expect(normalizeAlbumStr(undefined)).toBe('');
-  });
-});
-
-// ── spotifyAlbumMatches ───────────────────────────────────────────────────────
-
-describe('spotifyAlbumMatches', () => {
-  const makeItem = (name, artists) => ({ name, artists: artists.map(a => ({ name: a })) });
-
-  it('returns true for exact artist + title match', () => {
-    expect(spotifyAlbumMatches(
-      makeItem('Dopethrone', ['Electric Wizard']),
-      'Electric Wizard', 'Dopethrone',
-    )).toBe(true);
-  });
-
-  it('returns true when album has edition noise but core title matches', () => {
-    expect(spotifyAlbumMatches(
-      makeItem('Dopethrone (Deluxe Edition)', ['Electric Wizard']),
-      'Electric Wizard', 'Dopethrone',
-    )).toBe(true);
-  });
-
-  it('returns true when resolved title has edition noise', () => {
-    expect(spotifyAlbumMatches(
-      makeItem('Dopethrone', ['Electric Wizard']),
-      'Electric Wizard', 'Dopethrone (Remastered)',
-    )).toBe(true);
-  });
-
-  it('returns false when titles differ', () => {
-    expect(spotifyAlbumMatches(
-      makeItem('Come My Fanatics', ['Electric Wizard']),
-      'Electric Wizard', 'Dopethrone',
-    )).toBe(false);
-  });
-
-  it('returns false when artist does not match', () => {
-    expect(spotifyAlbumMatches(
-      makeItem('Dopethrone', ['Sleep']),
-      'Electric Wizard', 'Dopethrone',
-    )).toBe(false);
-  });
-
-  it('returns true for artist partial-overlap (e.g. feat. credits)', () => {
-    expect(spotifyAlbumMatches(
-      makeItem('OK Computer', ['Radiohead']),
-      'Radiohead', 'OK Computer',
-    )).toBe(true);
-  });
-});
-
-// ── searchSpotifyAlbum ────────────────────────────────────────────────────────
-
-describe('searchSpotifyAlbum', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    resetThrottles();
-    // Stub localStorage so getToken() doesn't throw in the test environment
-    globalThis.localStorage = { getItem: () => 'fake-token', setItem: () => {}, removeItem: () => {} };
-  });
-
-  const SEARCH_RESPONSE = {
-    albums: {
-      items: [{
-        name: 'Dopethrone',
-        uri: 'spotify:album:1AxwLCMtx8rnIxkFQKU2LO',
-        external_urls: { spotify: 'https://open.spotify.com/album/1AxwLCMtx8rnIxkFQKU2LO' },
-        artists: [{ name: 'Electric Wizard' }],
-      }],
-    },
-  };
-
-  it('returns url + nativeUri when search finds a confident match', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true, status: 200,
-      json: async () => SEARCH_RESPONSE,
-      headers: { get: () => null },
-    });
-    const result = await searchSpotifyAlbum('Electric Wizard', 'Dopethrone');
-    expect(result).toEqual({
-      url: 'https://open.spotify.com/album/1AxwLCMtx8rnIxkFQKU2LO',
-      nativeUri: 'spotify:album:1AxwLCMtx8rnIxkFQKU2LO',
-    });
-  });
-
-  it('returns null when no items match', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true, status: 200,
-      json: async () => ({ albums: { items: [] } }),
-      headers: { get: () => null },
-    });
-    const result = await searchSpotifyAlbum('Electric Wizard', 'Dopethrone');
-    expect(result).toBeNull();
-  });
-
-  it('returns null when items present but none match the title', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true, status: 200,
-      json: async () => ({ albums: { items: [{ name: 'Come My Fanatics', uri: 'spotify:album:xyz', external_urls: { spotify: 'https://...' }, artists: [{ name: 'Electric Wizard' }] }] } }),
-      headers: { get: () => null },
-    });
-    const result = await searchSpotifyAlbum('Electric Wizard', 'Dopethrone');
-    expect(result).toBeNull();
-  });
-
-  it('returns null on fetch error', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 401, headers: { get: () => null } });
-    const result = await searchSpotifyAlbum('Electric Wizard', 'Dopethrone');
-    expect(result).toBeNull();
-  });
-
-  it('returns null when artist or title is missing', async () => {
-    expect(await searchSpotifyAlbum('', 'Dopethrone')).toBeNull();
-    expect(await searchSpotifyAlbum('Electric Wizard', '')).toBeNull();
   });
 });
 
@@ -872,6 +748,45 @@ describe('fetchDeezerArtistData', () => {
 
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
     expect(await fetchDeezerArtistData('X', null)).toBeNull();
+  });
+});
+
+describe('fetchAlbumTracks', () => {
+  beforeEach(() => { resetThrottles(); vi.restoreAllMocks(); });
+
+  it('returns [] without calling fetch when albumId is missing', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    expect(await fetchAlbumTracks(null)).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('passes albumId through and maps the resolver response', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      okJson({ tracks: [{ number: 1, name: 'Airbag', duration_ms: 284000 }] }));
+    expect(await fetchAlbumTracks('302127')).toEqual([{ number: 1, name: 'Airbag', duration_ms: 284000 }]);
+    const url = spy.mock.calls[0][0];
+    expect(url).toContain('/v1/tracks?');
+    expect(url).toContain('albumId=302127');
+  });
+
+  it('defaults to [] when the response has no tracks key', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({}));
+    expect(await fetchAlbumTracks('302127')).toEqual([]);
+  });
+
+  it('surfaces 429 so the throttler can back off', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: false, status: 429, headers: { get: h => (h === 'retry-after' ? '12' : null) },
+    });
+    expect(await fetchAlbumTracks('302127')).toEqual({ _error: 429, _retryAfter: 12 });
+  });
+
+  it('returns [] on other errors and on network failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 422 });
+    expect(await fetchAlbumTracks('302127')).toEqual([]);
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
+    expect(await fetchAlbumTracks('302127')).toEqual([]);
   });
 });
 

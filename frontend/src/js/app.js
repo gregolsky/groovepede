@@ -2,14 +2,11 @@ import '../css/style.css';
 import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
-import { login, clearToken, tokenValid, exchangeCode, refreshAccessToken } from './auth.js';
-import { spotifyGet, fetchAlbumFirstTrack, resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchSpotifyArtist, fetchArtistImage, fetchAlbumTracks, searchSpotifyAlbum } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, spotifyAlbumId, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
+import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtistImage, fetchAlbumTracks, deezerAlbumId } from './api.js';
+import { loadAlbums, saveAlbums, loadDone, saveDone, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, renderShareOverlay } from './render.js';
-import * as sync from './sync.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let userProfile    = null;
 let activeFilter   = 'all';
 let loadingAdd     = false;
 let artistCache    = {};
@@ -33,7 +30,7 @@ function visibleAlbums() {
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, userProfile, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress, importSummary, refreshingId };
+  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress, importSummary, refreshingId };
 }
 
 let _entrancePlayed = false;
@@ -53,7 +50,7 @@ function rerender() {
     setTimeout(() => appEl.classList.remove('animate-in'), 2500);
   }
 
-  renderAuthArea(authEl, userProfile);
+  renderAuthArea(authEl);
   renderApp(appEl, getState());
 
   if (focusId === 'search-input' || focusId === 'url-input') {
@@ -66,28 +63,12 @@ function rerender() {
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
-// The resolver never returns a Spotify track URI; fetch the album's first
-// track from the Spotify API (when logged in) so playlist sync has a URI.
-// Also recovers a missing links.spotify entry via search when the resolver's
-// cross-linking had a gap (e.g. it wasn't a Spotify paste and the Deezer/Apple
-// search didn't happen to match).
-async function attachFirstTrackUri(rec) {
-  if (!tokenValid()) return;
-  // Fill in missing Spotify link via search fallback
-  if (!rec.links?.spotify && rec.artist && rec.title) {
-    const found = await searchSpotifyAlbum(rec.artist, rec.title);
-    if (found) (rec.links ??= {}).spotify = found;
-  }
-  const spotifyId = spotifyAlbumId(rec);
-  if (spotifyId) rec.firstTrackUri = await fetchAlbumFirstTrack(spotifyId);
-}
 
 /**
  * Persist a freshly resolved album and kick off its background enrichment.
  *
  * Shared by all three entry points (paste, share-target launch, pending retry)
- * so the id-dedupe, the Spotify track lookup, the sync push and the Last.fm
- * enrichment can't drift between them.
+ * so the id-dedupe and the Last.fm enrichment can't drift between them.
  *
  * Re-reads storage rather than trusting a caller-held array: resolving is async,
  * and a share-target add or a pending retry can land in between.
@@ -95,11 +76,9 @@ async function attachFirstTrackUri(rec) {
 async function saveResolvedAlbum(rec) {
   const albums = loadAlbums();
   if (albums.find(a => a.id === rec.id)) return rec;  // already queued
-  await attachFirstTrackUri(rec);
   const fresh = loadAlbums();
   fresh.push(rec);
   saveAlbums(fresh);
-  if (tokenValid()) sync.schedulePush();
   enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
   return rec;
 }
@@ -199,7 +178,6 @@ function applyDone(visibleIdx, album, explore) {
   albums.splice(idx, 1);
   saveAlbums(albums);
   saveDone(loadDone() + 1);
-  if (tokenValid()) sync.schedulePush();
 
   if (explore) {
     const newVisible = visibleAlbums();
@@ -222,28 +200,23 @@ async function openExplore(index) {
 }
 
 async function prefetchExplore(album) {
-  const { artist, artistId, id } = album;
-  const spotifyId    = spotifyAlbumId(album);
-  const needsLastfm  = !artistCache[artist];
-  const needsSpotify = artistId && artistCache[artist]?.image === undefined;
-  const needsTracks  = spotifyId && !trackCache[id];
-  // No Spotify link → no Spotify tracklist to fetch; mark empty so the card
-  // shows no tracklist instead of a perpetual "Loading tracks…".
-  if (!spotifyId && trackCache[id] === undefined) trackCache[id] = [];
+  const { artist, id } = album;
+  const deezerId    = deezerAlbumId(album);
+  const needsLastfm = !artistCache[artist];
+  const needsTracks = deezerId && !trackCache[id];
+  // No Deezer link → no tracklist to fetch; mark empty so the card shows no
+  // tracklist instead of a perpetual "Loading tracks…".
+  if (!deezerId && trackCache[id] === undefined) trackCache[id] = [];
 
   const fetches = [];
-  if (needsLastfm)  fetches.push(fetchLastfmArtist(artist).then(d => { artistCache[artist] = { ...artistCache[artist], ...d }; }));
-  if (needsSpotify) fetches.push(fetchSpotifyArtist(artistId).then(d => { if (d) artistCache[artist] = { ...artistCache[artist], ...d }; }));
-  if (needsTracks)  fetches.push(fetchAlbumTracks(spotifyId).then(t => { trackCache[id] = t; }));
+  if (needsLastfm) fetches.push(fetchLastfmArtist(artist).then(d => { artistCache[artist] = { ...artistCache[artist], ...d }; }));
+  if (needsTracks) fetches.push(fetchAlbumTracks(deezerId).then(t => { trackCache[id] = t; }));
 
   if (fetches.length) {
     await Promise.all(fetches);
     if (exploreIndex !== null && visibleAlbums()[exploreIndex]?.id === id) rerender();
   }
 
-  // Artist image: Spotify above only runs when logged in AND the record has an
-  // artistId, which is never true for albums added without connecting Spotify.
-  // Fall back to the login-free sources, keyed on the artist name.
   if (!artistCache[artist]?.image) {
     const image = await fetchArtistImage(album);
     if (image) {
@@ -283,13 +256,6 @@ function navigateExplore(dir) {
       animating = false;
     }
   }, 150);
-}
-
-function logout() {
-  clearToken();
-  userProfile = null;
-  profileOpen = false;
-  rerender();
 }
 
 function openProfile() {
@@ -348,14 +314,8 @@ async function refreshAlbum(visibleIdx) {
       const all = loadAlbums();
       const pos = all.findIndex(a => a.id === album.id);
       if (pos !== -1) { all[pos] = merged; saveAlbums(all); }
-      await attachFirstTrackUri(merged);
-      // Re-save after firstTrackUri is filled in
-      const all2 = loadAlbums();
-      const pos2 = all2.findIndex(a => a.id === merged.id);
-      if (pos2 !== -1) { all2[pos2] = merged; saveAlbums(all2); }
       delete artistCache[album.artist]; // clear so explore re-fetches artist data
       enrichWithLastfm(merged.id, merged.artist, merged.title, rerender);
-      if (tokenValid()) sync.schedulePush();
     }
     // On failure: silently keep existing data, no error surfaced
   } finally {
@@ -371,8 +331,6 @@ document.body.addEventListener('click', e => {
   const { action, tag, url, index } = el.dataset;
 
   switch (action) {
-    case 'login':         login();                              break;
-    case 'logout':        logout();                             break;
     case 'filter':        setFilter(tag);                       break;
     case 'add':           handleAdd();                          break;
     case 'toggle-add':
@@ -410,11 +368,6 @@ document.body.addEventListener('click', e => {
         navigator.clipboard?.writeText(importSummary.failed.join('\n'));
       }
       break;
-    case 'toggle-sync':
-      if (sync.isSyncEnabled()) { sync.disableSync(); rerender(); }
-      else { sync.enableSync(userProfile); } // notify() inside rerenders via _onChange
-      break;
-    case 'restore-sync':  sync.pullNow(rerender);               break;
     case 'refresh':       refreshAlbum(parseInt(index, 10));    break;
     case 'set-pref-service':
       setPreferredService(el.value);
@@ -597,7 +550,6 @@ async function resolvePending({ summarize = false } = {}) {
 
         if (!rec._error) {
           // ── Resolved ──────────────────────────────────────────────────────
-          await attachFirstTrackUri(rec);
           rec.addedAt = stub.addedAt; // preserve original addedAt
           const fresh = loadAlbums();
           const pos = fresh.findIndex(a => a.id === stub.id);
@@ -656,11 +608,9 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', resumePendingIfAny);
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-sync.setStatusListener(rerender);
 
 async function boot() {
   const params = new URLSearchParams(window.location.search);
-  const code   = params.get('code');
   const shared = params.get('text') || params.get('url');
 
   // Before ANY await: a share launch must show feedback in its first frame,
@@ -669,32 +619,12 @@ async function boot() {
   const sharedParse = shared ? parseMusicLink(shared) : null;
   if (shared) showShareOverlay('adding', { service: sharedParse.service });
 
-  if (code) {
-    window.history.replaceState({}, document.title, window.location.pathname);
-    await exchangeCode(code);
-  }
-
-  if (!tokenValid()) {
-    await refreshAccessToken();
-  }
+  if (navigator.storage?.persist) navigator.storage.persist();
 
   rerender();
 
-  // Retry any pending records from previous sessions (runs even when logged out)
+  // Retry any pending records from previous sessions
   resolvePending();
-
-  // Spotify-conditional: profile + sync setup (skipped when logged out)
-  if (tokenValid()) {
-    if (navigator.storage?.persist) navigator.storage.persist();
-
-    userProfile = await spotifyGet('/me');
-    renderAuthArea(authEl, userProfile);
-
-    if (sync.hasPendingEnable()) {
-      await sync.finishEnableAfterAuth(userProfile);
-      rerender();
-    }
-  }
 
   if (shared) {
     const isShareLaunch = window.matchMedia('(display-mode: standalone)').matches;
