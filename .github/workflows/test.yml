@@ -26,12 +26,20 @@ jobs:
       - run: npm test
 
   resolver:
-    # The resolver's own unit tests — token verification, CORS, host allowlist,
-    # artist lookup. They need no npm install (node:test + node:assert only).
+    # Resolver unit tests — token verification, CORS, host allowlist, artist
+    # lookup, plus server.mjs's request handler and SQLite cache.
+    # These DO need `npm ci`: resolver-core.mjs imports logger.mjs, which
+    # imports pino at module top level.
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test backend/resolver-core.test.mjs
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node --test resolver-core.test.mjs server.test.mjs
