@@ -15,8 +15,10 @@
  */
 
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { albumRequest, artistRequest, tracksRequest } from './resolver-core.mjs';
+import { albumRequest, artistRequest, tracksRequest, logRequest, LOG_MAX_BODY_BYTES } from './resolver-core.mjs';
+import { log, NOOP_LOGGER } from './logger.mjs';
 
 const PORT    = parseInt(process.env.PORT || '8787', 10);
 const DB_PATH = process.env.DB_PATH || '/data/cache.db';
@@ -27,7 +29,7 @@ const DB_PATH = process.env.DB_PATH || '/data/cache.db';
  * Build a { get, put } cache adapter backed by node:sqlite. `dbPath` may be a
  * filesystem path or ':memory:' (used by tests to avoid touching disk).
  */
-export function createSqliteCache(dbPath) {
+export function createSqliteCache(dbPath, logger = NOOP_LOGGER) {
   const db = new DatabaseSync(dbPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS cache (
@@ -49,7 +51,7 @@ export function createSqliteCache(dbPath) {
   // Periodic sweep of expired rows (lazy expiry already handled on read).
   // unref'd so it never keeps the process (or a test run) alive on its own.
   const sweepTimer = setInterval(() => {
-    try { sweepStmt.run(now()); } catch (err) { console.warn('cache sweep error:', err.message); }
+    try { sweepStmt.run(now()); } catch (err) { logger.warn({ err: err.message }, 'cache sweep error'); }
   }, 6 * 60 * 60 * 1000);
   sweepTimer.unref?.();
 
@@ -70,13 +72,45 @@ export function createSqliteCache(dbPath) {
 // ── HTTP routing ────────────────────────────────────────────────────────────
 
 /**
+ * Read a request body up to maxBytes, rejecting (rather than silently
+ * truncating) if the stream exceeds it — nginx's client_max_body_size is the
+ * primary defence (see backend/nginx/app.conf.template), this is defense in
+ * depth for anything that reaches the resolver directly.
+ */
+function readBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    let total = 0;
+    req.on('data', chunk => {
+      total += chunk.length;
+      if (total > maxBytes) { req.destroy(); reject(new Error('body too large')); return; }
+      data += chunk;
+    });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+/**
  * Route one request to the right resolver-core function and write the
  * response. Decoupled from the listening socket so tests can call it with
  * mock req/res objects.
- * `req` needs: method, url, headers. `res` needs: writeHead(code, headers),
- * end(body).
+ * `req` needs: method, url, headers (and, for POST bodies, be a real/mock
+ * Node.js Readable so readBody's `.on()` calls work). `res` needs:
+ * writeHead(code, headers), end(body).
  */
-export async function handleRequest(req, res, { cache, port = PORT }) {
+export async function handleRequest(req, res, { cache, port = PORT, logger = NOOP_LOGGER }) {
+  const start = Date.now();
+  const reqId = randomUUID().slice(0, 8);
+  const rlog  = typeof logger.child === 'function' ? logger.child({ reqId }) : logger;
+
+  // Capture the status code as each route sets it, instead of duplicating a
+  // status value at every return point below — this is the one access-log
+  // line per request that was missing entirely before this change.
+  let statusCode = null;
+  const origWriteHead = res.writeHead.bind(res);
+  res.writeHead = (code, headers) => { statusCode = code; return origWriteHead(code, headers); };
+
   try {
     const u = new URL(req.url, `http://localhost:${port}`);
 
@@ -96,6 +130,7 @@ export async function handleRequest(req, res, { cache, port = PORT }) {
         albumId: u.searchParams.get('albumId') || '',
         token:   req.headers['x-gp-token'] || '',
         cache,
+        logger: rlog,
       });
       res.writeHead(r.statusCode, r.headers);
       res.end(r.body == null ? '' : JSON.stringify(r.body));
@@ -109,6 +144,34 @@ export async function handleRequest(req, res, { cache, port = PORT }) {
         albumId: u.searchParams.get('albumId') || '',
         token:   req.headers['x-gp-token'] || '',
         cache,
+        logger: rlog,
+      });
+      res.writeHead(r.statusCode, r.headers);
+      res.end(r.body == null ? '' : JSON.stringify(r.body));
+      return;
+    }
+
+    if (u.pathname === '/v1/log') {
+      let body = '';
+      if (req.method === 'POST') {
+        try {
+          body = await readBody(req, LOG_MAX_BODY_BYTES);
+        } catch {
+          res.writeHead(413, { 'content-type': 'application/json' });
+          res.end('{"_error":"payload too large"}');
+          return;
+        }
+      }
+      // navigator.sendBeacon (the frontend's preferred path — see
+      // frontend/src/js/beacon.js — chosen because it can fire reliably even
+      // as the page unloads) can't set custom headers, so it puts the signed
+      // token in ?token= instead; the header is still checked first.
+      const r = await logRequest({
+        method: req.method,
+        origin: req.headers.origin || '',
+        body,
+        token:  req.headers['x-gp-token'] || u.searchParams.get('token') || '',
+        logger: rlog,
       });
       res.writeHead(r.statusCode, r.headers);
       res.end(r.body == null ? '' : JSON.stringify(r.body));
@@ -117,25 +180,30 @@ export async function handleRequest(req, res, { cache, port = PORT }) {
 
     // The only album-metadata endpoint — matches what the PWA calls.
     if (u.pathname !== '/v1/album') {
+      // These are the hits fail2ban's gp-scanner jail is watching for.
+      rlog.warn({ path: u.pathname }, 'not found');
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end('{"_error":"not found"}');
       return;
     }
 
-    const { statusCode, headers, body } = await albumRequest({
+    const r = await albumRequest({
       method: req.method,
       origin: req.headers.origin || '',
       url:    u.searchParams.get('url') || '',
       token:  req.headers['x-gp-token'] || '',
       cache,
+      logger: rlog,
     });
 
-    res.writeHead(statusCode, headers);
-    res.end(body == null ? '' : JSON.stringify(body));
+    res.writeHead(r.statusCode, r.headers);
+    res.end(r.body == null ? '' : JSON.stringify(r.body));
   } catch (err) {
-    console.error('handler error:', err);
+    rlog.error({ err: err.message, stack: err.stack }, 'handler error');
     res.writeHead(500, { 'content-type': 'application/json' });
     res.end('{"_error":"internal"}');
+  } finally {
+    rlog.info({ method: req.method, path: req.url, status: statusCode, ms: Date.now() - start }, 'request');
   }
 }
 
@@ -144,9 +212,23 @@ export async function handleRequest(req, res, { cache, port = PORT }) {
 // the real cache file or binds a port as a side effect of import.
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const cache = createSqliteCache(DB_PATH);
-  const server = createServer((req, res) => handleRequest(req, res, { cache }));
+  const cache = createSqliteCache(DB_PATH, log);
+  const server = createServer((req, res) => handleRequest(req, res, { cache, logger: log }));
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`gp-resolver-pi listening on :${PORT} (cache: ${DB_PATH})`);
+    log.info({ port: PORT, dbPath: DB_PATH }, 'gp-resolver-pi listening');
   });
+
+  // node runs as PID 1 in the container (no init, see Dockerfile) so it
+  // receives SIGTERM directly — without this, a `docker compose stop`/restart
+  // looked identical to a crash in the logs: no shutdown line, just silence.
+  const shutdown = signal => {
+    log.info({ signal }, 'shutting down');
+    server.close(() => process.exit(0));
+    // In case a connection never drains (shouldn't happen behind nginx's
+    // short proxy timeouts, but this is the failure mode a missing timeout
+    // here would look like: a restart that never completes).
+    setTimeout(() => process.exit(1), 5000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
 }

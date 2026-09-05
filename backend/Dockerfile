@@ -2,8 +2,16 @@
 FROM node:22-alpine
 
 WORKDIR /app
+
+# package*.json copied and installed BEFORE the source files, so editing
+# resolver-core.mjs/server.mjs (i.e. every commit) doesn't bust this layer's
+# cache — only a dependency change does.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
 COPY resolver-core.mjs   ./resolver-core.mjs
 COPY server.mjs          ./server.mjs
+COPY logger.mjs          ./logger.mjs
 
 # SQLite cache lives on a mounted volume. Pinned to a fixed uid:gid (PUID/PGID,
 # default 10001) rather than the image's built-in `node` user (uid 1000) —

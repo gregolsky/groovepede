@@ -14,9 +14,10 @@ process.env.GP_PUBLIC_KEY = publicKey.export({ format: 'der', type: 'spki' }).to
 
 const core = await import('./resolver-core.mjs');
 const {
-  albumRequest, verifyToken, normalizeUrl, corsHeaders, _resetPublicKey,
+  albumRequest, verifyToken, verifyTokenDetailed, normalizeUrl, corsHeaders, _resetPublicKey,
   artistRequest, normalizeArtist, normalizeAlbumTitle, isBlankArtistImage, pickArtistImage,
-  _resetSpotifyToken, SERVICE_HOSTS, EXTRACTORS, tracksRequest,
+  _resetSpotifyToken, SERVICE_HOSTS, EXTRACTORS, tracksRequest, logRequest, LOG_MAX_BODY_BYTES,
+  PARTIAL_TTL_S,
 } = core;
 _resetPublicKey(); // ensure the test key is the one loaded
 
@@ -902,6 +903,148 @@ test('tracksRequest: album with no tracks field → empty tracks array, not an e
   });
   assert.equal(r.statusCode, 200);
   assert.deepEqual(r.body, { tracks: [] });
+});
+
+test('tracksRequest: an empty tracklist is cached with a short negative TTL, not the full 30 days', async () => {
+  // A bad/partial Deezer response used to poison the cache for TRACKS_TTL_S
+  // (30 days) with no way to retry short of the entry expiring — this
+  // mirrors albumRequest's own PARTIAL_TTL_S treatment of a partial result.
+  const fetchImpl = async () => okText(JSON.stringify({ title: 'Some Album' }));
+  let putTtl = null;
+  const cache = { get: async () => null, put: async (k, b, ttl) => { putTtl = ttl; } };
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.body, { tracks: [] });
+  assert.equal(putTtl, PARTIAL_TTL_S);
+});
+
+// A fake streamed Response.body — matches readLimitedText's streaming branch
+// (getReader/read/cancel) so MAX_RESPONSE_BYTES truncation is actually
+// exercised, unlike okText()'s res.text() path which returns the full body
+// unconditionally regardless of size.
+function streamedBody(text, chunkBytes = 64 * 1024) {
+  const bytes = new TextEncoder().encode(text);
+  let offset = 0;
+  return {
+    getReader() {
+      return {
+        async read() {
+          if (offset >= bytes.length) return { done: true, value: undefined };
+          const value = bytes.subarray(offset, offset + chunkBytes);
+          offset += chunkBytes;
+          return { done: false, value };
+        },
+        cancel: async () => {},
+      };
+    },
+  };
+}
+
+test('tracksRequest: a response truncated at MAX_RESPONSE_BYTES fails to parse, logs the reason, and is not silent', async () => {
+  const bigJson = JSON.stringify({ tracks: { data: Array.from({ length: 20000 }, (_, i) => ({
+    track_position: i + 1, title: 'A'.repeat(50), duration: 200,
+  })) } });
+  assert.ok(bigJson.length > 512 * 1024, 'fixture must exceed the response cap to actually exercise truncation');
+  const fetchImpl = async () => ({ ok: true, status: 200, body: streamedBody(bigJson) });
+  const warnings = [];
+  const logger = { warn: (fields, msg) => warnings.push({ fields, msg }), error: () => {}, info: () => {}, debug: () => {} };
+  const r = await tracksRequest({
+    method: 'GET', origin: '', albumId: '302127',
+    token: tracksToken('302127'), cache: noCache, fetchImpl, logger,
+  });
+  assert.equal(r.statusCode, 422);
+  assert.deepEqual(r.body, { _error: 'not-found' });
+  assert.ok(warnings.some(w => w.msg === 'tracks response unparseable'),
+    'a truncated/unparseable body must be logged, not silently remapped');
+});
+
+test('tracksRequest: OPTIONS preflight → 204 with CORS, no token needed', async () => {
+  const r = await tracksRequest({
+    method: 'OPTIONS', origin: 'https://groovepede.gregolsky.pl',
+    albumId: '', token: '', cache: noCache, fetchImpl: failFetch,
+  });
+  assert.equal(r.statusCode, 204);
+  assert.equal(r.headers['access-control-allow-origin'], 'https://groovepede.gregolsky.pl');
+});
+
+test('tracksRequest: unknown origin gets no CORS headers', async () => {
+  const fetchImpl = async () => okText(JSON.stringify({ tracks: { data: [] } }));
+  const r = await tracksRequest({
+    method: 'GET', origin: 'https://evil.example', albumId: '302127',
+    token: tracksToken('302127'), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.headers['access-control-allow-origin'], undefined);
+});
+
+// ── logRequest (/v1/log client error beacon) ─────────────────────────────────
+
+const logToken = () => makeToken('log');
+
+test('logRequest: missing/invalid token → 403, no body echoed', async () => {
+  const r = await logRequest({ method: 'POST', origin: '', body: '{}', token: '' });
+  assert.equal(r.statusCode, 403);
+  assert.equal(r.body, null);
+});
+
+test('logRequest: OPTIONS preflight → 204 with CORS, no token needed', async () => {
+  const r = await logRequest({
+    method: 'OPTIONS', origin: 'https://groovepede.gregolsky.pl', body: '', token: '',
+  });
+  assert.equal(r.statusCode, 204);
+  assert.equal(r.headers['access-control-allow-origin'], 'https://groovepede.gregolsky.pl');
+});
+
+test('logRequest: valid report is logged with src:client and always answers 204', async () => {
+  const warnings = [];
+  const logger = { warn: (fields, msg) => warnings.push({ fields, msg }), error: () => {}, info: () => {}, debug: () => {} };
+  const body = JSON.stringify({ kind: 'tracklist-empty', msg: 'got 422', route: '/v1/tracks', albumId: '302127' });
+  const r = await logRequest({ method: 'POST', origin: '', body, token: logToken(), logger });
+  assert.equal(r.statusCode, 204);
+  assert.equal(r.body, null);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].fields.src, 'client');
+  assert.equal(warnings[0].fields.kind, 'tracklist-empty');
+  assert.equal(warnings[0].fields.albumId, '302127');
+});
+
+test('logRequest: oversized body is rejected (not parsed, not logged) but still answers 204', async () => {
+  const warnings = [];
+  const logger = { warn: (fields, msg) => warnings.push({ fields, msg }), error: () => {}, info: () => {}, debug: () => {} };
+  const body = JSON.stringify({ kind: 'x', msg: 'A'.repeat(LOG_MAX_BODY_BYTES) });
+  assert.ok(body.length > LOG_MAX_BODY_BYTES);
+  const r = await logRequest({ method: 'POST', origin: '', body, token: logToken(), logger });
+  assert.equal(r.statusCode, 204);
+  assert.equal(warnings.length, 0);
+});
+
+test('logRequest: malformed JSON body is ignored (not logged) but still answers 204', async () => {
+  const warnings = [];
+  const logger = { warn: (fields, msg) => warnings.push({ fields, msg }), error: () => {}, info: () => {}, debug: () => {} };
+  const r = await logRequest({ method: 'POST', origin: '', body: 'not json', token: logToken(), logger });
+  assert.equal(r.statusCode, 204);
+  assert.equal(warnings.length, 0);
+});
+
+test('logRequest: string fields are truncated so a huge stack trace cannot blow up the log line', async () => {
+  const warnings = [];
+  const logger = { warn: (fields, msg) => warnings.push({ fields, msg }), error: () => {}, info: () => {}, debug: () => {} };
+  const body = JSON.stringify({ kind: 'error', msg: 'x', stack: 'A'.repeat(2000) });
+  await logRequest({ method: 'POST', origin: '', body, token: logToken(), logger });
+  assert.ok(warnings[0].fields.stack.length <= 500);
+});
+
+// ── verifyTokenDetailed ───────────────────────────────────────────────────────
+
+test('verifyTokenDetailed: distinguishes an expired token from a bad signature', () => {
+  const old = Math.floor(Date.now() / 1000) - 301;
+  assert.equal(verifyTokenDetailed(makeToken(SPOTIFY, old), SPOTIFY).reason, 'expired');
+  const t = makeToken(SPOTIFY);
+  const tampered = t.slice(0, -2) + (t.endsWith('AA') ? 'BB' : 'AA');
+  assert.equal(verifyTokenDetailed(tampered, SPOTIFY).reason, 'bad-signature');
+  assert.equal(verifyTokenDetailed(makeToken(SPOTIFY), SPOTIFY).ok, true);
 });
 
 test('artistRequest: cache hit short-circuits the Deezer call, incl. a pre-genres cached entry', async () => {

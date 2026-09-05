@@ -2,6 +2,7 @@ import { LASTFM_KEY, RESOLVER_BASE, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BAS
 import { signRequestToken } from './sign.js';
 import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
 import { createThrottle } from './throttle.js';
+import { reportFailure } from './beacon.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
 
@@ -360,27 +361,63 @@ export function normalizeAlbumStr(s) {
 }
 
 /**
+ * Sentinel returned by fetchAlbumTracks on failure — distinct from `[]` (a
+ * genuinely track-less album, e.g. no Deezer cross-link) and from
+ * `undefined` (not fetched yet), so callers can tell "empty" from "broken"
+ * apart and offer a retry instead of rendering identical blank space for
+ * both. A single frozen object rather than e.g. `null`, so `trackCache[id]
+ * === TRACKS_ERROR` is an unambiguous identity check.
+ */
+export const TRACKS_ERROR = Object.freeze({ _tracksError: true });
+
+/**
  * A Deezer album's tracklist via our resolver (api.deezer.com sends no CORS
  * header, so the browser can't call it directly). `albumId` is Deezer's own
  * numeric album id — see deezerAlbumId() below.
- * Returns `[]` on failure (including no match/no id) or a rate-limit error
- * object (`{ _error: 429, ... }`) on 429, so the throttle can back off;
- * never throws.
+ *
+ * Returns an array (possibly empty) on success, or TRACKS_ERROR on any
+ * failure — never throws, and never returns the throttle's raw `{_error:429}`
+ * marker (that object used to be stored directly in trackCache, where its
+ * truthiness permanently blocked any retry after a single transient 429).
+ * Every failure is also reported through the client beacon (see
+ * frontend/src/js/beacon.js) with the real status, so "why didn't this
+ * tracklist load" is answerable from the resolver's own logs.
  */
 export async function fetchAlbumTracks(albumId) {
   if (!albumId) return [];
-  return throttles.deezer.run(async () => {
+  // Fail fast instead of queueing behind an active cooldown — this throttle
+  // is shared with artist-image fetches, so without this check a cooldown
+  // triggered by an unrelated call could leave "Loading tracks…" on screen
+  // for up to 5 minutes (see THROTTLE.deezer's maxCooldownMs in config.js).
+  if (throttles.deezer.coolingDown()) return TRACKS_ERROR;
+
+  const result = await throttles.deezer.run(async () => {
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
     try {
       const params = new URLSearchParams({ albumId });
       const signed = `tracks:${albumId}`;
       const res = await fetch(`${RESOLVER_BASE}/v1/tracks?${params}`, {
         headers: { 'x-gp-token': await signRequestToken(signed) },
+        signal: ctrl.signal,
       });
-      if (!res.ok) return res.status === 429 ? rateLimitError(res) : [];
+      if (!res.ok) return res.status === 429 ? rateLimitError(res) : { _httpError: res.status };
       const data = await res.json();
       return data?.tracks || [];
-    } catch { return []; }
+    } catch (err) {
+      return { _networkError: err?.name === 'AbortError' ? 'timeout' : 'network' };
+    } finally {
+      clearTimeout(timer);
+    }
   });
+
+  if (Array.isArray(result)) return result;
+  // The throttle above already saw the raw {_error:429} shape it needs to
+  // manage cooldown (is429/retryAfterOf read the direct return of run()'s
+  // callback) — everything past this point sanitizes into one failure shape.
+  const status = is429(result) ? 429 : (result?._httpError || result?._networkError || 'unknown');
+  reportFailure('tracklist-fetch-failed', { msg: String(status), albumId, route: '/v1/tracks' });
+  return TRACKS_ERROR;
 }
 
 export async function fetchLastfmArtist(artistName) {

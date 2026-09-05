@@ -327,13 +327,24 @@ curl -sS https://$DOMAIN/healthz                                               #
 ### Access logs
 
 nginx writes `./data/nginx-logs/access.log` (a real file, not the image's stdout
-symlink, so fail2ban can tail it). The 6h maintenance loop caps it at 50MB and
-keeps one rotated generation, so scanner noise can't fill the SD card.
+symlink, so fail2ban can tail it) **and** `/dev/stdout`, so `docker compose logs
+nginx` shows the same requests without needing to shell into the container. The
+6h maintenance loop caps the file at 50MB and keeps one rotated generation, so
+scanner noise can't fill the SD card; stdout itself is capped by Docker's own
+`json-file` logging driver (10MB × 3 files per service, set in
+`docker-compose.yml`) for the same reason.
+
+The resolver logs structured JSON to stdout via pino (`logger.mjs`) — one line
+per request (method/path/status/ms/reqId) plus a `warn`-level line for every
+non-obvious failure (upstream errors, cache errors, a rejected token, a client
+beacon report). `LOG_LEVEL` (default `info`) controls the floor; set it to
+`debug` in `.env` for more detail, or `warn` to quiet it down.
 
 ## Operations
 
 ```bash
-docker compose logs -f resolver         # app logs
+docker compose logs -f resolver         # structured JSON: one line per request + failure diagnostics
+docker compose logs -f resolver | jq    # same, pretty-printed
 docker compose logs -f nginx            # access / TLS
 docker compose restart resolver         # after editing .env
 docker compose down                     # stop (keeps ./data cache + certs)

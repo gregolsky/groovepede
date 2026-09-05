@@ -1,6 +1,8 @@
 # SQLite cache + Let's Encrypt certs — never overwritten by a deploy.
 data/
 
+node_modules/
+
 # Resolver runtime config (DOMAIN, GP_PUBLIC_KEY, ALLOWED_ORIGINS, …)
 .env
 

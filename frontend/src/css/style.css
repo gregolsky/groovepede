@@ -573,7 +573,7 @@ body::after {
 .explore-album-year { font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); letter-spacing: 0.04em; }
 .explore-album-actions { display: flex; justify-content: center; gap: 10px; margin-bottom: 24px; }
 
-.explore-tracklist { list-style: none; border-top: 1px solid #1f1c17; counter-reset: list-item; }
+.explore-tracklist { list-style: none; border-top: 1px solid #1f1c17; }
 .explore-track {
   display: flex;
   align-items: center;
@@ -582,9 +582,10 @@ body::after {
   border-bottom: 1px solid #1a1714;
 }
 .explore-track:last-child { border-bottom: none; }
-.explore-track::before {
-  content: counter(list-item);
-  counter-increment: list-item;
+/* Renders the resolver's own track number (falls back to '' when absent)
+   rather than a CSS counter — a CSS counter is purely positional and
+   silently renumbers a multi-disc album whose disc 2 restarts at 1. */
+.explore-track-num {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-faint);
@@ -595,6 +596,20 @@ body::after {
 .explore-track-name { flex: 1; font-size: 13px; color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explore-track-dur { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
 .explore-loading { font-size: 13px; color: var(--text-faint); font-style: italic; }
+.explore-tracklist-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-faint);
+  padding: 10px 4px;
+}
+.explore-retry {
+  background: none; border: 1px solid #2a261f; cursor: pointer; padding: 3px 10px;
+  font-size: 12px; color: var(--text-dim); border-radius: var(--r-sm);
+  transition: color 100ms, background 100ms;
+}
+.explore-retry:hover { color: #fff; background: rgba(255,255,255,.05); }
 
 .explore-footer { display: flex; justify-content: center; padding: 20px 0 4px; }
 .explore-refresh {

@@ -2,9 +2,10 @@ import '../css/style.css';
 import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
-import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtistImage, fetchAlbumTracks, deezerAlbumId } from './api.js';
+import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtistImage, fetchAlbumTracks, deezerAlbumId, TRACKS_ERROR } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, renderShareOverlay } from './render.js';
+import { initBeacon } from './beacon.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let activeFilter   = 'all';
@@ -203,7 +204,12 @@ async function prefetchExplore(album) {
   const { artist, id } = album;
   const deezerId    = deezerAlbumId(album);
   const needsLastfm = !artistCache[artist];
-  const needsTracks = deezerId && !trackCache[id];
+  // Retry-eligible when never fetched OR the last attempt failed (TRACKS_ERROR)
+  // — a plain array (even []) means "done", success or genuine no-tracklist,
+  // and is never refetched. Without the TRACKS_ERROR branch here, a single
+  // transient failure used to be indistinguishable from "done" and could
+  // never be retried for the rest of the session.
+  const needsTracks = deezerId && (trackCache[id] === undefined || trackCache[id] === TRACKS_ERROR);
   // No Deezer link → no tracklist to fetch; mark empty so the card shows no
   // tracklist instead of a perpetual "Loading tracks…".
   if (!deezerId && trackCache[id] === undefined) trackCache[id] = [];
@@ -229,6 +235,23 @@ async function prefetchExplore(album) {
 function closeExplore() {
   exploreIndex = null;
   rerender();
+}
+
+/** Explicit retry for a failed tracklist fetch — the explore card's error
+ * state offers this rather than making the user navigate away and back
+ * (which would also retry, since prefetchExplore treats TRACKS_ERROR as
+ * retry-eligible, but shouldn't be the ONLY way to recover). */
+function retryTracks(visibleIdx) {
+  const album = visibleAlbums()[visibleIdx];
+  if (!album) return;
+  const deezerId = deezerAlbumId(album);
+  if (!deezerId) return;
+  delete trackCache[album.id];
+  rerender();
+  fetchAlbumTracks(deezerId).then(t => {
+    trackCache[album.id] = t;
+    if (exploreIndex !== null && visibleAlbums()[exploreIndex]?.id === album.id) rerender();
+  });
 }
 
 function navigateExplore(dir) {
@@ -315,6 +338,15 @@ async function refreshAlbum(visibleIdx) {
       const pos = all.findIndex(a => a.id === album.id);
       if (pos !== -1) { all[pos] = merged; saveAlbums(all); }
       delete artistCache[album.artist]; // clear so explore re-fetches artist data
+      // Clear so explore re-fetches the tracklist too — the refresh may have
+      // picked up a Deezer cross-link that didn't exist before, and this was
+      // previously the one thing "Refresh details" couldn't fix: a stuck
+      // TRACKS_ERROR (or a stale empty result) just sat there forever. The
+      // "refresh" action only ever renders from inside the explore card
+      // (see render.js), so re-running prefetchExplore here is always for
+      // the album currently on screen.
+      delete trackCache[album.id];
+      prefetchExplore(merged);
       enrichWithLastfm(merged.id, merged.artist, merged.title, rerender);
     }
     // On failure: silently keep existing data, no error surfaced
@@ -355,6 +387,7 @@ document.body.addEventListener('click', e => {
     case 'explore-next':  navigateExplore(+1);                  break;
     case 'done':          markDone(parseInt(index, 10), el);                       break;
     case 'explore-done':  markDone(parseInt(index, 10), el, { explore: true });     break;
+    case 'retry-tracks':  retryTracks(parseInt(index, 10));  break;
     case 'open-profile':  openProfile();                        break;
     case 'close-profile': closeProfile();                       break;
     case 'export-data':   exportData();                         break;
@@ -610,6 +643,8 @@ window.addEventListener('focus', resumePendingIfAny);
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function boot() {
+  initBeacon();
+
   const params = new URLSearchParams(window.location.search);
   const shared = params.get('text') || params.get('url');
 

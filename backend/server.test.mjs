@@ -33,8 +33,21 @@ function makeToken(payload, ts = Math.floor(Date.now() / 1000)) {
 
 // ── mock req/res ────────────────────────────────────────────────────────────
 
-function mockReq({ method = 'GET', url, headers = {} }) {
-  return { method, url, headers };
+function mockReq({ method = 'GET', url, headers = {}, body = null }) {
+  // EventEmitter-shaped so readBody()'s req.on('data'/'end'/'error') works for
+  // POST routes (/v1/log) like a real http.IncomingMessage. readBody
+  // registers 'data' before 'end', so firing each callback synchronously at
+  // registration time (rather than modeling a real async stream) delivers
+  // the whole body before 'end' resolves the read — no timing games needed.
+  return {
+    method, url, headers,
+    destroy() {}, // readBody() calls this on an oversized body — no-op is enough for a mock
+    on(event, cb) {
+      if (event === 'data' && body != null) cb(Buffer.from(body));
+      if (event === 'end') cb();
+      return this;
+    },
+  };
 }
 
 function mockRes() {
@@ -126,6 +139,75 @@ test('handleRequest: /v1/tracks delegates to tracksRequest with parsed params', 
   }
   assert.equal(res.statusCode, 200);
   assert.deepEqual(JSON.parse(res.body), { tracks: [{ number: 1, name: 'Airbag', duration_ms: 284000 }] });
+});
+
+test('handleRequest: POST /v1/log delegates to logRequest and always answers 204', async () => {
+  const token = makeToken('log');
+  const body = JSON.stringify({ kind: 'tracklist-empty', msg: 'got 422', albumId: '302127' });
+  const req = mockReq({
+    method: 'POST', url: '/v1/log',
+    headers: { 'x-gp-token': token },
+    body,
+  });
+  const res = mockRes();
+  const warnings = [];
+  const logger = {
+    child: () => logger,
+    warn:  (fields, msg) => warnings.push({ fields, msg }),
+    info:  () => {}, error: () => {}, debug: () => {},
+  };
+  await handleRequest(req, res, { cache: noCache, logger });
+  assert.equal(res.statusCode, 204);
+  assert.ok(warnings.some(w => w.msg === 'client-reported failure' && w.fields.albumId === '302127'));
+});
+
+test('handleRequest: POST /v1/log accepts the token via ?token= (sendBeacon can\'t set headers)', async () => {
+  const token = makeToken('log');
+  const req = mockReq({
+    method: 'POST', url: `/v1/log?token=${encodeURIComponent(token)}`,
+    body: JSON.stringify({ kind: 'x', msg: 'y' }),
+  });
+  const res = mockRes();
+  await handleRequest(req, res, { cache: noCache });
+  assert.equal(res.statusCode, 204);
+});
+
+test('handleRequest: POST /v1/log with a body over LOG_MAX_BODY_BYTES → 413, not passed to logRequest', async () => {
+  const { LOG_MAX_BODY_BYTES } = await import('./resolver-core.mjs');
+  const token = makeToken('log');
+  const body = JSON.stringify({ kind: 'x', msg: 'A'.repeat(LOG_MAX_BODY_BYTES) });
+  const req = mockReq({ method: 'POST', url: '/v1/log', headers: { 'x-gp-token': token }, body });
+  const res = mockRes();
+  await handleRequest(req, res, { cache: noCache });
+  assert.equal(res.statusCode, 413);
+});
+
+test('handleRequest: every response is followed by exactly one "request" access-log line with method/path/status/ms', async () => {
+  const lines = [];
+  const logger = {
+    child: () => logger,
+    info:  (fields, msg) => lines.push({ fields, msg }),
+    warn: () => {}, error: () => {}, debug: () => {},
+  };
+  const req = mockReq({ url: '/healthz' });
+  const res = mockRes();
+  await handleRequest(req, res, { cache: noCache, logger });
+  const accessLines = lines.filter(l => l.msg === 'request');
+  assert.equal(accessLines.length, 1);
+  assert.equal(accessLines[0].fields.method, 'GET');
+  assert.equal(accessLines[0].fields.path, '/healthz');
+  assert.equal(accessLines[0].fields.status, 200);
+  assert.equal(typeof accessLines[0].fields.ms, 'number');
+});
+
+test('handleRequest: a 404 is logged at warn — these are the hits fail2ban watches for', async () => {
+  const warnings = [];
+  const logger = { child: () => logger, warn: (f, m) => warnings.push({ f, m }), info: () => {}, error: () => {}, debug: () => {} };
+  const req = mockReq({ url: '/nonexistent-path' });
+  const res = mockRes();
+  await handleRequest(req, res, { cache: noCache, logger });
+  assert.equal(res.statusCode, 404);
+  assert.ok(warnings.some(w => w.m === 'not found' && w.f.path === '/nonexistent-path'));
 });
 
 test('handleRequest: unknown path → 404 {"_error":"not found"}', async () => {

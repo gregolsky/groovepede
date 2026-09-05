@@ -87,5 +87,8 @@ Always run before pushing (from `frontend/`):
 1. `npm run build` — verify production build succeeds
 2. `npm test` — verify all unit and E2E tests pass
 
-When `backend/` changed, also run `node --test backend/resolver-core.test.mjs`
-from the repo root.
+When `backend/` changed, also run `node --test backend/resolver-core.test.mjs
+backend/server.test.mjs` from the repo root. `backend/` has a `package.json`
+(pino, for structured logging — see `backend/logger.mjs`), so run `npm install`
+inside `backend/` first if `node_modules` isn't there yet; the Dockerfile does
+its own `npm ci` as part of the image build.

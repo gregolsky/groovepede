@@ -22,6 +22,7 @@
  */
 
 import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
+import { NOOP_LOGGER } from './logger.mjs';
 
 export const UA            = 'Groovepede-Resolver/1.0 (+https://groovepede.gregolsky.pl)';
 export const ALBUM_TTL_S   = 60 * 60 * 24 * 60;             // 60 days — album metadata is near-static
@@ -61,29 +62,41 @@ function getPublicKey() {
 export function _resetPublicKey() { _publicKeyInit = false; _publicKey = undefined; }
 
 /**
+ * Same check as verifyToken, plus a machine-readable reason for a failure —
+ * used only for logging at the request-handler call sites (verifyToken
+ * itself only ever needed the boolean, so it stays as-is for callers/tests
+ * that don't care why).
+ */
+export function verifyTokenDetailed(token, url) {
+  const key = getPublicKey();
+  if (!key) return { ok: false, reason: 'no-public-key' };
+  if (!token) return { ok: false, reason: 'missing-token' };
+  const dot = token.indexOf('.');
+  if (dot < 0) return { ok: false, reason: 'malformed' };
+  const tsStr  = token.slice(0, dot);
+  const sigB64 = token.slice(dot + 1);
+
+  const ts = parseInt(tsStr, 10);
+  if (!Number.isFinite(ts)) return { ok: false, reason: 'malformed' };
+  if (Math.abs(Math.floor(Date.now() / 1000) - ts) > TOKEN_WINDOW_S) return { ok: false, reason: 'expired' };
+
+  try {
+    const sig = Buffer.from(sigB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const msg = Buffer.from(`${tsStr}\n${url}`);
+    const ok  = cryptoVerify('sha256', msg, { key, dsaEncoding: 'ieee-p1363' }, sig);
+    return { ok, reason: ok ? null : 'bad-signature' };
+  } catch {
+    return { ok: false, reason: 'malformed' };
+  }
+}
+
+/**
  * Verify a signed request token: "<ts>.<base64url_ieee_p1363_sig>"
  * Signed payload: UTF-8 of `${ts}\n${url}` (URL-bound to prevent cross-request replay).
  * Returns true only when the signature is valid and the token is within the window.
  */
 export function verifyToken(token, url) {
-  const key = getPublicKey();
-  if (!key || !token) return false;
-  const dot = token.indexOf('.');
-  if (dot < 0) return false;
-  const tsStr  = token.slice(0, dot);
-  const sigB64 = token.slice(dot + 1);
-
-  const ts = parseInt(tsStr, 10);
-  if (!Number.isFinite(ts)) return false;
-  if (Math.abs(Math.floor(Date.now() / 1000) - ts) > TOKEN_WINDOW_S) return false;
-
-  try {
-    const sig = Buffer.from(sigB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-    const msg = Buffer.from(`${tsStr}\n${url}`);
-    return cryptoVerify('sha256', msg, { key, dsaEncoding: 'ieee-p1363' }, sig);
-  } catch {
-    return false;
-  }
+  return verifyTokenDetailed(token, url).ok;
 }
 
 // ── CORS ────────────────────────────────────────────────────────────────────
@@ -201,8 +214,11 @@ const MAX_RESPONSE_BYTES = 512 * 1024; // album pages run 25-800KB in practice; 
  * The distinction matters: the former should be retryable by the client
  * (isRetryableResolveError in frontend/src/js/storage.js), the latter shouldn't. */
 export class UpstreamFetchError extends Error {
-  constructor(status) {
-    super(`upstream fetch failed (${status || 'network'})`);
+  constructor(status, cause) {
+    // `cause` carries the real fetch failure (DNS, TLS, abort, …) that would
+    // otherwise be discarded — see fetchUpstream below. Standard Error
+    // chaining (Node >= 16.9), so err.cause?.message is always safe to log.
+    super(`upstream fetch failed (${status || 'network'})`, cause !== undefined ? { cause } : undefined);
     this.status = status; // 0/undefined = network/timeout, else the upstream's HTTP status
   }
 }
@@ -245,8 +261,8 @@ export async function fetchUpstream(url, fetchImpl = fetch, opts = {}) {
         body: opts.body,
         signal: ctrl.signal,
       });
-    } catch {
-      throw new UpstreamFetchError(0);
+    } catch (err) {
+      throw new UpstreamFetchError(0, err);
     }
     if (!res.ok) throw new UpstreamFetchError(res.status);
     try {
@@ -255,8 +271,8 @@ export async function fetchUpstream(url, fetchImpl = fetch, opts = {}) {
       // hang past FETCH_TIMEOUT_MS since the timer was cleared right after
       // headers arrived.
       return await readLimitedText(res, MAX_RESPONSE_BYTES);
-    } catch {
-      throw new UpstreamFetchError(0); // aborted mid-read = same as a timeout
+    } catch (err) {
+      throw new UpstreamFetchError(0, err); // aborted mid-read = same as a timeout
     }
   } finally {
     clearTimeout(timer);
@@ -560,9 +576,11 @@ async function crossLinkSpotify(artist, title, fetchImpl) {
  *                              from the retired /v1/resolve — same binding string)
  * @param {{get(k):Promise<any>, put(k,body,ttlS):Promise<void>}} p.cache
  * @param {typeof fetch} [p.fetchImpl]  injectable for tests
+ * @param {object} [p.logger]  pino-shaped logger ({debug,info,warn,error}); defaults
+ *                             to a no-op so importing/testing this module stays silent
  * @returns {Promise<{statusCode:number, headers:object, body:any}>}
  */
-export async function albumRequest({ method, origin, url, token, cache, fetchImpl = fetch }) {
+export async function albumRequest({ method, origin, url, token, cache, fetchImpl = fetch, logger = NOOP_LOGGER }) {
   const cors = corsHeaders(origin || '');
 
   if (method === 'OPTIONS') {
@@ -571,7 +589,9 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
 
   const jsonHeaders = { 'content-type': 'application/json', ...cors };
 
-  if (!verifyToken(token || '', url || '')) {
+  const auth = verifyTokenDetailed(token || '', url || '');
+  if (!auth.ok) {
+    logger.warn({ route: '/v1/album', reason: auth.reason }, 'forbidden');
     return { statusCode: 403, headers: jsonHeaders, body: { _error: 'forbidden' } };
   }
   if (!url) {
@@ -592,7 +612,7 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
     const hit = await cache.get(k);
     if (hit) return { statusCode: 200, headers: jsonHeaders, body: hit };
   } catch (err) {
-    console.warn('cache get error (non-fatal):', err.message);
+    logger.warn({ route: '/v1/album', err: err.message }, 'cache get error (non-fatal)');
   }
 
   let extracted;
@@ -601,6 +621,8 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
   } catch (err) {
     if (err instanceof UpstreamFetchError) {
       const status = err.status;
+      logger.warn({ route: '/v1/album', service, status, err: err.message, cause: err.cause?.message },
+        'upstream fetch failed');
       if (!status) return { statusCode: 503, headers: jsonHeaders, body: { _error: 'network' } };
       if (status === 429 || status >= 500) {
         // Transient upstream failure — worth a client-side retry.
@@ -613,7 +635,7 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
       // real users whose pasted link happens to 404 upstream.
       return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
     }
-    console.warn('extraction error (treated as failed extraction):', err.message);
+    logger.warn({ route: '/v1/album', service, err: err.message }, 'extraction error (treated as failed extraction)');
     extracted = null;
   }
 
@@ -632,20 +654,26 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
   // cache TTLs (see the cache.put call below): a real failure deserves a
   // quick retry, a genuine no-match doesn't need re-checking for 60 days.
   let crossLinkHadFailure = false;
+  // Named per target (not one shared onFail) so a failed Deezer cross-link —
+  // the sole cause of a missing tracklist later, since /v1/tracks has no
+  // other source — is distinguishable in logs from a failed Apple/Spotify one.
+  const onCrossLinkFail = target => err => {
+    crossLinkHadFailure = true;
+    logger.warn({ route: '/v1/album', service, crossLink: target, err: err?.message }, 'cross-link failed');
+  };
   if (extracted.artist && extracted.title) {
     const jobs = [];
-    const onFail = () => { crossLinkHadFailure = true; };
     if (service !== 'deezer') {
       jobs.push(crossLinkDeezer(extracted.artist, extracted.title, fetchImpl)
-        .then(r => { if (r) links.deezer = r; }).catch(onFail));
+        .then(r => { if (r) links.deezer = r; }).catch(onCrossLinkFail('deezer')));
     }
     if (service !== 'apple') {
       jobs.push(crossLinkApple(extracted.artist, extracted.title, fetchImpl)
-        .then(r => { if (r) links.apple = r; }).catch(onFail));
+        .then(r => { if (r) links.apple = r; }).catch(onCrossLinkFail('apple')));
     }
     if (service !== 'spotify') {
       jobs.push(crossLinkSpotify(extracted.artist, extracted.title, fetchImpl)
-        .then(r => { if (r) links.spotify = r; }).catch(onFail));
+        .then(r => { if (r) links.spotify = r; }).catch(onCrossLinkFail('spotify')));
     }
     await Promise.all(jobs);
   }
@@ -664,7 +692,7 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
   try {
     await cache.put(k, body, crossLinkHadFailure ? PARTIAL_TTL_S : ALBUM_TTL_S);
   } catch (err) {
-    console.warn('cache put error (non-fatal):', err.message);
+    logger.warn({ route: '/v1/album', err: err.message }, 'cache put error (non-fatal)');
   }
 
   return { statusCode: 200, headers: jsonHeaders, body };
@@ -717,7 +745,7 @@ export function pickArtistImage(candidates, name) {
  * @returns {Promise<{statusCode:number, headers:object, body:any}>}
  *          body is `{ image: string|null }`.
  */
-export async function artistRequest({ method, origin, name, albumId, token, cache, fetchImpl = fetch }) {
+export async function artistRequest({ method, origin, name, albumId, token, cache, fetchImpl = fetch, logger = NOOP_LOGGER }) {
   const cors = corsHeaders(origin || '');
 
   if (method === 'OPTIONS') {
@@ -727,7 +755,9 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
   const jsonHeaders = { 'content-type': 'application/json', ...cors };
 
   // Signature is bound to the same canonical string the client signed.
-  if (!verifyToken(token || '', `artist:${name || ''}|${albumId || ''}`)) {
+  const auth = verifyTokenDetailed(token || '', `artist:${name || ''}|${albumId || ''}`);
+  if (!auth.ok) {
+    logger.warn({ route: '/v1/artist', reason: auth.reason }, 'forbidden');
     return { statusCode: 403, headers: jsonHeaders, body: { _error: 'forbidden' } };
   }
 
@@ -745,7 +775,7 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
     const hit = await cache.get(k);
     if (hit) return { statusCode: 200, headers: jsonHeaders, body: hit };
   } catch (err) {
-    console.warn('cache get error (non-fatal):', err.message);
+    logger.warn({ route: '/v1/artist', err: err.message }, 'cache get error (non-fatal)');
   }
 
   let image  = null;
@@ -764,7 +794,10 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
       const pic  = data?.artist?.picture_xl || data?.artist?.picture_big || null;
       if (!isBlankArtistImage(pic)) image = pic;
       genres = (data?.genres?.data || []).map(g => g.name).filter(Boolean);
-    } catch { /* fall through to search */ }
+    } catch (err) {
+      logger.warn({ route: '/v1/artist', stage: 'albumId-lookup', albumId, err: err.message },
+        'deezer lookup failed (non-fatal, falling through to search)');
+    }
   }
 
   // Stage 2 — strict name match.
@@ -774,7 +807,8 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
       const text = await fetchUpstream(`${DEEZER_BASE}/search/artist?${q}`, fetchImpl);
       const data = JSON.parse(text);
       image = pickArtistImage(data?.data, name);
-    } catch {
+    } catch (err) {
+      logger.warn({ route: '/v1/artist', stage: 'search', name, err: err.message }, 'deezer search failed');
       return { statusCode: 503, headers: jsonHeaders, body: { _error: 'network' } };
     }
   }
@@ -786,7 +820,7 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
   try {
     await cache.put(k, body, ARTIST_TTL_S);
   } catch (err) {
-    console.warn('cache put error (non-fatal):', err.message);
+    logger.warn({ route: '/v1/artist', err: err.message }, 'cache put error (non-fatal)');
   }
 
   return { statusCode: 200, headers: jsonHeaders, body };
@@ -807,7 +841,7 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
  * @returns {Promise<{statusCode:number, headers:object, body:any}>}
  *          body is `{ tracks: Array<{number, name, duration_ms}> }`.
  */
-export async function tracksRequest({ method, origin, albumId, token, cache, fetchImpl = fetch }) {
+export async function tracksRequest({ method, origin, albumId, token, cache, fetchImpl = fetch, logger = NOOP_LOGGER }) {
   const cors = corsHeaders(origin || '');
 
   if (method === 'OPTIONS') {
@@ -816,7 +850,9 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
 
   const jsonHeaders = { 'content-type': 'application/json', ...cors };
 
-  if (!verifyToken(token || '', `tracks:${albumId || ''}`)) {
+  const auth = verifyTokenDetailed(token || '', `tracks:${albumId || ''}`);
+  if (!auth.ok) {
+    logger.warn({ route: '/v1/tracks', reason: auth.reason }, 'forbidden');
     return { statusCode: 403, headers: jsonHeaders, body: { _error: 'forbidden' } };
   }
 
@@ -834,16 +870,22 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
     const hit = await cache.get(k);
     if (hit) return { statusCode: 200, headers: jsonHeaders, body: hit };
   } catch (err) {
-    console.warn('cache get error (non-fatal):', err.message);
+    logger.warn({ route: '/v1/tracks', albumId, err: err.message }, 'cache get error (non-fatal)');
   }
 
-  let data;
+  // Fetch and parse are separate try/catches on purpose: an UpstreamFetchError
+  // (network/timeout/non-2xx) and a JSON.parse failure on a 200 body (Deezer
+  // returning HTML, a truncated body past MAX_RESPONSE_BYTES, a captive
+  // portal) both used to fall into one catch and become an unlogged, identical
+  // 422 — indistinguishable from "this album genuinely has no tracks".
+  let text;
   try {
-    const text = await fetchUpstream(`${DEEZER_BASE}/album/${albumId}`, fetchImpl);
-    data = JSON.parse(text);
+    text = await fetchUpstream(`${DEEZER_BASE}/album/${albumId}`, fetchImpl);
   } catch (err) {
     if (err instanceof UpstreamFetchError) {
       const status = err.status;
+      logger.warn({ route: '/v1/tracks', albumId, status, err: err.message, cause: err.cause?.message },
+        'upstream fetch failed');
       if (!status) return { statusCode: 503, headers: jsonHeaders, body: { _error: 'network' } };
       if (status === 429 || status >= 500) {
         return { statusCode: status, headers: jsonHeaders, body: { _error: status } };
@@ -852,6 +894,16 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
       // upstream 404/403/400 through as our own HTTP status.
       return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
     }
+    logger.warn({ route: '/v1/tracks', albumId, err: err.message }, 'unexpected fetch error');
+    return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+  }
+
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    logger.warn({ route: '/v1/tracks', albumId, bodyLen: text.length, err: err.message },
+      'tracks response unparseable');
     return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
   }
 
@@ -859,6 +911,7 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
     // Deezer reports quota-exceeded as an HTTP-200 envelope (error.code === 4),
     // not a real 429 — treat it as retryable rather than "no such album".
     if (data.error.code === 4) return { statusCode: 429, headers: jsonHeaders, body: { _error: 429 } };
+    logger.warn({ route: '/v1/tracks', albumId, deezerErrorCode: data.error.code }, 'deezer error envelope');
     return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
   }
 
@@ -868,13 +921,94 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
     duration_ms: typeof t.duration === 'number' ? t.duration * 1000 : null,
   }));
 
+  if (!tracks.length) {
+    logger.warn({ route: '/v1/tracks', albumId, hasTracksField: !!data?.tracks }, 'tracks empty');
+  }
+
   const body = { tracks };
 
   try {
-    await cache.put(k, body, TRACKS_TTL_S);
+    // An empty result gets a short TTL (same one albumRequest uses for a
+    // partial cross-link) rather than the full 30-day TRACKS_TTL_S — a bad
+    // Deezer response used to poison the album for a month with no way to
+    // retry short of the cache expiring.
+    await cache.put(k, body, tracks.length ? TRACKS_TTL_S : PARTIAL_TTL_S);
   } catch (err) {
-    console.warn('cache put error (non-fatal):', err.message);
+    logger.warn({ route: '/v1/tracks', albumId, err: err.message }, 'cache put error (non-fatal)');
   }
 
   return { statusCode: 200, headers: jsonHeaders, body };
+}
+
+// ── Client error beacon ──────────────────────────────────────────────────────
+// Everything above this line can fail silently in a user's own browser: a
+// resolve, a tracklist fetch, an uncaught render error. This endpoint exists
+// solely to get a line about that failure into OUR OWN logs — it never
+// answers the caller with anything beyond 204/403, and the body it receives
+// is never echoed back or stored anywhere but the log stream.
+//
+// No per-request meaning is bound into the signed payload (unlike /v1/album
+// or /v1/tracks, where the token is bound to the resource being requested):
+// the token here only proves "a legitimate build of the app sent this",
+// which is all a diagnostic beacon needs — nginx's own strict rate-limit zone
+// (see backend/nginx/app.conf.template) is the real defence against abuse.
+
+export const LOG_MAX_BODY_BYTES = 4096;
+const LOG_FIELD_MAX = 500;
+
+function truncateField(v, max) {
+  if (v == null) return null;
+  const s = typeof v === 'string' ? v : String(v);
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+/**
+ * Accept one client-reported failure and re-emit it into the same structured
+ * log stream as the server's own lines (tagged src:'client'), truncated and
+ * defensively parsed.
+ *
+ * @param {object} p
+ * @param {string} p.method
+ * @param {string} p.origin
+ * @param {string} p.body    raw request body (already size-capped by the caller)
+ * @param {string} p.token   x-gp-token header, signed over the fixed string 'log'
+ * @param {object} [p.logger]
+ * @returns {Promise<{statusCode:number, headers:object, body:null}>}
+ */
+export async function logRequest({ method, origin, body, token, logger = NOOP_LOGGER }) {
+  const cors = corsHeaders(origin || '');
+
+  if (method === 'OPTIONS') {
+    return { statusCode: 204, headers: cors, body: null };
+  }
+
+  const auth = verifyTokenDetailed(token || '', 'log');
+  if (!auth.ok) {
+    logger.warn({ route: '/v1/log', reason: auth.reason }, 'forbidden');
+    return { statusCode: 403, headers: cors, body: null };
+  }
+
+  let parsed = null;
+  if (typeof body === 'string' && body.length > 0 && body.length <= LOG_MAX_BODY_BYTES) {
+    try { parsed = JSON.parse(body); } catch { parsed = null; }
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    logger.warn({
+      route:       '/v1/log',
+      src:         'client',
+      kind:        truncateField(parsed.kind || 'error', 40),
+      msg:         truncateField(parsed.msg || '', LOG_FIELD_MAX),
+      stack:       truncateField(parsed.stack || '', LOG_FIELD_MAX),
+      clientRoute: truncateField(parsed.route || '', 100),
+      albumId:     truncateField(parsed.albumId || '', 40),
+      service:     truncateField(parsed.service || '', 40),
+      ua:          truncateField(parsed.ua || '', 200),
+    }, 'client-reported failure');
+  }
+
+  // Always 204, even on an unparseable/oversized body — this endpoint must
+  // never become a probe surface, and a bad beacon payload is the client's
+  // bug to fix, not something worth telling it about.
+  return { statusCode: 204, headers: cors, body: null };
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistData, fetchAlbumTracks, deezerAlbumId, fetchArtistImage, enrichWithLastfm, cleanTags } from './api.js';
+import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistData, fetchAlbumTracks, TRACKS_ERROR, deezerAlbumId, fetchArtistImage, enrichWithLastfm, cleanTags } from './api.js';
+import { _resetBeaconState } from './beacon.js';
 import { loadAlbums } from './storage.js';
 
 // ── throttle helpers ──────────────────────────────────────────────────────────
@@ -752,7 +753,7 @@ describe('fetchDeezerArtistData', () => {
 });
 
 describe('fetchAlbumTracks', () => {
-  beforeEach(() => { resetThrottles(); vi.restoreAllMocks(); });
+  beforeEach(() => { resetThrottles(); _resetBeaconState(); vi.restoreAllMocks(); });
 
   it('returns [] without calling fetch when albumId is missing', async () => {
     const spy = vi.spyOn(globalThis, 'fetch');
@@ -774,19 +775,42 @@ describe('fetchAlbumTracks', () => {
     expect(await fetchAlbumTracks('302127')).toEqual([]);
   });
 
-  it('surfaces 429 so the throttler can back off', async () => {
+  // A 429 (or any other failure) used to surface as a raw marker object
+  // ({_error:429,...} or []) stored directly in app.js's trackCache, where
+  // its truthiness permanently blocked any retry for the rest of the
+  // session — see app.js's prefetchExplore. TRACKS_ERROR is the one shape
+  // every failure now collapses to, so callers can retry on it uniformly.
+  it('collapses a 429 into TRACKS_ERROR (the throttle itself still sees the raw marker to back off)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false, status: 429, headers: { get: h => (h === 'retry-after' ? '12' : null) },
     });
-    expect(await fetchAlbumTracks('302127')).toEqual({ _error: 429, _retryAfter: 12 });
+    expect(await fetchAlbumTracks('302127')).toBe(TRACKS_ERROR);
   });
 
-  it('returns [] on other errors and on network failure', async () => {
+  it('collapses other HTTP errors and network failures into TRACKS_ERROR', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 422 });
-    expect(await fetchAlbumTracks('302127')).toEqual([]);
+    expect(await fetchAlbumTracks('302127')).toBe(TRACKS_ERROR);
 
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
-    expect(await fetchAlbumTracks('302127')).toEqual([]);
+    expect(await fetchAlbumTracks('302127')).toBe(TRACKS_ERROR);
+  });
+
+  it('fails fast to TRACKS_ERROR when the shared deezer throttle is cooling down, without calling fetch', async () => {
+    _setThrottles({ deezer: coolingThrottle() });
+    const spy = vi.spyOn(globalThis, 'fetch');
+    expect(await fetchAlbumTracks('302127')).toBe(TRACKS_ERROR);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('aborts and returns TRACKS_ERROR if the request takes too long', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }));
+    const promise = fetchAlbumTracks('302127');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(promise).resolves.toBe(TRACKS_ERROR);
+    vi.useRealTimers();
   });
 });
 

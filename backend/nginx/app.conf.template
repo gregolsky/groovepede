@@ -4,20 +4,29 @@
 
 # Per-IP rate limiting — replaces AWS WAF's rate-based rule.
 limit_req_zone $binary_remote_addr zone=gp_rl:10m rate=${RATE_LIMIT};
+# Own, much stricter zone for the client error beacon (/v1/log below) — a
+# diagnostic sink has no business sharing the main API's rate budget, in
+# either direction: a chatty beacon shouldn't crowd out real requests, and a
+# burst of real traffic shouldn't cost the beacon its budget either.
+limit_req_zone $binary_remote_addr zone=gp_log:10m rate=6r/m;
 
-# NOTE: no access_log directive here on purpose.
-#
 # This template renders into conf.d/, which the stock image includes from inside
 # the http block — where nginx.conf has ALREADY declared
 #   access_log /var/log/nginx/access.log main;
-# Two access_log directives in the same context both fire, so adding one here
-# wrote every request to that file twice. fail2ban then counted each 404 twice
-# and banned at half the configured maxretry.
+# Directives declared at the same level are cumulative (all of them fire), so
+# adding a SECOND access_log pointing at that same file here previously wrote
+# every request to it twice — fail2ban then counted each 404 twice and banned
+# at half the configured maxretry. The fix then was to add none at all, which
+# is why the only access log lived in the bind-mounted file fail2ban tails
+# (docker-compose.yml maps ./data/nginx-logs over /var/log/nginx, shadowing
+# the image's stdout symlink) — `docker compose logs nginx` showed nothing.
 #
-# The `main` format is `combined` plus $http_x_forwarded_for, and still starts
-# with $remote_addr, which is all the gp-scanner / gp-ai-crawler filters need.
-# The file is a real file rather than the image's stdout symlink because
-# docker-compose.yml bind-mounts ./data/nginx-logs over /var/log/nginx.
+# Adding exactly ONE more destination (stdout) is safe: it's cumulative with
+# nginx.conf's file directive, not a replacement of it, so the file still
+# gets written exactly once — only stdout is new. If you ever need to touch
+# the file destination itself, do it in nginx.conf, not by adding another
+# access_log here.
+access_log /dev/stdout main;
 
 # ── AI / LLM training crawlers ──────────────────────────────────────────────
 # Matched on User-Agent and dropped with 444 (close connection, no response) —
@@ -91,6 +100,29 @@ server {
     # Unauthenticated liveness check (no rate limit).
     location = /healthz {
         proxy_pass http://$gp_upstream:8787/healthz;
+    }
+
+    # Client error beacon — deliberately its own exact-match location (nginx
+    # picks the most specific match, so this wins over `location /` below
+    # regardless of declaration order) with its own strict rate zone. Without
+    # this it would share gp_rl's budget with the real API in both
+    # directions: a chatty beacon crowding out real requests, or a burst of
+    # real traffic costing the beacon its own room to report failures.
+    location = /v1/log {
+        if ($gp_blocked_bot) { return 444; }
+
+        limit_req zone=gp_log burst=3 nodelay;
+        limit_req_status 429;
+        # Body is capped server-side too (LOG_MAX_BODY_BYTES in
+        # resolver-core.mjs) — this is the earlier, cheaper rejection.
+        client_max_body_size 8k;
+
+        proxy_pass http://$gp_upstream:8787$request_uri;
+        proxy_set_header Host              $host;
+        proxy_set_header Origin            $http_origin;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 5s;
     }
 
     location / {
