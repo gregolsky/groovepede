@@ -1,0 +1,27 @@
+node_modules/
+
+# Signing material — NEVER commit. The keystore lives in a password manager and,
+# for CI, base64-encoded in the ANDROID_KEYSTORE_BASE64 environment secret.
+*.keystore
+*.jks
+*.p12
+signing-key-info.txt
+
+# Everything `bubblewrap update` generates. Only twa-manifest.json is source of
+# truth; the Gradle project is rebuilt from it on every run.
+/app/
+/build/
+/gradle/
+/.gradle/
+/gradlew
+/gradlew.bat
+/build.gradle
+/settings.gradle
+/gradle.properties
+/enable-debug.sh
+/store_icon.png
+/manifest-checksum.txt
+
+# Build outputs
+*.apk
+*.aab

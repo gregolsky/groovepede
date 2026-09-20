@@ -1,0 +1,11 @@
+{
+  "name": "groovepede-android",
+  "private": true,
+  "description": "Bubblewrap toolchain for the Groovepede Play Store TWA. See README.md.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@bubblewrap/cli": "1.25.0"
+  }
+}

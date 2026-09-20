@@ -1,6 +1,7 @@
 // The installable-app surface, checked against the production build: what
 // Bubblewrap reads to package the TWA (manifest, icons, share target, asset
 // links) and what makes it work offline (service worker).
+import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { stubExternals } from '../tests/helpers.js';
 
@@ -52,6 +53,25 @@ test('/.well-known/assetlinks.json ships in the build and names the app', async 
   // Fingerprint *format* is deliberately not checked here — that is the
   // post-deploy smoke test's job; a local build may carry placeholders.
   expect(target.sha256_cert_fingerprints.length).toBeGreaterThan(0);
+});
+
+test('android/twa-manifest.json agrees with the web manifest and asset links', async ({ request }) => {
+  // The TWA loses its URL-bar-free mode SILENTLY if its package id differs from
+  // the one in assetlinks.json (Bubblewrap defaults to "<id>.twa", which would),
+  // and the app would stop matching the site's share target. Catch drift here.
+  const twa = JSON.parse(readFileSync(new URL('../../android/twa-manifest.json', import.meta.url), 'utf8'));
+  const web = await (await request.get('/manifest.json')).json();
+  const links = await (await request.get('/.well-known/assetlinks.json')).json();
+
+  expect(links.map((l) => l.target.package_name)).toContain(twa.packageId);
+  expect(twa.host).toBe('groovepede.gregolsky.pl');
+  expect(twa.shareTarget.method).toBe(web.share_target.method);
+  expect(twa.shareTarget.params).toEqual(web.share_target.params);
+  expect(twa.enableNotifications, 'the app has no push; keep the permission surface off').toBe(false);
+  // The icons Bubblewrap downloads must be the ones this build ships.
+  const shipped = web.icons.map((i) => i.src);
+  expect(shipped).toContain(new URL(twa.iconUrl).pathname.slice(1));
+  expect(shipped).toContain(new URL(twa.maskableIconUrl).pathname.slice(1));
 });
 
 test.describe('service worker', () => {
