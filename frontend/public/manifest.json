@@ -1,9 +1,16 @@
 {
+  "id": "/",
   "name": "Groovepede",
   "short_name": "Groovepede",
+  "description": "A minimalist, local-first PWA for queuing albums from Spotify, Apple Music, YouTube Music, Tidal, Deezer and Pandora. No account needed — save recommendations, browse by genre, and check them off as you listen.",
+  "lang": "en",
+  "dir": "ltr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone"],
+  "orientation": "portrait",
+  "categories": ["music", "entertainment"],
   "background_color": "#121212",
   "theme_color": "#0FD287",
   "icons": [
@@ -11,13 +18,19 @@
       "src": "icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "icons/icon-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512x512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ],
   "share_target": {

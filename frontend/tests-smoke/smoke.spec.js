@@ -45,6 +45,26 @@ test.describe('landing', () => {
   });
 });
 
+test.describe('android app link', () => {
+  // The Play Store TWA only drops its URL bar if this file is served with the
+  // fingerprints of the keys the installed APK is signed with (upload key +
+  // Play App Signing key). A silent stop-shipping of the file is otherwise
+  // invisible, so guard it here. Placeholder fingerprints fail the format check.
+  test('/.well-known/assetlinks.json is served and lists real fingerprints', async ({ request }) => {
+    const res = await request.get('/.well-known/assetlinks.json');
+    expect(res.status()).toBe(200);
+    expect(res.headers()['content-type']).toMatch(/json/);
+
+    const links = await res.json();
+    const target = links.find((l) => l.target?.package_name === 'pl.gregolsky.groovepede')?.target;
+    expect(target, 'no statement for pl.gregolsky.groovepede').toBeTruthy();
+    expect(target.sha256_cert_fingerprints.length).toBeGreaterThan(0);
+    for (const fp of target.sha256_cert_fingerprints) {
+      expect(fp).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+    }
+  });
+});
+
 test.describe('resolves a real link per service', () => {
   for (const { slug, url } of SERVICE_ALBUMS) {
     test(`${slug}: ${url}`, async ({ page, baseURL }) => {
