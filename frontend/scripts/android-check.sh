@@ -52,7 +52,17 @@ count=$(printf '%s\n' "$devices" | grep -c . || true)
 
 mkdir -p "$OUT_DIR"
 shot() { "$ADB" exec-out screencap -p > "$OUT_DIR/$1.png"; echo "  saved $OUT_DIR/$1.png"; }
-ui_dump() { "$ADB" shell uiautomator dump /sdcard/gp-ui.xml >/dev/null 2>&1; "$ADB" exec-out cat /sdcard/gp-ui.xml; }
+# Prints the UI hierarchy XML, or fails with the reason. An empty dump must never
+# reach a "nothing matched" grep: that would read as a pass having inspected nothing.
+ui_dump() {
+  local err xml
+  err=$("$ADB" shell uiautomator dump /sdcard/gp-ui.xml 2>&1) || { echo "uiautomator dump failed: $err" >&2; return 1; }
+  xml=$("$ADB" exec-out cat /sdcard/gp-ui.xml) || { echo "could not read /sdcard/gp-ui.xml" >&2; return 1; }
+  case "$xml" in
+    *"<hierarchy"*) printf '%s' "$xml" ;;
+    *) echo "uiautomator produced no UI hierarchy (dump said: $err)" >&2; return 1 ;;
+  esac
+}
 focus() { "$ADB" shell dumpsys window | grep -E "mCurrentFocus|mFocusedApp" || true; }
 
 step "1. Install and launch"
@@ -72,7 +82,7 @@ shot launched
 
 step "2. Asset links: no browser chrome (the check that catches a wrong fingerprint)"
 # An unverified TWA falls back to a Custom Tab with a URL/security toolbar.
-dump=$(ui_dump)
+dump=$(ui_dump) || { shot ui-dump-failed; fail "cannot inspect the UI, so the toolbar check proved nothing"; }
 if printf '%s' "$dump" | grep -qE 'id/(url_bar|security_button|toolbar)'; then
   shot url-bar-visible
   fail "browser toolbar is visible: Digital Asset Links did not verify. Is the fingerprint of the key that signed this APK (the upload key for a sideload, Google's key for a Play install) in .well-known/assetlinks.json on $HOST?"
