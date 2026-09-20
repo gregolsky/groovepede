@@ -4,10 +4,10 @@ on:
   push:
     branches: [main]
 
+# Read-only by default; only the deploy job below gets the two write scopes
+# that Pages needs, so the build and smoke jobs cannot mint an OIDC token.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -20,8 +20,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -33,7 +35,7 @@ jobs:
           # signs empty resolver tokens and every request 403s. Add it under
           # Settings → Secrets and variables → Actions → New repository secret.
           VITE_GP_PRIVATE_KEY: ${{ secrets.VITE_GP_PRIVATE_KEY }}
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           # Not affected by `defaults.run` — that only applies to `run:` steps.
           path: frontend/dist
@@ -41,6 +43,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write      # publish the uploaded artifact to GitHub Pages
+      id-token: write   # actions/deploy-pages verifies the deploy via OIDC
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -48,7 +53,7 @@ jobs:
       page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
 
   smoke:
     # Opens the real deployed site and clicks through it — catches things
@@ -61,8 +66,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -72,7 +79,7 @@ jobs:
       - run: npm run test:smoke
         env:
           SMOKE_BASE_URL: ${{ needs.deploy.outputs.page_url }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: smoke-report

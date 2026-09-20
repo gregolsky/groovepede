@@ -13,11 +13,16 @@ on:
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   signal:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Resolve commit
         id: sha
@@ -38,6 +43,7 @@ jobs:
       - name: Signal the Pi to pull
         env:
           TOPIC: ${{ secrets.NTFY_DEPLOY_TOPIC }}
+          SHORT_SHA: ${{ steps.sha.outputs.short }}
         run: |
           if [ -z "$TOPIC" ]; then
             echo "NTFY_DEPLOY_TOPIC is not set — add it under Settings → Secrets → Actions." >&2
@@ -50,9 +56,9 @@ jobs:
           # command and never interpolates any part of this message, so a
           # spoofed publish can at worst re-trigger a legitimate pull of main.
           curl -fsS -H "Title: groovepede deploy" \
-               -d "deploy ${{ steps.sha.outputs.short }}" \
+               -d "deploy $SHORT_SHA" \
                "https://ntfy.sh/$TOPIC" > /dev/null
-          echo "Signalled deploy of ${{ steps.sha.outputs.short }}"
+          echo "Signalled deploy of $SHORT_SHA"
 
       - name: Wait for the Pi to report this commit
         env:
