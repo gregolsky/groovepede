@@ -3,7 +3,8 @@
 // 74e8bb8 (Pixel 8 Pro overflow) stays landed, across the widths that have
 // mattered historically, in both the empty-queue and populated states.
 import { test, expect } from '@playwright/test';
-import { overflowReport, seedAlbums } from './helpers.js';
+import { seedAlbums } from './helpers.js';
+import { overflowReport, assertNoOverflow } from '../tests-lib/dom.js';
 
 const VIEWPORTS = [
   { name: 'narrow-360', width: 360, height: 800 },
@@ -12,11 +13,6 @@ const VIEWPORTS = [
   { name: 'landing-logo-rings-1100', width: 1100, height: 800 },
   { name: 'desktop-1280', width: 1280, height: 800 },
 ];
-
-function assertNoOverflow(report) {
-  expect(report.wide, `overflowing elements: ${report.wide.join(', ')}`).toEqual([]);
-  expect(report.scrollWidth).toBeLessThanOrEqual(report.clientWidth + 1);
-}
 
 for (const { name, width, height } of VIEWPORTS) {
   test(`${name} (${width}x${height}): landing fits, no horizontal overflow`, async ({ page }) => {

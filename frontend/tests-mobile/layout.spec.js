@@ -5,12 +5,7 @@
 import { test, expect } from '@playwright/test';
 import { stubExternals, seedAlbums } from '../tests/helpers.js';
 import { WIDE_TAG_ALBUMS } from '../tests-lib/albums.js';
-import { overflowReport } from '../tests-lib/dom.js';
-
-function assertNoOverflow(report) {
-  expect(report.wide, `overflowing elements: ${report.wide.join(', ')}`).toEqual([]);
-  expect(report.scrollWidth).toBeLessThanOrEqual(report.clientWidth + 1);
-}
+import { overflowReport, assertNoOverflow } from '../tests-lib/dom.js';
 
 const ORIENTATIONS = ['portrait', 'landscape'];
 

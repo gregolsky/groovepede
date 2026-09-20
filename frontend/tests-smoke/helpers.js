@@ -5,9 +5,6 @@
 // below are copied literals — see src/js/config.js for the source of truth.
 import { WIDE_TAG_ALBUMS } from '../tests-lib/albums.js';
 
-// Re-exported so viewport.spec.js keeps importing it from here.
-export { overflowReport } from '../tests-lib/dom.js';
-
 const STORAGE_KEY = 'gp_albums';
 const DONE_KEY = 'gp_done';
 
