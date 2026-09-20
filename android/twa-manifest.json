@@ -1,0 +1,58 @@
+{
+  "packageId": "pl.gregolsky.groovepede",
+  "host": "groovepede.gregolsky.pl",
+  "name": "Groovepede",
+  "launcherName": "Groovepede",
+  "display": "standalone",
+  "themeColor": "#0FD287",
+  "themeColorDark": "#121212",
+  "navigationColor": "#121212",
+  "navigationColorDark": "#121212",
+  "navigationDividerColor": "#121212",
+  "navigationDividerColorDark": "#121212",
+  "backgroundColor": "#121212",
+  "enableNotifications": false,
+  "startUrl": "/",
+  "iconUrl": "https://groovepede.gregolsky.pl/icons/icon-512x512.png",
+  "maskableIconUrl": "https://groovepede.gregolsky.pl/icons/icon-512x512-maskable.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./upload.keystore",
+    "alias": "groovepede"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://groovepede.gregolsky.pl/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://groovepede.gregolsky.pl/",
+  "minSdkVersion": 21,
+  "shareTarget": {
+    "action": "https://groovepede.gregolsky.pl/",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+  "orientation": "portrait",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": [],
+  "launchHandlerClientMode": "",
+  "displayOverride": [
+    "standalone"
+  ],
+  "appVersion": "1.0.0"
+}

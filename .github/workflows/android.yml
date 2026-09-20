@@ -1,0 +1,189 @@
+name: Android build (Bubblewrap TWA)
+
+# Builds the signed Play Store bundle (.aab) and a sideloadable .apk from
+# android/twa-manifest.json and uploads them as a WORKFLOW ARTIFACT. Nothing is
+# uploaded to Google Play — that is a manual step, on purpose, so no Play API
+# credential ever lives in GitHub. See android/README.md for the one-time setup.
+#
+# Trust model
+#  - Triggers: manual dispatch, or a pushed `android-v<major.minor.patch>` tag.
+#    Never pull_request / pull_request_target, so a fork cannot reach the secrets.
+#  - The keystore secrets exist ONLY in the "Sign" step. Everything that runs
+#    third-party code (npm, Bubblewrap, Gradle and its downloads) runs with no
+#    secrets in its environment; signing is a separate step using apksigner and
+#    jarsigner from the runner image, with passwords passed by env var (never on
+#    the command line, unlike Bubblewrap's own signing).
+#  - Bubblewrap is pinned exactly in android/package-lock.json and installed with
+#    `npm ci --ignore-scripts`, then its registry signatures are verified.
+#  - Bubblewrap 1.25.0 has known-vulnerable transitive deps (extract-zip, jimp,
+#    file-type, uuid). They are not reachable here: extract-zip only unpacks the
+#    JDK/SDK Bubblewrap downloads itself, and this job points it at the runner's
+#    preinstalled toolchain instead; the rest parse our own icon.
+#
+# Requires the android-release environment with secrets ANDROID_KEYSTORE_BASE64,
+# ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_PASSWORD. The site must already be
+# deployed with the current icons: `bubblewrap update` downloads them from
+# https://groovepede.gregolsky.pl.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Version name, x.y.z (used for manual runs; tag runs take it from the tag)'
+        required: false
+        default: '1.0.0'
+  push:
+    tags:
+      - 'android-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build
+  cancel-in-progress: false
+
+env:
+  # The exact tool versions Bubblewrap 1.25.0 requires. The job fails early if the
+  # runner image lacks them, rather than letting Bubblewrap download replacements.
+  BUILD_TOOLS_VERSION: '36.1.0'
+  PLATFORM: 'android-36'
+  # Gradle distribution Bubblewrap 1.25.0's template pins. Its wrapper carries no
+  # checksum, so we add one. Verified three ways: services.gradle.org's .sha256,
+  # a sha256sum of the downloaded zip, and gradle.org/release-checksums.
+  GRADLE_URL: 'https\://services.gradle.org/distributions/gradle-8.11.1-bin.zip'
+  GRADLE_SHA256: 'f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6'
+
+jobs:
+  build:
+    name: Build signed AAB + APK
+    runs-on: ubuntu-24.04   # pinned, not ubuntu-latest: the toolchain above was verified on this image
+    timeout-minutes: 30
+    environment: android-release
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # No caching on purpose — a restored cache is a way to feed a poisoned
+      # dependency into a job that signs release artifacts. At v4.4.0 the only way
+      # to enable it is the explicit `cache:` input, which is absent, so zizmor's
+      # cache-poisoning hit is a false positive here (verified against action.yml
+      # at this SHA). Newer majors cache implicitly: when upgrading setup-node,
+      # add `package-manager-cache: false` and drop this ignore.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 # zizmor: ignore[cache-poisoning]
+        with:
+          node-version: 20
+
+      - name: Install Bubblewrap (locked, no install scripts)
+        run: |
+          npm ci --ignore-scripts
+          npm audit signatures
+
+      - name: Check the toolchain and the package id
+        run: |
+          set -euo pipefail
+          test -n "${JAVA_HOME_17_X64:-}"              || { echo "JDK 17 missing on runner" >&2; exit 1; }
+          test -d "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" || { echo "build-tools $BUILD_TOOLS_VERSION missing" >&2; exit 1; }
+          test -d "$ANDROID_HOME/platforms/$PLATFORM"  || { echo "$PLATFORM missing" >&2; exit 1; }
+
+          # The TWA only loses its URL bar if the app's package id matches the one
+          # published in assetlinks.json.
+          twa=$(jq -r .packageId twa-manifest.json)
+          links=$(jq -r '[.[].target.package_name] | join(",")' ../frontend/public/.well-known/assetlinks.json)
+          [ "$twa" = "$links" ] || { echo "package id mismatch: twa-manifest=$twa assetlinks=$links" >&2; exit 1; }
+
+          mkdir -p "$HOME/.bubblewrap"
+          jq -n --arg jdk "$JAVA_HOME_17_X64" --arg sdk "$ANDROID_HOME" \
+            '{jdkPath: $jdk, androidSdkPath: $sdk}' > "$HOME/.bubblewrap/config.json"
+          npx bubblewrap doctor
+
+      - name: Set the version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TYPE" = tag ]; then version="${REF_NAME#android-v}"; else version="$INPUT_VERSION"; fi
+          # A tag name and a dispatch input are attacker-influenced strings: accept nothing but x.y.z.
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a valid x.y.z version: '$version'" >&2; exit 1; }
+          # versionCode must strictly increase on every Play upload; run_number does.
+          jq --arg v "$version" --argjson c "$RUN_NUMBER" \
+             '.appVersion = $v | .appVersionName = $v | .appVersionCode = $c' \
+             twa-manifest.json > twa-manifest.next
+          mv twa-manifest.next twa-manifest.json
+          echo "Building version $version (versionCode $RUN_NUMBER)"
+
+      - name: Generate the Android project
+        run: npx bubblewrap update --skipVersionUpgrade
+
+      - name: Pin the Gradle distribution checksum
+        run: |
+          set -euo pipefail
+          props=gradle/wrapper/gradle-wrapper.properties
+          # If Bubblewrap moves to a different Gradle, this fails instead of
+          # silently building with an unverified one. Re-verify and update the pin.
+          grep -qxF "distributionUrl=$GRADLE_URL" "$props" \
+            || { echo "Gradle version changed — re-verify the checksum and update GRADLE_URL/GRADLE_SHA256" >&2; exit 1; }
+          echo "distributionSha256Sum=$GRADLE_SHA256" >> "$props"
+
+      # Unsigned build: no secret is present in the environment of anything below.
+      - name: Build (unsigned)
+        run: npx bubblewrap build --skipPwaValidation --skipSigning
+
+      - name: Sign
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ks="$RUNNER_TEMP/upload.keystore"
+          trap 'rm -f "$ks"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$ks"
+          alias=$(jq -r .signingKey.alias twa-manifest.json)
+
+          # Passwords go through the environment (`env:` / `:env`), never argv.
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" sign \
+            --ks "$ks" --ks-key-alias "$alias" \
+            --ks-pass env:KS_PASS --key-pass env:KEY_PASS \
+            --out app-release-signed.apk app-release-unsigned-aligned.apk
+
+          # Same algorithms Bubblewrap itself uses for the bundle.
+          "$JAVA_HOME_17_X64/bin/jarsigner" \
+            -sigalg SHA256withRSA -digestalg SHA-256 \
+            -keystore "$ks" -storepass:env KS_PASS -keypass:env KEY_PASS \
+            -signedjar app-release-bundle.aab \
+            app/build/outputs/bundle/release/app-release.aab "$alias"
+
+      - name: Verify the signatures and report the fingerprint
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose app-release-signed.apk
+          "$JAVA_HOME_17_X64/bin/jarsigner" -verify app-release-bundle.aab
+          fp=$("$JAVA_HOME_17_X64/bin/keytool" -printcert -jarfile app-release-signed.apk | sed -n 's/^ *SHA256: *//p' | head -1)
+          [ -n "$fp" ] || { echo "could not read the signing certificate fingerprint" >&2; exit 1; }
+          {
+            echo "### Upload-key SHA-256 fingerprint"
+            echo
+            echo "Add this to \`sha256_cert_fingerprints\` in \`frontend/public/.well-known/assetlinks.json\`."
+            echo "Public information, safe to share; the Play App Signing key's fingerprint is added separately from the Play Console."
+            echo
+            echo "\`$fp\`"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: groovepede-android-${{ github.run_number }}
+          # Signed outputs only; the keystore never leaves $RUNNER_TEMP.
+          path: |
+            android/app-release-bundle.aab
+            android/app-release-signed.apk
+          if-no-files-found: error
+          retention-days: 7
