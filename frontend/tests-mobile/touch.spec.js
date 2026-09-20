@@ -15,10 +15,16 @@ import { WIDE_TAG_ALBUMS } from '../tests-lib/albums.js';
 const MIN_ENFORCED = 24;
 const MIN_IDEAL = 44;
 
+// Visible = has a box and isn't visibility:hidden. Deliberately NOT offsetParent:
+// that is null for every position:fixed element too, so a floating control would
+// silently escape the gate.
 async function measureTargets(page) {
   return page.evaluate(() =>
     [...document.querySelectorAll('[data-action]')]
-      .filter((el) => el.offsetParent !== null)
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+      })
       .map((el) => {
         const r = el.getBoundingClientRect();
         return {
@@ -31,12 +37,7 @@ async function measureTargets(page) {
   );
 }
 
-test('tap targets meet WCAG 2.5.8; sub-44px ones are reported', async ({ page, context }, testInfo) => {
-  await stubExternals(context);
-  await seedAlbums(context, WIDE_TAG_ALBUMS, 2);
-  await page.goto('/');
-  await expect(page.locator('.card')).toHaveCount(6);
-
+async function assertTapTargets(page, testInfo) {
   const targets = await measureTargets(page);
   expect(targets.length, 'found no tap targets — selector drifted?').toBeGreaterThan(0);
 
@@ -54,6 +55,43 @@ test('tap targets meet WCAG 2.5.8; sub-44px ones are reported', async ({ page, c
       description: [...belowIdeal].map(([k, n]) => `${k} x${n}`).join('; '),
     });
   }
+}
+
+// Each screen a user can be on has its own controls; the profile panel and the
+// add form are where the small ones live, so they are measured too.
+test.describe('tap targets meet WCAG 2.5.8; sub-44px ones are reported', () => {
+  test('populated queue', async ({ page, context }, testInfo) => {
+    await stubExternals(context);
+    await seedAlbums(context, WIDE_TAG_ALBUMS, 2);
+    await page.goto('/');
+    await expect(page.locator('.card')).toHaveCount(6);
+    await assertTapTargets(page, testInfo);
+  });
+
+  test('landing', async ({ page, context }, testInfo) => {
+    await stubExternals(context);
+    await page.goto('/');
+    await expect(page.locator('.landing')).toBeVisible();
+    await assertTapTargets(page, testInfo);
+  });
+
+  test('add form open', async ({ page, context }, testInfo) => {
+    await stubExternals(context);
+    await page.goto('/');
+    await page.locator('.landing-cta[data-action="toggle-add"]').tap();
+    await expect(page.locator('#url-input')).toBeVisible();
+    await assertTapTargets(page, testInfo);
+  });
+
+  test('profile open', async ({ page, context }, testInfo) => {
+    await stubExternals(context);
+    await seedAlbums(context, WIDE_TAG_ALBUMS, 2);
+    await page.goto('/');
+    await expect(page.locator('.card')).toHaveCount(6);
+    await page.locator('[data-action="open-profile"]').tap();
+    await expect(page.locator('.profile')).toBeVisible();
+    await assertTapTargets(page, testInfo);
+  });
 });
 
 test('profile opens and closes by tap', async ({ page, context }) => {
