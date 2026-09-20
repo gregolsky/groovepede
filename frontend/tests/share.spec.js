@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { stubExternals, KEYS } from './helpers.js';
+import { stubExternals, fakeStandalone, gatedResolver, KEYS } from './helpers.js';
 
 const ALBUM_ID    = 'shareTestAlbum1xxxxxx'; // 22 chars for Spotify ID
 const SHARE_URL   = `https://open.spotify.com/album/${ALBUM_ID}`;
@@ -29,39 +29,11 @@ function makeShareAlbumResponse() {
   };
 }
 
-function fakeStandalone(context) {
-  return context.addInitScript(() => {
-    const orig = window.matchMedia.bind(window);
-    window.matchMedia = (query) => {
-      if (query === '(display-mode: standalone)') {
-        return { matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} };
-      }
-      return orig(query);
-    };
-  });
-}
-
 // This spec's resolver fixture is its own (a distinct album id, so the share
 // target's dedupe path is exercised), but every other external comes from the
 // shared list.
 async function stubApis(context) {
   await stubExternals(context, { resolver: makeShareAlbumResponse() });
-}
-
-/**
- * Hold the resolver open until the test calls the returned release(), so the
- * loading phase can be asserted without racing a clock. (It used to be a
- * fixed 1.5s sleep: on a loaded machine the assertion chain outlasted it and
- * saw the next phase instead.)
- */
-async function gatedResolver(context) {
-  let release;
-  const gate = new Promise(r => { release = r; });
-  await context.route('**/api.groovepede.gregolsky.pl/**', async route => {
-    await gate;
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeShareAlbumResponse()) });
-  });
-  return release;
 }
 
 /**
@@ -90,7 +62,7 @@ async function overlayAt(page, phase) {
 test('share-target shows the adding overlay before the album resolves', async ({ page, context }) => {
   await fakeStandalone(context);
   await stubApis(context);
-  const release = await gatedResolver(context);   // registered last, so it wins over stubApis
+  const release = await gatedResolver(context, makeShareAlbumResponse());   // registered last, so it wins over stubApis
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 

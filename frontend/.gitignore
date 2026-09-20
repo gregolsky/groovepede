@@ -3,6 +3,7 @@ dist/
 test-results/
 playwright-report/
 playwright-report-smoke/
+playwright-report-mobile/
 
 # Local env overrides — never commit (holds VITE_GP_PRIVATE_KEY)
 .env.local
