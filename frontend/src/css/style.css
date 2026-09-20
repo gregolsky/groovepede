@@ -1159,7 +1159,12 @@ body::after {
 /* ── Profile overlay ─────────────────────────────────────────────────────────── */
 .profile { padding-bottom: 64px; }
 .profile-nav { display: flex; align-items: center; margin-bottom: 32px; }
-.profile-back { background: none; border: none; color: var(--text-dim); font-size: 14px; font-family: var(--font-body); cursor: pointer; padding: 0; }
+.profile-back {
+  background: none; border: none; color: var(--text-dim); font-size: 14px; font-family: var(--font-body); cursor: pointer;
+  /* Text-only button: the glyphs are ~19px tall. Pad the hit area to 44px and pull
+     it back with an equal negative margin, so nothing moves on screen. */
+  padding: 13px 0; margin: -13px 0;
+}
 .profile-back:hover { color: var(--text); }
 .profile-body { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .profile-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; margin-bottom: 24px; }
