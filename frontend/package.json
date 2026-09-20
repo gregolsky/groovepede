@@ -10,7 +10,8 @@
     "test:e2e": "playwright test",
     "test": "vitest run && playwright test",
     "test:smoke": "playwright test -c playwright.smoke.config.js",
-    "test:mobile": "playwright test -c playwright.mobile.config.js"
+    "test:mobile": "playwright test -c playwright.mobile.config.js",
+    "test:android": "bash scripts/android-check.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.44.0",
