@@ -85,6 +85,35 @@ export async function stubExternals(context, { resolver = makeAlbumResponse() } 
   }
 }
 
+/**
+ * Hold every resolver request open until the test calls the returned
+ * `release()`, then answer with `body`. Lets a test observe a loading phase for
+ * as long as it needs — a fixed sleep races the assertions. Register it after
+ * stubExternals(): the last-registered route wins.
+ */
+export async function gatedResolver(context, body) {
+  let release;
+  const held = new Promise(r => { release = r; });
+  await context.route('https://api.groovepede.gregolsky.pl/**', async route => {
+    await held;
+    await route.fulfill(json(body));
+  });
+  return release;
+}
+
+/** Make the page believe it was launched as an installed PWA (display-mode: standalone). */
+export function fakeStandalone(context) {
+  return context.addInitScript(() => {
+    const orig = window.matchMedia.bind(window);
+    window.matchMedia = (query) => {
+      if (query === '(display-mode: standalone)') {
+        return { matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} };
+      }
+      return orig(query);
+    };
+  });
+}
+
 /** Seed the queue (and optionally the listened counter) before the app boots. */
 export async function seedAlbums(context, albums, done) {
   await context.addInitScript(({ keys, albums, done }) => {

@@ -53,6 +53,7 @@ npm run build      # Production build to dist/
 npm run preview    # Preview production build locally
 npm run test:unit  # Run Vitest unit tests
 npm run test:e2e   # Run Playwright E2E tests
+npm run test:mobile # Emulated-phone suite vs production build (vite preview)
 npm test           # Run all tests (unit + E2E)
 ```
 
@@ -82,6 +83,7 @@ Resolver itself needs no API key from client's perspective — see `backend/READ
     starts hitting the real network. Per-test overrides still work: Playwright
     resolves the last-registered route first.
   - Cover key user interactions end-to-end; no login anywhere in app, so no auth state to branch on
+- **Mobile tests** (`npm run test:mobile`): Playwright device emulation (Pixel 7, Galaxy S9+; iPhone via `MOBILE_WEBKIT=1`, needs `sudo npx playwright install-deps webkit`) vs `vite preview` prod build. Files in `frontend/tests-mobile/`; shared probes/fixtures in `frontend/tests-lib/`. Reuse `stubExternals()` from `tests/helpers.js`. Not part of `npm test`. Tap targets: hard gate 24px (WCAG 2.5.8), sub-44px only reported.
 
 ## Pre-push checklist
 
