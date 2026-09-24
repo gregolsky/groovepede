@@ -90,6 +90,47 @@ describe('parseMusicLink', () => {
     expect(r.url).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
     expect(r.service).toBe('spotify');
   });
+  // ── Spotify short links (spotify.link / spotify.app.link) ──────────────────
+  it('accepts a spotify.link short link and defers to the resolver', () => {
+    const r = parseMusicLink('https://spotify.link/aBcD1234');
+    expect(r.url).toBe('https://spotify.link/aBcD1234');
+    expect(r.service).toBe('spotify');
+    expect(r.error).toBeUndefined();
+  });
+  it('accepts a spotify.app.link short link', () => {
+    const r = parseMusicLink('https://spotify.app.link/aBcD1234');
+    expect(r.url).toBe('https://spotify.app.link/aBcD1234');
+    expect(r.service).toBe('spotify');
+  });
+
+  // ── Link embedded in shared text (Spotify's Web Share "text" field) ────────
+  it('extracts a Spotify URL from text sharing it alongside a title/artist', () => {
+    const r = parseMusicLink('Aeropsia by Steve Hauschildt https://open.spotify.com/album/3dgWhwqZHz4KSUX586c3U4');
+    expect(r.url).toBe('https://open.spotify.com/album/3dgWhwqZHz4KSUX586c3U4');
+    expect(r.service).toBe('spotify');
+    expect(r.error).toBeUndefined();
+  });
+  it('extracts a spotify.link short link embedded in shared text', () => {
+    const r = parseMusicLink('Check out this album https://spotify.link/aBcD1234 on Spotify');
+    expect(r.url).toBe('https://spotify.link/aBcD1234');
+    expect(r.service).toBe('spotify');
+  });
+  it('strips trailing sentence punctuation off an embedded URL', () => {
+    const r = parseMusicLink('Listen here: https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy.');
+    expect(r.url).toBe('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(r.service).toBe('spotify');
+  });
+  it('still rejects text with no URL at all', () => {
+    const r = parseMusicLink('Aeropsia by Steve Hauschildt');
+    expect(r.error).toBeTruthy();
+    expect(r.url).toBeUndefined();
+  });
+  it('still applies non-album rejection to a URL embedded in text', () => {
+    const r = parseMusicLink('check out this artist https://open.spotify.com/artist/0OdUWJ0sBjDrqHygGUXeCF');
+    expect(r.error).toMatch(/artist/i);
+    expect(r.url).toBeUndefined();
+  });
+
   it('rejects Spotify artist URL with artist error', () => {
     const r = parseMusicLink('https://open.spotify.com/artist/0OdUWJ0sBjDrqHygGUXeCF');
     expect(r.error).toMatch(/artist/i);

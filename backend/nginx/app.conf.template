@@ -146,6 +146,10 @@ server {
         # bounded) and then up to two cross-linking lookups in parallel (8s each)
         # — worst case ~16s end to end. 10s was fine for the old Odesli-only
         # proxy but would cut that off mid-request, so this is comfortably above it.
+        # A Spotify short link (spotify.link/spotify.app.link) adds one more
+        # fetch ahead of that — resolveRedirect's own budget is capped at 8s
+        # total regardless of hop count (see backend/resolver-core.mjs), so the
+        # worst case there is ~24s, still under this.
         proxy_read_timeout 25s;
     }
 }

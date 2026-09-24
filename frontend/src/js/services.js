@@ -22,6 +22,13 @@ export const SERVICES = [
     slug: 'spotify',
     label: 'Spotify',
     hosts: ['open.spotify.com'],
+    // The mobile app's "Share" sheet hands out one of these short codes
+    // instead of an open.spotify.com URL. What it points to can't be told
+    // client-side (that needs following an HTTP redirect) — isShortLinkHost
+    // makes parseMusicLink skip albumMatch for these and defer to the
+    // resolver, whose extractSpotify (backend/resolver-core.mjs) follows the
+    // redirect and rejects anything that isn't an album.
+    shortLinkHosts: ['spotify.link', 'spotify.app.link'],
     albumMatch: (url) => /\/album\//.test(url),
     nonAlbumError: (url) => {
       if (/\/artist\//.test(url))        return "That's an artist link — paste an album link instead";
@@ -87,13 +94,25 @@ export const SERVICES = [
 
 // hostname → descriptor (e.g. 'open.spotify.com' → spotify descriptor)
 const _BY_HOST = new Map();
+// Hosts whose URL alone can't tell you what it points to (short links) —
+// parseMusicLink skips albumMatch for these and lets the resolver decide.
+const _SHORT_LINK_HOSTS = new Set();
 for (const svc of SERVICES) {
   for (const host of svc.hosts) _BY_HOST.set(host, svc);
+  for (const host of svc.shortLinkHosts || []) {
+    _BY_HOST.set(host, svc);
+    _SHORT_LINK_HOSTS.add(host);
+  }
 }
 
 /** Find a service descriptor by the (www-stripped) hostname of a URL. */
 export function findServiceByHost(host) {
   return _BY_HOST.get(host) || null;
+}
+
+/** True when `host` is a short-link host (see SERVICES[].shortLinkHosts). */
+export function isShortLinkHost(host) {
+  return _SHORT_LINK_HOSTS.has(host);
 }
 
 export function serviceLabel(slug) {

@@ -134,6 +134,11 @@ export function corsHeaders(origin) {
 
 export const SERVICE_HOSTS = new Map([
   ['open.spotify.com',   'spotify'],
+  // Spotify's own share-sheet short links (the "Share" button in the mobile
+  // app produces these, not an open.spotify.com URL) — extractSpotify follows
+  // the redirect before doing anything else.
+  ['spotify.link',       'spotify'],
+  ['spotify.app.link',   'spotify'],
   ['music.apple.com',    'apple'],
   ['deezer.com',         'deezer'],
   ['www.deezer.com',     'deezer'],
@@ -279,6 +284,66 @@ export async function fetchUpstream(url, fetchImpl = fetch, opts = {}) {
   }
 }
 
+/**
+ * Follow a chain of HTTP redirects without downloading any response body —
+ * used for Spotify's share-sheet short links (spotify.link/spotify.app.link),
+ * which 30x straight to the real open.spotify.com URL. `redirect: 'manual'`
+ * so a redirect to something we don't want to extract (a track, an artist)
+ * never costs an extra fetch of that page's body.
+ *
+ * ONE AbortController/timer covers every hop (not a fresh FETCH_TIMEOUT_MS
+ * per hop) — this is conceptually a single fetchUpstream-equivalent
+ * operation, and extractSpotify makes one more fetch (the /embed/ page)
+ * right after this returns. Budgeting per-hop would let a short link cost
+ * multiple independent 8s windows, pushing /v1/album's worst case past
+ * nginx's proxy_read_timeout for `location /` (see the comment there).
+ *
+ * Only http(s) targets are followed: a redirect hands trust to whatever
+ * Location header spotify.link/spotify.app.link returns, not just to
+ * Spotify's own DNS, so this fetches that target BEFORE the final
+ * open.spotify.com host check in extractSpotify runs — worth constraining
+ * the scheme explicitly rather than relying on fetchImpl to reject it.
+ *
+ * Throws UpstreamFetchError(400, …) — a permanent, non-retryable failure —
+ * once maxHops is exceeded or a hop's scheme isn't http(s), since neither is
+ * a transient condition a client retry would fix.
+ */
+async function resolveRedirect(url, fetchImpl, maxHops = 3) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    let current = url;
+    for (let hop = 0; hop <= maxHops; hop++) {
+      const { protocol } = new URL(current);
+      if (protocol !== 'http:' && protocol !== 'https:') {
+        throw new UpstreamFetchError(400, new Error(`unsupported redirect scheme: ${protocol}`));
+      }
+      let res;
+      try {
+        res = await fetchImpl(current, {
+          method: 'GET',
+          headers: { 'User-Agent': UA, 'Accept': '*/*' },
+          redirect: 'manual',
+          signal: ctrl.signal,
+        });
+      } catch (err) {
+        throw new UpstreamFetchError(0, err);
+      }
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get('location');
+        if (!loc) throw new UpstreamFetchError(res.status);
+        current = new URL(loc, current).toString();
+        continue;
+      }
+      if (!res.ok) throw new UpstreamFetchError(res.status);
+      return current;
+    }
+    throw new UpstreamFetchError(400, new Error('too many redirects'));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── Per-service metadata extraction ─────────────────────────────────────────
 // Each extractor takes the parsed album URL and returns either:
 //   - { serviceAlbumId, title, artist, cover, year, tags } on success
@@ -310,7 +375,24 @@ function decodeHtmlEntities(s) {
 }
 
 async function extractSpotify(urlObj, fetchImpl) {
-  const id = urlObj.pathname.match(/\/album\/([A-Za-z0-9]+)/)?.[1];
+  // Spotify's mobile-app "Share" sheet hands out spotify.link/spotify.app.link
+  // short codes, not an open.spotify.com URL — resolve the redirect first so
+  // the rest of this function always deals with a real album URL.
+  const isShortLink = urlObj.hostname.replace(/^www\./, '') !== 'open.spotify.com';
+  let target = urlObj;
+  if (isShortLink) {
+    // UpstreamFetchError propagates as-is (same as every other fetchUpstream
+    // call in this file) — the caller (albumRequest) already distinguishes
+    // retryable network/5xx failures from permanent ones. A malformed
+    // Location header throws a plain Error instead, which albumRequest's
+    // catch-all treats as a failed (non-retryable) extraction.
+    const finalUrl = await resolveRedirect(urlObj.toString(), fetchImpl);
+    target = new URL(finalUrl);
+    // The short link can point at anything Spotify shares (a track, artist,
+    // playlist, podcast episode) — only a real album page is extractable.
+    if (target.hostname.replace(/^www\./, '') !== 'open.spotify.com') return null;
+  }
+  const id = target.pathname.match(/\/album\/([A-Za-z0-9]+)/)?.[1];
   if (!id) return null;
   // The main open.spotify.com page is a bare client-rendered shell (verified
   // live — no title, no og: tags beyond og:site_name). The /embed variant is
@@ -331,6 +413,9 @@ async function extractSpotify(urlObj, fetchImpl) {
     cover,
     year:   year || null,
     tags:   [],
+    // Only set when the pasted URL was a short link — tells albumRequest to
+    // store the real album link instead of the (opaque, expiring) short code.
+    ...(isShortLink ? { canonicalUrl: `https://open.spotify.com/album/${id}` } : {}),
   };
 }
 
@@ -628,12 +713,13 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
         // Transient upstream failure — worth a client-side retry.
         return { statusCode: status, headers: jsonHeaders, body: { _error: status } };
       }
-      // Permanent upstream failure (404/403/400/…) — report as our own 422,
+      // Permanent upstream failure (404/403/400/…) — report as our own 400,
       // never the raw upstream status. Passing a bare 404 through would trip
       // fail2ban's gp-scanner jail (bans any IP producing 3 HTTP 404s), which
       // is meant to catch scanners hitting unknown paths on OUR server, not
-      // real users whose pasted link happens to 404 upstream.
-      return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+      // real users whose pasted link happens to 404 upstream. Already logged
+      // above (the warn covers every UpstreamFetchError, not just this branch).
+      return { statusCode: 400, headers: jsonHeaders, body: { _error: 'not-found' } };
     }
     logger.warn({ route: '/v1/album', service, err: err.message }, 'extraction error (treated as failed extraction)');
     extracted = null;
@@ -641,12 +727,16 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
 
   if (!extracted?.title) {
     // Fetched fine, but couldn't find an album in the response — markup
-    // changed, or this wasn't really an album URL. Not worth retrying.
-    return { statusCode: 422, headers: jsonHeaders, body: { _error: 'extraction-failed' } };
+    // changed, or this wasn't really an album URL. Not worth retrying, and
+    // — unlike the UpstreamFetchError branch above — nothing logged this yet.
+    logger.warn({ route: '/v1/album', service, url }, 'extraction found no album');
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'extraction-failed' } };
   }
 
   const serviceAlbumId = extracted.serviceAlbumId || slugFromPath(parsed.pathname);
-  const links = { [service]: { url } };
+  // A short link (canonicalUrl set by extractSpotify) is opaque and can expire
+  // — store the real album page instead of the code the user happened to paste.
+  const links = { [service]: { url: extracted.canonicalUrl || url } };
   if (service === 'spotify') links.spotify.nativeUri = `spotify:album:${serviceAlbumId}`;
 
   // Tracks whether any cross-link job actually threw (network/quota/etc.), as

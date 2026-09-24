@@ -112,6 +112,23 @@ test('share-target in browser tab resolves the overlay and highlights the card',
   await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toHaveClass(/card--highlight/);
 });
 
+// ── Link embedded in the shared text (not a bare `url` param) ──────────────────
+// Spotify's mobile "Share" sheet fills Web Share's `text` field with
+// "<Title> by <Artist> <url>" rather than putting a bare link in `url` — see
+// storage.js's parseMusicLink and app.js's boot().
+
+test('sharing "<title> by <artist> <url>" in the text field still resolves and queues the album', async ({ page, context }) => {
+  await stubApis(context);
+  const shareText = `Share Test Album by Share Artist ${SHARE_URL}`;
+
+  await page.goto(`/?text=${encodeURIComponent(shareText)}`);
+
+  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: 6000 });
+  await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: 3000 });
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: 6000 });
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toHaveClass(/card--highlight/);
+});
+
 // ── Non-success outcomes are no longer silent ─────────────────────────────────
 
 test('sharing an album that is already queued says so', async ({ page, context }) => {

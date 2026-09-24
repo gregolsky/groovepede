@@ -1,5 +1,5 @@
 import { STORAGE_KEY, DONE_KEY, PREF_SERVICE_KEY } from './config.js';
-import { SERVICES, findServiceByHost, serviceListText } from './services.js';
+import { SERVICES, findServiceByHost, isShortLinkHost, serviceListText } from './services.js';
 
 const DEFAULT_PREF_SERVICE = 'spotify';
 
@@ -151,11 +151,27 @@ export function parseMusicLink(raw) {
   // Bare 22-char Spotify album ID
   if (/^[a-zA-Z0-9]{22}$/.test(s)) return { url: `https://open.spotify.com/album/${s}`, service: 'spotify' };
 
-  if (!/^https?:\/\//.test(s))
+  // A shared string can carry more than the link itself — e.g. the Spotify
+  // app's "Share" sheet fills the Web Share `text` field with
+  // "<Title> by <Artist> <url>", not the bare URL. Pull the first http(s) URL
+  // out of it before falling through to "unsupported"; this is a no-op when
+  // `s` is already a bare URL (it already matches ^https?:// below).
+  // Known limitation: takes the FIRST URL found and doesn't disambiguate if
+  // the text happens to contain more than one — fine for every share shape
+  // seen in practice (one link per share), but a text with two URLs could
+  // pick the wrong one silently.
+  let candidate = s;
+  if (!/^https?:\/\//.test(candidate)) {
+    const embedded = candidate.match(/https?:\/\/\S+/);
+    // Trailing punctuation a sentence would add around the link ("...xyz.", "(xyz)").
+    if (embedded) candidate = embedded[0].replace(/[.,;:)\]"'!?]+$/, '');
+  }
+
+  if (!/^https?:\/\//.test(candidate))
     return { error: `Paste an album link from ${SUPPORTED()}` };
 
   let host;
-  try { host = new URL(s).hostname.replace(/^www\./, ''); }
+  try { host = new URL(candidate).hostname.replace(/^www\./, ''); }
   catch { return { error: `Paste an album link from ${SUPPORTED()}` }; }
 
   // Blocked sources (not in the service registry)
@@ -177,8 +193,11 @@ export function parseMusicLink(raw) {
   // Registry lookup — covers all supported services
   const svc = findServiceByHost(host);
   if (svc) {
-    if (svc.albumMatch(s)) return { url: s, service: svc.slug };
-    return { error: svc.nonAlbumError(s) || `Paste an album link from ${SUPPORTED()}` };
+    // A short link's destination can't be checked client-side — pass it
+    // through as-is and let the resolver's redirect-following extractor
+    // decide whether it's actually an album.
+    if (isShortLinkHost(host) || svc.albumMatch(candidate)) return { url: candidate, service: svc.slug };
+    return { error: svc.nonAlbumError(candidate) || `Paste an album link from ${SUPPORTED()}` };
   }
 
   return { error: `That site isn't supported — paste an album link from ${SUPPORTED()}` };

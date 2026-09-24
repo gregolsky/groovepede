@@ -5,7 +5,7 @@ import '@fontsource-variable/geist-mono';
 import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtistImage, fetchAlbumTracks, deezerAlbumId, TRACKS_ERROR } from './api.js';
 import { loadAlbums, saveAlbums, loadDone, saveDone, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, renderShareOverlay } from './render.js';
-import { initBeacon } from './beacon.js';
+import { initBeacon, reportFailure } from './beacon.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let activeFilter   = 'all';
@@ -99,6 +99,7 @@ async function handleAdd() {
       addError = error;
       input.classList.add('error');
       rerender();
+      reportFailure('add-failed', { route: 'manual-parse', msg: error });
     }
     return;
   }
@@ -147,6 +148,7 @@ async function handleAdd() {
     addError = 'Couldn’t find that album — double-check the link and try again.';
     loadingAdd = false;
     rerender();
+    reportFailure('add-failed', { route: 'manual-resolve', service, msg: String(rec._error) });
   }
 }
 
@@ -610,6 +612,7 @@ async function resolvePending({ summarize = false } = {}) {
           const fresh = loadAlbums();
           const pos = fresh.findIndex(a => a.id === stub.id);
           if (pos !== -1) { fresh.splice(pos, 1); saveAlbums(fresh); }
+          reportFailure('add-failed', { route: 'pending-resolve', service: stub.service, msg: String(rec._error) });
           break;
         }
       }
@@ -646,13 +649,24 @@ async function boot() {
   initBeacon();
 
   const params = new URLSearchParams(window.location.search);
-  const shared = params.get('text') || params.get('url');
+  // Which of these actually carries the link is up to the sharing app — e.g.
+  // Spotify's mobile "Share" sheet puts "<Title> by <Artist> <url>" in `text`
+  // rather than a bare URL in `url`. parseMusicLink scans the whole string for
+  // an embedded link, so joining every field means it's found regardless of
+  // which one the sender chose.
+  const shared = [params.get('text'), params.get('url'), params.get('title')]
+    .filter(Boolean).join(' ') || null;
 
   // Before ANY await: a share launch must show feedback in its first frame,
   // otherwise the app looks like it dropped the link. parseMusicLink needs no
   // network, so the source service is already known here.
   const sharedParse = shared ? parseMusicLink(shared) : null;
   if (shared) showShareOverlay('adding', { service: sharedParse.service });
+  if (shared && sharedParse.error) {
+    // Only the sanitized, static error string is reported — never the shared
+    // text itself, which can carry the album/artist name the user shared.
+    reportFailure('add-failed', { route: 'share-parse', msg: sharedParse.error });
+  }
 
   if (navigator.storage?.persist) navigator.storage.persist();
 
@@ -702,6 +716,7 @@ async function boot() {
           addError = 'Couldn’t find that album — double-check the link and try again.';
           addOpen = true;
           phase = 'error';
+          reportFailure('add-failed', { route: 'share-resolve', service, msg: String(rec._error) });
         }
       }
       window.history.replaceState({}, document.title, window.location.pathname);

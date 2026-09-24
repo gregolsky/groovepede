@@ -428,14 +428,19 @@ test('crossLinkSpotify: mints a Client Credentials token and finds the album, ca
   _resetSpotifyToken();
 });
 
-test('albumRequest: extraction failure (fetched fine, no album found) → 422, non-retryable', async () => {
+test('albumRequest: extraction failure (fetched fine, no album found) → 400 garbage, non-retryable, logged', async () => {
   const fetchImpl = async () => okText('<html><body>not an album page</body></html>');
+  const warnings = [];
   const r = await albumRequest({
     method: 'GET', origin: '', url: SPOTIFY,
     token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
+    logger: { warn: (...args) => warnings.push(args) },
   });
-  assert.equal(r.statusCode, 422);
+  assert.equal(r.statusCode, 400);
   assert.deepEqual(r.body, { _error: 'extraction-failed' });
+  // Previously silent — this is the "album added" failure a share/paste hits
+  // when the input just isn't an album; must show up in the logs.
+  assert.ok(warnings.some(([, msg]) => /no album/i.test(msg)), 'expected a warn log for the failed extraction');
 });
 
 test('albumRequest: upstream 5xx is passed through as a retryable error', async () => {
@@ -458,14 +463,17 @@ test('albumRequest: upstream 429 is passed through as a retryable error', async 
   assert.deepEqual(r.body, { _error: 429 });
 });
 
-test('albumRequest: upstream 404 is remapped to our own 422 (not passed through raw, so it never trips the 404 ban jail)', async () => {
+test('albumRequest: upstream 404 is remapped to our own 400 (not passed through raw, so it never trips the 404 ban jail), and logged', async () => {
   const fetchImpl = async () => ({ ok: false, status: 404, text: async () => '' });
+  const warnings = [];
   const r = await albumRequest({
     method: 'GET', origin: '', url: SPOTIFY,
     token: makeToken(SPOTIFY), cache: noCache, fetchImpl,
+    logger: { warn: (...args) => warnings.push(args) },
   });
-  assert.equal(r.statusCode, 422);
+  assert.equal(r.statusCode, 400);
   assert.deepEqual(r.body, { _error: 'not-found' });
+  assert.ok(warnings.some(([, msg]) => /upstream fetch failed/i.test(msg)));
 });
 
 test('albumRequest: upstream network error → 503 network', async () => {
@@ -476,6 +484,145 @@ test('albumRequest: upstream network error → 503 network', async () => {
   });
   assert.equal(r.statusCode, 503);
   assert.deepEqual(r.body, { _error: 'network' });
+});
+
+// ── Spotify short links (spotify.link / spotify.app.link) ──────────────────
+// Spotify's mobile-app "Share" sheet hands out these short codes instead of an
+// open.spotify.com URL — extractSpotify must follow the redirect before it can
+// extract anything.
+
+const redirectTo = (location, status = 307) => ({
+  ok: false, status,
+  headers: { get: (h) => (h.toLowerCase() === 'location' ? location : null) },
+  text: async () => '',
+});
+// resolveRedirect's terminal hop: the response that tells it "no further
+// redirect" — a real GET (redirect: 'manual') against the final URL.
+const okFinal = () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => '' });
+
+test('albumRequest: Spotify short link redirecting to an album is extracted and canonicalised', async () => {
+  const SHORT = 'https://spotify.link/aBcD1234';
+  const fetchImpl = async (url, opts) => {
+    if (url === SHORT) {
+      assert.equal(opts.redirect, 'manual');
+      return redirectTo('https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp');
+    }
+    // resolveRedirect's terminal check against the redirect target itself —
+    // a plain 200, no further Location header.
+    if (url === 'https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp') return okFinal();
+    if (url.includes('open.spotify.com/embed/')) return okText(spotifyEmbedPage());
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SHORT,
+    token: makeToken(SHORT), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.title, 'Global Warming');
+  // The opaque short code is never stored — the real album page is.
+  assert.equal(r.body.links.spotify.url, 'https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp');
+  assert.equal(r.body.links.spotify.nativeUri, 'spotify:album:0c0hlchA9Q66PcL7xlPPfp');
+});
+
+test('albumRequest: Spotify short link redirecting to a non-album page (track/artist/playlist) → 400 garbage, logged', async () => {
+  const SHORT = 'https://spotify.link/aBcD1234';
+  const fetchImpl = async (url) => {
+    if (url === SHORT) return redirectTo('https://open.spotify.com/track/xyz');
+    if (url === 'https://open.spotify.com/track/xyz') return okFinal();
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const warnings = [];
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SHORT,
+    token: makeToken(SHORT), cache: noCache, fetchImpl,
+    logger: { warn: (...args) => warnings.push(args) },
+  });
+  assert.equal(r.statusCode, 400);
+  assert.deepEqual(r.body, { _error: 'extraction-failed' });
+  assert.ok(warnings.some(([, msg]) => /no album/i.test(msg)));
+});
+
+test('albumRequest: Spotify short link with too many redirect hops → 400 garbage (not endlessly retried), logged', async () => {
+  const SHORT = 'https://spotify.link/loop0';
+  const fetchImpl = async (url) => {
+    const n = Number(url.match(/loop(\d+)/)?.[1] ?? 0);
+    return redirectTo(`https://spotify.link/loop${n + 1}`);
+  };
+  const warnings = [];
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SHORT,
+    token: makeToken(SHORT), cache: noCache, fetchImpl,
+    logger: { warn: (...args) => warnings.push(args) },
+  });
+  assert.equal(r.statusCode, 400);
+  // Goes through the generic "permanent upstream failure" path (like a raw
+  // 404 does), not the "fetched fine but nothing there" path — the redirect
+  // chain itself never resolved to anything fetchable.
+  assert.deepEqual(r.body, { _error: 'not-found' });
+  assert.ok(warnings.some(([, msg]) => /upstream fetch failed/i.test(msg)));
+});
+
+test('albumRequest: Spotify short link — network failure while resolving the redirect is retryable', async () => {
+  const SHORT = 'https://spotify.link/aBcD1234';
+  const fetchImpl = async () => { throw new Error('ECONNRESET'); };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SHORT,
+    token: makeToken(SHORT), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 503);
+  assert.deepEqual(r.body, { _error: 'network' });
+});
+
+test('albumRequest: spotify.app.link is also recognised as a Spotify short link', async () => {
+  const SHORT = 'https://spotify.app.link/aBcD1234';
+  const fetchImpl = async (url) => {
+    if (url === SHORT) return redirectTo('https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp');
+    if (url === 'https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp') return okFinal();
+    if (url.includes('open.spotify.com/embed/')) return okText(spotifyEmbedPage());
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SHORT,
+    token: makeToken(SHORT), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.links.spotify.url, 'https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp');
+});
+
+test('albumRequest: Spotify short link redirecting to a non-http(s) scheme is rejected without fetching it', async () => {
+  const SHORT = 'https://spotify.link/aBcD1234';
+  const fetchImpl = async (url) => {
+    if (url === SHORT) return redirectTo('javascript:alert(1)');
+    throw new Error('should never fetch a non-http(s) redirect target: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SHORT,
+    token: makeToken(SHORT), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 400);
+  assert.deepEqual(r.body, { _error: 'not-found' });
+});
+
+test('albumRequest: Spotify short link — every redirect hop shares one AbortSignal (one budget, not one per hop)', async () => {
+  const SHORT = 'https://spotify.link/hop0';
+  const signals = [];
+  const fetchImpl = async (url, opts) => {
+    signals.push(opts.signal);
+    const n = Number(url.match(/hop(\d+)/)?.[1] ?? 0);
+    if (n < 2) return redirectTo(`https://spotify.link/hop${n + 1}`);
+    return okFinal(); // terminal hop — host doesn't matter for this test
+  };
+  await albumRequest({
+    method: 'GET', origin: '', url: SHORT,
+    token: makeToken(SHORT), cache: noCache, fetchImpl,
+  });
+  assert.ok(signals.length >= 3, 'expected at least 3 hops recorded');
+  assert.ok(signals.every(s => s === signals[0]),
+    'every hop must share the same AbortSignal, not a fresh one per hop');
 });
 
 // ── Per-service extraction (through albumRequest) ───────────────────────────
@@ -548,7 +695,7 @@ test('albumRequest: Apple — rejects a lookup result whose collectionId does no
     method: 'GET', origin: '', url: APPLE_URL,
     token: makeToken(APPLE_URL), cache: noCache, fetchImpl,
   });
-  assert.equal(r.statusCode, 422);
+  assert.equal(r.statusCode, 400);
 });
 
 test('albumRequest: Tidal — extracts artist/title from og:title, splitting on the first " - "', async () => {
@@ -644,10 +791,10 @@ test('albumRequest: Deezer extraction errors when the API returns an error body 
     method: 'GET', origin: '', url: DEEZER_URL,
     token: makeToken(DEEZER_URL), cache: noCache, fetchImpl,
   });
-  assert.equal(r.statusCode, 422);
+  assert.equal(r.statusCode, 400);
 });
 
-test('albumRequest: Deezer quota-exceeded (error.code 4) is retryable, not a permanent 422', async () => {
+test('albumRequest: Deezer quota-exceeded (error.code 4) is retryable, not a permanent 400', async () => {
   const DEEZER_URL = 'https://www.deezer.com/album/1234';
   const fetchImpl = async (url) => {
     if (url.includes('api.deezer.com/album/1234')) {
