@@ -1,5 +1,5 @@
 import { STORAGE_KEY, DONE_KEY, PREF_SERVICE_KEY } from './config.js';
-import { SERVICES, findServiceByHost, isShortLinkHost, serviceListText } from './services.js';
+import { SERVICES, findServiceByHost, isShortLinkHost, isShortLinkPath, serviceListText } from './services.js';
 
 const DEFAULT_PREF_SERVICE = 'spotify';
 
@@ -170,9 +170,12 @@ export function parseMusicLink(raw) {
   if (!/^https?:\/\//.test(candidate))
     return { error: `Paste an album link from ${SUPPORTED()}` };
 
-  let host;
-  try { host = new URL(candidate).hostname.replace(/^www\./, ''); }
-  catch { return { error: `Paste an album link from ${SUPPORTED()}` }; }
+  let host, pathname;
+  try {
+    const parsed = new URL(candidate);
+    host = parsed.hostname.replace(/^www\./, '');
+    pathname = parsed.pathname;
+  } catch { return { error: `Paste an album link from ${SUPPORTED()}` }; }
 
   // Blocked sources (not in the service registry)
   if (host.includes('bandcamp.com'))
@@ -195,8 +198,12 @@ export function parseMusicLink(raw) {
   if (svc) {
     // A short link's destination can't be checked client-side — pass it
     // through as-is and let the resolver's redirect-following extractor
-    // decide whether it's actually an album.
-    if (isShortLinkHost(host) || svc.albumMatch(candidate)) return { url: candidate, service: svc.slug };
+    // decide whether it's actually an album. Some short links share their
+    // host with normal links (e.g. Spotify's /s/<code>), hence the separate
+    // path-based check alongside the host-based one.
+    if (isShortLinkHost(host) || isShortLinkPath(svc, pathname) || svc.albumMatch(candidate)) {
+      return { url: candidate, service: svc.slug };
+    }
     return { error: svc.nonAlbumError(candidate) || `Paste an album link from ${SUPPORTED()}` };
   }
 

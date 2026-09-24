@@ -625,6 +625,31 @@ test('albumRequest: Spotify short link — every redirect hop shares one AbortSi
     'every hop must share the same AbortSignal, not a fresh one per hop');
 });
 
+test('albumRequest: open.spotify.com/s/<code> is a third short-link shape (same host, path-based, relative redirect)', async () => {
+  // Confirmed live: https://open.spotify.com/s/kpXKvHx -> 302 with a
+  // RELATIVE Location ("/album/<id>?si=...&utm_source=native-share-menu"),
+  // not an absolute URL like spotify.link uses.
+  const SHORT = 'https://open.spotify.com/s/kpXKvHx';
+  const fetchImpl = async (url) => {
+    if (url === SHORT) return redirectTo('/album/3dgWhwqZHz4KSUX586c3U4?si=abc&utm_source=native-share-menu');
+    if (url === 'https://open.spotify.com/album/3dgWhwqZHz4KSUX586c3U4?si=abc&utm_source=native-share-menu') return okFinal();
+    if (url.includes('open.spotify.com/embed/')) return okText(spotifyEmbedPage({ title: 'Aeropsia', artist: 'Steve Hauschildt' }));
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const r = await albumRequest({
+    method: 'GET', origin: '', url: SHORT,
+    token: makeToken(SHORT), cache: noCache, fetchImpl,
+  });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.title, 'Aeropsia');
+  assert.equal(r.body.artist, 'Steve Hauschildt');
+  // The transient /s/ code is never stored — the real album page is.
+  assert.equal(r.body.links.spotify.url, 'https://open.spotify.com/album/3dgWhwqZHz4KSUX586c3U4');
+  assert.equal(r.body.links.spotify.nativeUri, 'spotify:album:3dgWhwqZHz4KSUX586c3U4');
+});
+
 // ── Per-service extraction (through albumRequest) ───────────────────────────
 
 test('albumRequest: Apple — extracts via iTunes lookup, upscales artwork, keeps the genre', async () => {

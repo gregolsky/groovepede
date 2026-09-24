@@ -102,6 +102,14 @@ describe('parseMusicLink', () => {
     expect(r.url).toBe('https://spotify.app.link/aBcD1234');
     expect(r.service).toBe('spotify');
   });
+  it('accepts open.spotify.com/s/<code> — a third short-link shape, same host as a normal link', () => {
+    // Confirmed live: this is what Spotify's "Share" sheet actually hands out
+    // ("native-share-menu"), redirecting to /album/<id>?si=...&utm_source=...
+    const r = parseMusicLink('https://open.spotify.com/s/kpXKvHx');
+    expect(r.url).toBe('https://open.spotify.com/s/kpXKvHx');
+    expect(r.service).toBe('spotify');
+    expect(r.error).toBeUndefined();
+  });
 
   // ── Link embedded in shared text (Spotify's Web Share "text" field) ────────
   it('extracts a Spotify URL from text sharing it alongside a title/artist', () => {

@@ -29,6 +29,11 @@ export const SERVICES = [
     // resolver, whose extractSpotify (backend/resolver-core.mjs) follows the
     // redirect and rejects anything that isn't an album.
     shortLinkHosts: ['spotify.link', 'spotify.app.link'],
+    // A THIRD short-link shape, confirmed live: the "Share" sheet's
+    // "native-share-menu" path also hands out open.spotify.com/s/<code> —
+    // same host as a normal album link, so shortLinkHosts can't catch it;
+    // only the PATH marks it as a redirect. See isShortLinkPath.
+    shortLinkPaths: [/^\/s\//],
     albumMatch: (url) => /\/album\//.test(url),
     nonAlbumError: (url) => {
       if (/\/artist\//.test(url))        return "That's an artist link — paste an album link instead";
@@ -113,6 +118,16 @@ export function findServiceByHost(host) {
 /** True when `host` is a short-link host (see SERVICES[].shortLinkHosts). */
 export function isShortLinkHost(host) {
   return _SHORT_LINK_HOSTS.has(host);
+}
+
+/**
+ * True when `pathname` matches one of `svc`'s shortLinkPaths — a short link
+ * that shares its host with normal links for the service (so isShortLinkHost
+ * can't catch it) and is only distinguishable by path shape, e.g. Spotify's
+ * open.spotify.com/s/<code> alongside a normal open.spotify.com/album/<id>.
+ */
+export function isShortLinkPath(svc, pathname) {
+  return (svc?.shortLinkPaths || []).some(re => re.test(pathname));
 }
 
 export function serviceLabel(slug) {

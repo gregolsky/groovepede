@@ -375,10 +375,15 @@ function decodeHtmlEntities(s) {
 }
 
 async function extractSpotify(urlObj, fetchImpl) {
-  // Spotify's mobile-app "Share" sheet hands out spotify.link/spotify.app.link
-  // short codes, not an open.spotify.com URL — resolve the redirect first so
-  // the rest of this function always deals with a real album URL.
-  const isShortLink = urlObj.hostname.replace(/^www\./, '') !== 'open.spotify.com';
+  // Spotify's mobile-app "Share" sheet hands out short codes instead of a
+  // direct open.spotify.com/album/<id> URL, in one of three shapes (all
+  // confirmed live): the spotify.link/spotify.app.link hosts, or — same host
+  // as a normal album link, so only the PATH gives it away —
+  // open.spotify.com/s/<code> (redirects with a relative Location, e.g.
+  // "/album/<id>?si=..."). Resolve the redirect first so the rest of this
+  // function always deals with a real album URL.
+  const host = urlObj.hostname.replace(/^www\./, '');
+  const isShortLink = host !== 'open.spotify.com' || /^\/s\//.test(urlObj.pathname);
   let target = urlObj;
   if (isShortLink) {
     // UpstreamFetchError propagates as-is (same as every other fetchUpstream
