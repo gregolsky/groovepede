@@ -32,7 +32,8 @@ function visibleAlbums() {
 }
 
 function getState() {
-  return { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress, importSummary, refreshingId };
+  // The renderer reads nothing from storage itself; everything it shows is here.
+  return { albums: loadAlbums(), done: loadDone(), activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, searchQuery, tagsExpanded, addOpen, prefService: getPreferredService(), importProgress, importSummary, refreshingId };
 }
 
 let _entrancePlayed = false;

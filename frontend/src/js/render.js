@@ -1,4 +1,4 @@
-import { loadAlbums, loadDone, filterAlbums } from './storage.js';
+import { filterAlbums } from './storage.js';
 import { SERVICES, serviceLabel, serviceListText, joinList, pickListenTarget, pickListenUrl, linkedServiceNames, isOnPreferredService } from './services.js';
 import { TRACKS_ERROR } from './api.js';
 
@@ -300,8 +300,7 @@ function renderPrefServiceSection(prefService) {
     </div>`;
 }
 
-function renderProfile(prefService) {
-  const albums = loadAlbums();
+function renderProfile(prefService, albums, done) {
   const tags   = tagsByFrequency(albums);
   return `
     <div class="profile">
@@ -311,7 +310,7 @@ function renderProfile(prefService) {
       <div class="profile-body">
         <div class="profile-stats">
           <div class="stat"><div class="stat-num">${albums.length}</div><div class="stat-label">queued</div></div>
-          <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
+          <div class="stat"><div class="stat-num green">${done}</div><div class="stat-label">listened</div></div>
           <div class="stat"><div class="stat-num">${tags.length}</div><div class="stat-label">tags</div></div>
         </div>
         ${renderPrefServiceSection(prefService)}
@@ -429,13 +428,12 @@ export function renderShareOverlay({ phase, service, album, message }) {
 
 // ── Main app ──────────────────────────────────────────────────────────────────
 
-export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary, refreshingId }) {
-  const albums  = loadAlbums();
+export function renderApp(el, { albums, done, activeFilter, loadingAdd, artistCache, trackCache, exploreIndex, addError, profileOpen, searchQuery, tagsExpanded, addOpen, prefService, importProgress, importSummary, refreshingId }) {
   // Same helper app.js resolves data-index against — see filterAlbums's comment.
   const visible = filterAlbums(albums, activeFilter, searchQuery);
 
   if (profileOpen) {
-    el.innerHTML = renderProfile(prefService);
+    el.innerHTML = renderProfile(prefService, albums, done);
     return;
   }
 
@@ -461,7 +459,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
   let html = `
     <div class="stats">
       <div class="stat"><div class="stat-num">${albums.length}</div><div class="stat-label">queued</div></div>
-      <div class="stat"><div class="stat-num green">${loadDone()}</div><div class="stat-label">listened</div></div>
+      <div class="stat"><div class="stat-num green">${done}</div><div class="stat-label">listened</div></div>
       <div class="stat"><div class="stat-num">${addedToday}</div><div class="stat-label">added today</div></div>
     </div>
     <div class="top-toolbar">

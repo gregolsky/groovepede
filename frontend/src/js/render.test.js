@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { tagsByFrequency, escapeHtml, highlightMatch, timeAgo, artistInitials, renderApp } from './render.js';
 
 describe('tagsByFrequency', () => {
@@ -163,43 +163,35 @@ describe('artistInitials', () => {
 describe('renderApp escaping', () => {
   const PAYLOAD = '<svg onload=alert(1)>';
   const baseState = {
-    activeFilter: 'all', loadingAdd: false, artistCache: {}, trackCache: {},
+    albums: [], done: 0, activeFilter: 'all', loadingAdd: false, artistCache: {}, trackCache: {},
     exploreIndex: null, addError: null, profileOpen: false, searchQuery: '',
     tagsExpanded: false, addOpen: false, prefService: 'spotify',
     importProgress: null, importSummary: null, refreshingId: null,
   };
-  const hostile = {
+  const hostileAlbum = {
     id: `x"${PAYLOAD}`, title: 'T', artist: 'A', year: PAYLOAD, tags: [PAYLOAD],
     addedAt: new Date().toISOString(), sourceUrl: 'https://open.spotify.com/album/x',
     links: { spotify: { url: 'https://open.spotify.com/album/x' } },
   };
+  const hostile = { albums: [hostileAlbum] };
 
-  beforeEach(() => {
-    vi.stubGlobal('localStorage', {
-      _store: { gp_albums: JSON.stringify([hostile]) },
-      getItem(k) { return this._store[k] ?? null; },
-      setItem(k, v) { this._store[k] = v; },
-      removeItem(k) { delete this._store[k]; },
-    });
-  });
-  afterEach(() => { vi.unstubAllGlobals(); });
 
   it('escapes tags (filter chips and card tags), year and id in the queue view', () => {
     const el = { innerHTML: '' };
-    renderApp(el, baseState);
+    renderApp(el, { ...baseState, ...hostile });
     expect(el.innerHTML).not.toContain(PAYLOAD);
     expect(el.innerHTML).not.toContain('x"<');
   });
 
   it('escapes year in the explore view', () => {
     const el = { innerHTML: '' };
-    renderApp(el, { ...baseState, exploreIndex: 0, artistCache: { A: { bio: '' } } });
+    renderApp(el, { ...baseState, ...hostile, exploreIndex: 0, artistCache: { A: { bio: '' } } });
     expect(el.innerHTML).not.toContain(PAYLOAD);
   });
 
   it('escapes the add-form error message', () => {
     const el = { innerHTML: '' };
-    renderApp(el, { ...baseState, addOpen: true, addError: PAYLOAD });
+    renderApp(el, { ...baseState, ...hostile, addOpen: true, addError: PAYLOAD });
     expect(el.innerHTML).not.toContain(PAYLOAD);
   });
 });
