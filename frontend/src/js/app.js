@@ -352,8 +352,12 @@ async function refreshAlbum(visibleIdx) {
       delete trackCache[album.id];
       prefetchExplore(merged);
       enrichWithLastfm(merged.id, merged.artist, merged.title, rerender);
+    } else if (rec._error && !isRetryableResolveError(rec._error)) {
+      // The existing data stays on screen either way. A transport failure was
+      // already reported by api.js; a permanent one (the source link now
+      // resolves to nothing) is reported here, like the add flows do.
+      reportFailure('refresh-failed', { route: 'refresh', service: album.service, msg: String(rec._error) });
     }
-    // On failure: silently keep existing data, no error surfaced
   } finally {
     refreshingId = null;
     rerender();
@@ -442,7 +446,12 @@ appEl.addEventListener('change', e => {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = evt => importData(evt.target.result);
+  reader.onerror = () => {
+    alert('Couldn’t read that file — try exporting the backup again.');
+    reportFailure('import-read-failed', { msg: reader.error?.name || 'unknown' });
+  };
   reader.readAsText(file);
+  e.target.value = ''; // so picking the same file again still fires `change`
 });
 
 // Keyboard navigation
@@ -737,7 +746,10 @@ async function boot() {
   }
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js');
+    // Offline support is optional, so a failed registration is reported and
+    // otherwise ignored (it used to be an unhandled rejection).
+    navigator.serviceWorker.register('sw.js')
+      .catch(err => reportFailure('sw-register-failed', { msg: err?.name || String(err) }));
     const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (hadController) window.location.reload();

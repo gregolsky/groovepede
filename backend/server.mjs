@@ -17,7 +17,7 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { albumRequest, artistRequest, tracksRequest, logRequest, LOG_MAX_BODY_BYTES } from './resolver-core.mjs';
+import { albumRequest, artistRequest, tracksRequest, logRequest, publicKeyStatus, LOG_MAX_BODY_BYTES } from './resolver-core.mjs';
 import { log, NOOP_LOGGER } from './logger.mjs';
 
 const PORT    = parseInt(process.env.PORT || '8787', 10);
@@ -216,6 +216,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const server = createServer((req, res) => handleRequest(req, res, { cache, logger: log }));
   server.listen(PORT, '0.0.0.0', () => {
     log.info({ port: PORT, dbPath: DB_PATH }, 'gp-resolver-pi listening');
+    // Every signed request 403s unless the key is usable; say so once, loudly,
+    // rather than only as a stream of per-request 'forbidden' lines.
+    const keyStatus = publicKeyStatus();
+    if (keyStatus === 'ok') log.info('token verification enabled');
+    else log.error({ keyStatus }, 'GP_PUBLIC_KEY unusable: every signed request will be rejected with 403');
   });
 
   // node runs as PID 1 in the container (no init, see Dockerfile) so it

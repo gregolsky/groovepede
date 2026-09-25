@@ -17,7 +17,7 @@ const {
   albumRequest, verifyToken, verifyTokenDetailed, normalizeUrl, corsHeaders, _resetPublicKey,
   artistRequest, normalizeArtist, normalizeAlbumTitle, isBlankArtistImage, pickArtistImage,
   _resetSpotifyToken, SERVICE_HOSTS, EXTRACTORS, tracksRequest, logRequest, LOG_MAX_BODY_BYTES,
-  PARTIAL_TTL_S,
+  PARTIAL_TTL_S, publicKeyStatus,
 } = core;
 _resetPublicKey(); // ensure the test key is the one loaded
 
@@ -57,6 +57,23 @@ test('verifyToken: signature bound to a different url is rejected', () => {
 
 test('verifyToken: malformed token (no dot) is rejected', () => {
   assert.equal(verifyToken('not-a-token', SPOTIFY), false);
+});
+
+test('publicKeyStatus: ok / missing / invalid, so a misconfigured key is logged at startup', () => {
+  // Every signed request 403s when the key isn't usable — server.mjs logs this
+  // once at startup so it isn't only visible as a stream of 403s.
+  const saved = process.env.GP_PUBLIC_KEY;
+  try {
+    _resetPublicKey();
+    assert.equal(publicKeyStatus(), 'ok');
+    delete process.env.GP_PUBLIC_KEY; _resetPublicKey();
+    assert.equal(publicKeyStatus(), 'missing');
+    process.env.GP_PUBLIC_KEY = 'bm90LWEta2V5'; _resetPublicKey();
+    assert.equal(publicKeyStatus(), 'invalid');
+  } finally {
+    process.env.GP_PUBLIC_KEY = saved;
+    _resetPublicKey();
+  }
 });
 
 // ── normalizeUrl ────────────────────────────────────────────────────────────
@@ -366,6 +383,41 @@ test('crossLinkSpotify: no-ops (no fetch, no error) when SPOTIFY_CLIENT_ID/SECRE
   });
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.links.spotify, undefined);
+});
+
+test('crossLinkSpotify: a token response without access_token is a logged cross-link failure, and is not cached', async () => {
+  // It used to be cached as `undefined` for an hour, which crossLinkSpotify
+  // then read as "Spotify not configured": Spotify links silently stopped.
+  process.env.SPOTIFY_CLIENT_ID = 'test-client-id';
+  process.env.SPOTIFY_CLIENT_SECRET = 'test-client-secret';
+  _resetSpotifyToken();
+  const DEEZER_URL = 'https://www.deezer.com/album/302127';
+  let mints = 0;
+  const fetchImpl = async (url) => {
+    if (url.includes('api.deezer.com/album/302127')) {
+      return okText(JSON.stringify({ title: 'Discovery', artist: { name: 'Daft Punk' }, release_date: '2001-03-07' }));
+    }
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    if (url.includes('accounts.spotify.com/api/token')) { mints++; return okText(JSON.stringify({ error: 'server_error' })); }
+    throw new Error('unexpected fetch: ' + url);
+  };
+  const warnings = [];
+  const logger = { warn: (f, m) => warnings.push({ f, m }), info() {}, error() {}, debug() {} };
+  const req = () => albumRequest({
+    method: 'GET', origin: '', url: DEEZER_URL, token: makeToken(DEEZER_URL), cache: noCache, fetchImpl, logger,
+  });
+  try {
+    const r = await req();
+    assert.equal(r.statusCode, 200); // cross-linking is best-effort; the album still resolves
+    assert.ok(warnings.some(w => w.m === 'cross-link failed' && w.f.crossLink === 'spotify'),
+      'the bad token response must be logged as a spotify cross-link failure');
+    await req();
+    assert.equal(mints, 2, 'a bad token response must not be cached');
+  } finally {
+    delete process.env.SPOTIFY_CLIENT_ID;
+    delete process.env.SPOTIFY_CLIENT_SECRET;
+    _resetSpotifyToken();
+  }
 });
 
 test('crossLinkSpotify: mints a Client Credentials token and finds the album, caching the token across calls', async () => {

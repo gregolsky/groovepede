@@ -43,6 +43,37 @@ let throttles = makeThrottles();
 /** Override throttles (tests only) — inject no-op / fake-clock instances. */
 export function _setThrottles(t) { throttles = { ...throttles, ...t }; }
 
+// ── Failure reporting ─────────────────────────────────────────────────────────
+// The rule for every touch point in this file: a failure is either returned
+// to a caller that reports it, or reported here before being swallowed — a
+// call that fails with nobody told is the one kind of failure that's never
+// debuggable. What gets reported is a transport failure: network, timeout,
+// 5xx, 429, a malformed body. An expected answer (a 404, "no such artist") is
+// data, not a failure, and isn't. Reports go to the resolver's logs via the
+// beacon (beacon.js), which dedupes per session.
+
+/** Why a fetch() or res.json() call threw. */
+function rejectionReason(err) {
+  if (err?.name === 'AbortError') return 'timeout';        // our own deadline
+  if (err instanceof SyntaxError) return 'bad-response';   // res.json() on a non-JSON body
+  return 'network';
+}
+
+/** True for a status meaning the service is failing, as opposed to answering "no". */
+const isTransportStatus = status => status === 429 || status >= 500;
+
+function reportApiFailure(route, reason) {
+  // The route goes into msg too: the beacon dedupes on kind|msg, and the same
+  // reason from two different services is two different problems.
+  reportFailure('api-failed', { route, msg: `${route} ${reason}` });
+}
+
+/** Report `res` if it's a transport failure; returns res.ok for convenience. */
+function checkResponse(route, res) {
+  if (!res.ok && isTransportStatus(res.status)) reportApiFailure(route, res.status);
+  return res.ok;
+}
+
 // ── Fetch with a deadline ─────────────────────────────────────────────────────
 // Every outbound call gets one. Without it a stalled connection never settles,
 // and whatever awaits it — the Add button's spinner, a throttle slot that
@@ -93,11 +124,18 @@ async function resolverGet(path, params, signedPayload, timeoutMs = DEFAULT_TIME
 export async function resolveAlbum(inputUrl) {
   try {
     const res = await resolverGet('/v1/album', { url: inputUrl }, inputUrl, ALBUM_TIMEOUT_MS);
-    if (!res.ok) {
+    if (!checkResponse('/v1/album', res)) {
       if (res.status === 429) return rateLimitError(res);
-      return { _error: res.status };
+      return { _error: res.status };  // a 4xx is the caller's to report, as the add outcome
     }
     const data = await res.json();
+    // Every stored record needs an id (dedupe, updates, card ids all key on
+    // it). A 200 without one is a broken response — retryable, so the link is
+    // kept as a pending stub rather than saved id-less.
+    if (!data?.id) {
+      reportApiFailure('/v1/album', 'bad-response');
+      return { _error: 'network' };
+    }
 
     return {
       id:            data.id,
@@ -110,7 +148,8 @@ export async function resolveAlbum(inputUrl) {
       addedAt:       new Date().toISOString(),
       links:         data.links || {},
     };
-  } catch {
+  } catch (err) {
+    reportApiFailure('/v1/album', rejectionReason(err));
     return { _error: 'network' };
   }
 }
@@ -171,10 +210,11 @@ async function fetchMbReleaseGenres(mbid) {
   try {
     const params = new URLSearchParams({ inc: 'genres', fmt: 'json' });
     const res = await fetchWithTimeout(`${MUSICBRAINZ_BASE}/release/${mbid}?${params}`);
-    if (!res.ok) return [];
+    if (!checkResponse('musicbrainz:release', res)) return [];
     const data = await res.json();
     return (data?.genres || []).map(g => g.name).filter(Boolean);
-  } catch {
+  } catch (err) {
+    reportApiFailure('musicbrainz:release', rejectionReason(err));
     return [];
   }
 }
@@ -184,13 +224,16 @@ export async function resolveAlbumMusicBrainz(sourceUrl, service) {
   try {
     const params = new URLSearchParams({ resource: sourceUrl, inc: 'release-rels+artist-credits', fmt: 'json' });
     const res = await fetchWithTimeout(`${MUSICBRAINZ_BASE}/url?${params}`);
-    if (!res.ok) return { _error: res.status };
+    // Reported here, not by the caller: resolveAlbumResilient returns the
+    // resolver's error when both fail, so MusicBrainz's own would be lost.
+    if (!checkResponse('musicbrainz:url', res)) return { _error: res.status };
     const data = await res.json();
     const rec  = parseMbRelease(data, sourceUrl, service);
     if (!rec) return { _error: 'not-found' };
     rec.tags = await fetchMbReleaseGenres(rec.id.slice(3)); // strip the 'mb:' prefix back to the raw mbid
     return rec;
-  } catch {
+  } catch (err) {
+    reportApiFailure('musicbrainz:url', rejectionReason(err));
     return { _error: 'network' };
   }
 }
@@ -267,11 +310,15 @@ export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate
 
 async function _lfmGet(params) {
   const p = new URLSearchParams({ ...params, api_key: LASTFM_KEY, format: 'json' });
+  const route = `lastfm:${params.method}`;
   try {
     const res = await fetchWithTimeout(LASTFM + '?' + p, {}, 8000);
-    if (!res.ok) return null;
+    if (!checkResponse(route, res)) return null;
     return await res.json();
-  } catch { return null; }
+  } catch (err) {
+    reportApiFailure(route, rejectionReason(err));
+    return null;
+  }
 }
 
 function lfmGet(params) {
@@ -331,6 +378,10 @@ export function cleanTags(rawTags, artistName) {
   const seen = new Set();
   const out = [];
   for (const raw of rawTags) {
+    // Upstream data: a malformed entry is skipped, not allowed to throw — this
+    // runs inside fire-and-forget enrichment, where a throw is only ever an
+    // unhandled rejection.
+    if (typeof raw?.name !== 'string') continue;
     let t = raw.name.toLowerCase();
     t = CANON_MAP[t] || t;
     if (t.length <= 1 || t.length > 25) continue;
@@ -424,7 +475,7 @@ export async function fetchAlbumTracks(albumId) {
       const data = await res.json();
       return data?.tracks || [];
     } catch (err) {
-      return { _networkError: err?.name === 'AbortError' ? 'timeout' : 'network' };
+      return { _networkError: rejectionReason(err) };
     }
   });
 
@@ -490,9 +541,12 @@ export async function fetchAudiodbArtistImage(artistName) {
   const data = await throttles.audiodb.run(async () => {
     try {
       const res = await fetchWithTimeout(`${AUDIODB_BASE}/search.php?s=${encodeURIComponent(artistName)}`);
-      if (!res.ok) return null;
-      return res.json();
-    } catch { return null; }
+      if (!checkResponse('audiodb:search', res)) return null;
+      return await res.json();
+    } catch (err) {
+      reportApiFailure('audiodb:search', rejectionReason(err));
+      return null;
+    }
   });
   const want  = normalizeAlbumStr(artistName);
   const match = (data?.artists || []).find(a => normalizeAlbumStr(a?.strArtist) === want);
@@ -516,10 +570,13 @@ export async function fetchDeezerArtistData(artistName, albumId) {
     try {
       const params = albumId ? { name: artistName, albumId } : { name: artistName };
       const res = await resolverGet('/v1/artist', params, `artist:${artistName}|${albumId || ''}`);
-      if (!res.ok) return res.status === 429 ? rateLimitError(res) : null;
+      if (!checkResponse('/v1/artist', res)) return res.status === 429 ? rateLimitError(res) : null;
       const data = await res.json();
       return { image: isBlankImage(data?.image) ? null : data.image, genres: data?.genres || [] };
-    } catch { return null; }
+    } catch (err) {
+      reportApiFailure('/v1/artist', rejectionReason(err));
+      return null;
+    }
   });
 }
 

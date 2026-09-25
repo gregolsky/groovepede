@@ -481,6 +481,10 @@ describe('cleanTags', () => {
     expect(cleanTags([tag('Post-Rock')])).toEqual(['post-rock']);
   });
 
+  it('skips malformed entries instead of throwing', () => {
+    expect(cleanTags([null, {}, { name: 42 }, tag('Rock')])).toEqual(['rock']);
+  });
+
   it('drops 4-digit year and 2-digit decade tags', () => {
     expect(cleanTags([tag('1990'), tag('1990s'), tag('90s'), tag('shoegaze')])).toEqual(['shoegaze']);
   });

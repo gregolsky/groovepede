@@ -42,24 +42,38 @@ const TOKEN_WINDOW_S = 300; // 5-minute replay window
 // the env var, then call _resetPublicKey()).
 
 let _publicKey;
+let _publicKeyStatus;   // 'ok' | 'missing' | 'invalid' — see publicKeyStatus()
 let _publicKeyInit = false;
 
 function getPublicKey() {
   if (_publicKeyInit) return _publicKey;
   _publicKeyInit = true;
   const raw = process.env.GP_PUBLIC_KEY;
-  if (!raw) { _publicKey = null; return null; }
+  if (!raw) { _publicKey = null; _publicKeyStatus = 'missing'; return null; }
   try {
     _publicKey = createPublicKey({ key: Buffer.from(raw, 'base64'), format: 'der', type: 'spki' });
+    _publicKeyStatus = 'ok';
   } catch {
-    console.error('GP_PUBLIC_KEY is set but could not be parsed as SPKI DER');
     _publicKey = null;
+    _publicKeyStatus = 'invalid';
   }
   return _publicKey;
 }
 
+/**
+ * How token verification is configured: 'ok', 'missing' or 'invalid'. Every
+ * signed request is rejected with 403 unless it's 'ok', so server.mjs logs
+ * this once at startup through the structured logger. It used to be a
+ * console.error on first request, outside the log stream, and a missing key
+ * wasn't reported at all.
+ */
+export function publicKeyStatus() {
+  getPublicKey();
+  return _publicKeyStatus;
+}
+
 /** Test hook — clears the cached public key so a new GP_PUBLIC_KEY is picked up. */
-export function _resetPublicKey() { _publicKeyInit = false; _publicKey = undefined; }
+export function _resetPublicKey() { _publicKeyInit = false; _publicKey = undefined; _publicKeyStatus = undefined; }
 
 /**
  * Same check as verifyToken, plus a machine-readable reason for a failure —
@@ -617,6 +631,10 @@ async function getSpotifyAppToken(fetchImpl) {
         body: 'grant_type=client_credentials',
       });
       const data = JSON.parse(text);
+      // Thrown, not cached: an undefined token would read as "not configured"
+      // in crossLinkSpotify and silently stop Spotify links for an hour. A
+      // throw surfaces as a logged 'cross-link failed' and retries next request.
+      if (!data?.access_token) throw new Error('Spotify token response had no access_token');
       _spotifyToken = { value: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 };
       return _spotifyToken.value;
     })();
