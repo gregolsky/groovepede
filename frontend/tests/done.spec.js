@@ -22,14 +22,12 @@ test('clicking Done in list view marks the album done without opening explore', 
 
   await page.click('[data-action="done"][data-index="0"]');
 
-  // Wait for the 550 ms flash animation + applyDone rerender
-  await page.waitForTimeout(700);
-
-  // The explore overlay must NOT have opened
-  await expect(page.locator('.explore')).toHaveCount(0);
-
-  // Two cards remain (the Done'd album was removed)
+  // Two cards remain once the 550ms flash + applyDone rerender finish. This
+  // retries until true, rather than sleeping a fixed 700ms and hoping.
   await expect(page.locator('.card')).toHaveCount(2);
+
+  // …and the explore overlay did NOT open along the way
+  await expect(page.locator('.explore')).toHaveCount(0);
 
   // The remaining cards should be the other two albums (not the done one)
   await expect(page.locator('.card-title').nth(0)).toContainText('Blue Lines');
@@ -51,8 +49,7 @@ test('clicking Done inside explore mode removes the album and shows the next one
   // Click Done inside explore
   await page.click('.explore [data-action="explore-done"]');
 
-  // Explore should still be open after 700 ms (showing next album)
-  await page.waitForTimeout(700);
-  await expect(page.locator('.explore')).toBeVisible();
+  // Explore stays open and moves on to the next album once the removal lands
   await expect(page.locator('.explore-album-title')).toContainText('Blue Lines');
+  await expect(page.locator('.explore')).toBeVisible();
 });

@@ -5,6 +5,15 @@ const ALBUM_ID    = 'shareTestAlbum1xxxxxx'; // 22 chars for Spotify ID
 const SHARE_URL   = `https://open.spotify.com/album/${ALBUM_ID}`;
 const RECORD_ID   = `spotify:${ALBUM_ID}`;
 
+// Cap for assertions about where the overlay ends up (visible, a phase's
+// label, gone). They retry until they pass, so a generous cap never slows a
+// passing run. It only stops a slow run from failing: under the full suite the
+// Vite dev server starves the page's timers, and the overlay's 1.05s dismissal
+// was measured landing 4-6s after the share, past the 1-6s caps these used to
+// have. The requirement being tested is that each state is eventually reached,
+// not how fast.
+const SETTLE_MS = 15_000;
+
 function makeShareAlbumResponse() {
   return {
     id: RECORD_ID,
@@ -39,12 +48,20 @@ async function stubApis(context) {
   await stubExternals(context, { resolver: makeShareAlbumResponse() });
 }
 
-/** Hold the resolver open so the loading phase can be observed. */
-async function slowResolver(context, ms = 1500) {
+/**
+ * Hold the resolver open until the test calls the returned release(), so the
+ * loading phase can be asserted without racing a clock. (It used to be a
+ * fixed 1.5s sleep: on a loaded machine the assertion chain outlasted it and
+ * saw the next phase instead.)
+ */
+async function gatedResolver(context) {
+  let release;
+  const gate = new Promise(r => { release = r; });
   await context.route('**/api.groovepede.gregolsky.pl/**', async route => {
-    await new Promise(r => setTimeout(r, ms));
+    await gate;
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeShareAlbumResponse()) });
   });
+  return release;
 }
 
 // ── The loading phase — the reason this overlay exists ─────────────────────────
@@ -52,21 +69,22 @@ async function slowResolver(context, ms = 1500) {
 test('share-target shows the adding overlay before the album resolves', async ({ page, context }) => {
   await fakeStandalone(context);
   await stubApis(context);
-  await slowResolver(context);   // registered last, so it wins over stubApis
+  const release = await gatedResolver(context);   // registered last, so it wins over stubApis
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
   // Feedback must appear while the resolver is still thinking — not after.
   const overlay = page.locator('#share-overlay');
-  await expect(overlay).toBeVisible({ timeout: 3000 });
+  await expect(overlay).toBeVisible({ timeout: SETTLE_MS });
   await expect(overlay).toHaveClass(/share-overlay--adding/);
   await expect(overlay.locator('.share-overlay__title')).toHaveText('Adding to your queue…');
   await expect(overlay.locator('.share-overlay__sub')).toHaveText('from Spotify');
   await expect(overlay.locator('.share-progress')).toBeVisible();
   await expect(overlay.locator('.share-art-cover')).toHaveCount(0);
 
-  // …and then becomes the confirmation in place.
-  await expect(overlay).toHaveClass(/share-overlay--added/, { timeout: 6000 });
+  // …and then becomes the confirmation in place, once the resolver answers.
+  release();
+  await expect(overlay).toHaveClass(/share-overlay--added/, { timeout: SETTLE_MS });
   await expect(overlay.locator('.share-art-cover')).toBeVisible();
 });
 
@@ -76,9 +94,9 @@ test('share-target shows confirmation overlay in standalone mode', async ({ page
   await fakeStandalone(context);
   await stubApis(context);
 
-  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
-  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: 6000 });
+  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: SETTLE_MS });
   await expect(page.locator('#share-overlay .share-overlay__title')).toHaveText('Share Test Album');
   await expect(page.locator('#share-overlay .share-overlay__sub')).toHaveText('Share Artist');
   await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Added to queue!');
@@ -89,11 +107,11 @@ test('share-target overlay disappears and card is highlighted when window.close(
   await stubApis(context);
   await context.addInitScript(() => { window.close = () => {}; });
 
-  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
-  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: 6000 });
-  await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: 3000 });
-  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: 1000 });
+  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: SETTLE_MS });
+  await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: SETTLE_MS });
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: SETTLE_MS });
   await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toHaveClass(/card--highlight/);
 });
 
@@ -102,13 +120,13 @@ test('share-target overlay disappears and card is highlighted when window.close(
 test('share-target in browser tab resolves the overlay and highlights the card', async ({ page, context }) => {
   await stubApis(context);
 
-  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
   // The dead time is identical in a tab, so the overlay runs there too — it just
   // fades out into the queue instead of closing the window.
-  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: 6000 });
-  await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: 3000 });
-  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: 6000 });
+  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: SETTLE_MS });
+  await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: SETTLE_MS });
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: SETTLE_MS });
   await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toHaveClass(/card--highlight/);
 });
 
@@ -121,11 +139,11 @@ test('sharing "<title> by <artist> <url>" in the text field still resolves and q
   await stubApis(context);
   const shareText = `Share Test Album by Share Artist ${SHARE_URL}`;
 
-  await page.goto(`/?text=${encodeURIComponent(shareText)}`);
+  await page.goto(`/?text=${encodeURIComponent(shareText)}`, { waitUntil: 'commit' });
 
-  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: 6000 });
-  await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: 3000 });
-  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: 6000 });
+  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: SETTLE_MS });
+  await expect(page.locator('#share-overlay')).not.toBeAttached({ timeout: SETTLE_MS });
+  await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toBeVisible({ timeout: SETTLE_MS });
   await expect(page.locator(`[id="card-${RECORD_ID}"]`)).toHaveClass(/card--highlight/);
 });
 
@@ -142,9 +160,9 @@ test('sharing an album that is already queued says so', async ({ page, context }
     }]));
   }, { keys: KEYS, url: SHARE_URL, id: RECORD_ID });
 
-  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
-  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Already in your queue!', { timeout: 6000 });
+  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Already in your queue!', { timeout: SETTLE_MS });
 });
 
 test('sharing an album already queued under a different link says so (dedupe by resolved id)', async ({ page, context }) => {
@@ -162,9 +180,9 @@ test('sharing an album already queued under a different link says so (dedupe by 
     }]));
   }, { keys: KEYS, id: RECORD_ID });
 
-  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
-  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Already in your queue!', { timeout: 6000 });
+  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Already in your queue!', { timeout: SETTLE_MS });
   await expect(page.locator('.card')).toHaveCount(1);
 });
 
@@ -174,10 +192,10 @@ test('sharing an unresolvable link explains the failure instead of doing nothing
   await context.route('**/api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
 
-  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
   const overlay = page.locator('#share-overlay');
-  await expect(overlay).toHaveClass(/share-overlay--error/, { timeout: 6000 });
+  await expect(overlay).toHaveClass(/share-overlay--error/, { timeout: SETTLE_MS });
   await expect(overlay.locator('.share-overlay__title')).toHaveText(/Couldn’t add that link/);
   await expect(overlay.locator('.share-overlay__label')).toHaveText('Tap to dismiss!');
   // Tapping dismisses it, revealing the add form with the same message.
@@ -195,10 +213,10 @@ test('sharing while the resolver is down still confirms the link was saved', asy
   await context.route('**/api.groovepede.gregolsky.pl/**', route =>
     route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
 
-  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
   const overlay = page.locator('#share-overlay');
-  await expect(overlay).toHaveClass(/share-overlay--pending/, { timeout: 10000 });
+  await expect(overlay).toHaveClass(/share-overlay--pending/, { timeout: SETTLE_MS });
   await expect(overlay.locator('.share-overlay__title')).toHaveText('Got it — saved!');
   await expect(overlay.locator('.share-overlay__label')).toHaveText('Fetching details…');
 });
@@ -207,9 +225,9 @@ test('a shared link that is not an album is rejected on the overlay', async ({ p
   await stubApis(context);
   await fakeStandalone(context);
 
-  await page.goto(`/?url=${encodeURIComponent('https://open.spotify.com/track/abc123')}`);
+  await page.goto(`/?url=${encodeURIComponent('https://open.spotify.com/track/abc123')}`, { waitUntil: 'commit' });
 
   const overlay = page.locator('#share-overlay');
-  await expect(overlay).toHaveClass(/share-overlay--error/, { timeout: 6000 });
+  await expect(overlay).toHaveClass(/share-overlay--error/, { timeout: SETTLE_MS });
   await expect(overlay.locator('.share-overlay__sub')).toContainText('track');
 });

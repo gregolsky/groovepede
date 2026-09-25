@@ -19,6 +19,12 @@ export const KEYS = {
 export const SPOTIFY_ALBUM_ID = 'abc123def456ghi789jklm';
 export const SPOTIFY_URL = `https://open.spotify.com/album/${SPOTIFY_ALBUM_ID}`;
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
+const PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+  'base64',
+);
+
 const json = (body, status = 200) => ({
   status,
   contentType: 'application/json',
@@ -53,6 +59,18 @@ export function makeAlbumResponse({ title = 'Test Album', artist = 'Test Artist'
  *        bare HTTP status to fail with. null leaves the resolver unstubbed.
  */
 export async function stubExternals(context, { resolver = makeAlbumResponse() } = {}) {
+  // Catch-all, registered FIRST so every specific route below — and any a spec
+  // adds later — takes precedence. Anything else off localhost never reaches
+  // the network: images get a 1×1 PNG, everything else is aborted. Fixture
+  // cover URLs (https://img/cover, https://example.com/cover.jpg) used to go to
+  // the real network, and since page.goto waits for the load event, a slow DNS
+  // lookup for them could hold goto past a short-lived UI state (the share
+  // overlay lasts ~1.5s) — one source of the suite's timing flakes.
+  await context.route(url => !LOCAL_HOSTS.has(url.hostname), route =>
+    route.request().resourceType() === 'image'
+      ? route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL_PNG })
+      : route.abort());
+
   // Artist images (browser-direct) — "no such artist".
   await context.route('https://www.theaudiodb.com/**', route => route.fulfill(json({ artists: null })));
   // Last.fm tags / artist info — empty payload, no tags applied.
