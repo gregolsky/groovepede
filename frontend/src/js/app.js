@@ -419,6 +419,14 @@ document.body.addEventListener('click', e => {
   }
 });
 
+// Landing images fade in once loaded and hide if they fail to load. Handled
+// here rather than with inline onload/onerror attributes in the markup, which
+// a strict Content-Security-Policy forbids. load/error don't bubble, hence
+// capture-phase listeners on the document.
+const REVEAL_IMG = 'img.landing-feature-img, img.landing-timeline-img';
+document.addEventListener('load',  e => { if (e.target.matches?.(REVEAL_IMG)) e.target.classList.add('img-loaded'); }, true);
+document.addEventListener('error', e => { if (e.target.matches?.(REVEAL_IMG)) e.target.style.visibility = 'hidden'; }, true);
+
 // Enter key in the add input
 appEl.addEventListener('keydown', e => {
   if (e.target.id === 'url-input' && e.key === 'Enter') handleAdd();
