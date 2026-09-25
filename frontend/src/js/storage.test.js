@@ -764,6 +764,49 @@ describe('updateAlbums / updateAlbum', () => {
   });
 });
 
+describe('loadAlbums in-memory cache', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', {
+      _store: {},
+      getItem(k) { return this._store[k] ?? null; },
+      setItem(k, v) { this._store[k] = v; },
+      removeItem(k) { delete this._store[k]; },
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('parses the stored string once — a second call with nothing changed skips JSON.parse', () => {
+    saveAlbums([{ id: 'a', tags: [], links: {} }]);
+    const parseSpy = vi.spyOn(JSON, 'parse');
+    loadAlbums();
+    loadAlbums();
+    expect(parseSpy).not.toHaveBeenCalled(); // saveAlbums already populated the cache
+  });
+
+  it('reparses when the raw string changes from outside saveAlbums (another tab, or a test seeding directly)', () => {
+    saveAlbums([{ id: 'a', tags: [], links: {} }]);
+    expect(loadAlbums().map(x => x.id)).toEqual(['a']);
+
+    // Bypasses saveAlbums — simulates a write this tab didn't make.
+    localStorage.setItem('gp_albums', JSON.stringify([{ id: 'b', tags: [], links: {} }]));
+    expect(loadAlbums().map(x => x.id)).toEqual(['b']);
+  });
+
+  it('throws on a direct mutation of a loaded record instead of silently corrupting the cache', () => {
+    saveAlbums([{ id: 'a', tags: [], links: {} }]);
+    const [album] = loadAlbums();
+    expect(() => { album.title = 'sneaky'; }).toThrow();
+    expect(() => { loadAlbums()[0].tags.push('x'); }).toThrow();
+    expect(() => { loadAlbums().push({ id: 'b', tags: [], links: {} }); }).toThrow();
+  });
+
+  it('updateAlbum still commits — the clone it hands to fn is mutable even though the cache is frozen', () => {
+    saveAlbums([{ id: 'a', tags: [], links: {} }]);
+    updateAlbum('a', rec => { rec.title = 'T'; });
+    expect(loadAlbums().find(x => x.id === 'a').title).toBe('T');
+  });
+});
+
 describe('mergeRefreshedAlbum', () => {
   const existing = {
     id: 'SPOTIFY_ALBUM::abc',
