@@ -972,7 +972,10 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
   // (network/timeout/non-2xx) and a JSON.parse failure on a 200 body (Deezer
   // returning HTML, a truncated body past MAX_RESPONSE_BYTES, a captive
   // portal) both used to fall into one catch and become an unlogged, identical
-  // 422 — indistinguishable from "this album genuinely has no tracks".
+  // not-found — indistinguishable from "this album genuinely has no tracks".
+  // Permanent failures answer 400, the same as /v1/album: the client treats
+  // every non-2xx here alike, and one status per meaning across endpoints is
+  // one less thing to keep in sync (fail2ban only bans 404s, never these).
   let text;
   try {
     text = await fetchUpstream(`${DEEZER_BASE}/album/${albumId}`, fetchImpl);
@@ -987,10 +990,10 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
       }
       // Same fail2ban-safety remap as albumRequest — never pass a bare
       // upstream 404/403/400 through as our own HTTP status.
-      return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+      return { statusCode: 400, headers: jsonHeaders, body: { _error: 'not-found' } };
     }
     logger.warn({ route: '/v1/tracks', albumId, err: err.message }, 'unexpected fetch error');
-    return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'not-found' } };
   }
 
   let data;
@@ -999,7 +1002,7 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
   } catch (err) {
     logger.warn({ route: '/v1/tracks', albumId, bodyLen: text.length, err: err.message },
       'tracks response unparseable');
-    return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'not-found' } };
   }
 
   if (data?.error) {
@@ -1007,7 +1010,7 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
     // not a real 429 — treat it as retryable rather than "no such album".
     if (data.error.code === 4) return { statusCode: 429, headers: jsonHeaders, body: { _error: 429 } };
     logger.warn({ route: '/v1/tracks', albumId, deezerErrorCode: data.error.code }, 'deezer error envelope');
-    return { statusCode: 422, headers: jsonHeaders, body: { _error: 'not-found' } };
+    return { statusCode: 400, headers: jsonHeaders, body: { _error: 'not-found' } };
   }
 
   const tracks = (data?.tracks?.data || []).map(t => ({

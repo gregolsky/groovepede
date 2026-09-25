@@ -1027,23 +1027,23 @@ test('tracksRequest: Deezer quota-exceeded envelope (HTTP-200, error.code 4) →
   assert.deepEqual(r.body, { _error: 429 });
 });
 
-test('tracksRequest: unknown album (Deezer error envelope, non-quota) → 422 not-found', async () => {
+test('tracksRequest: unknown album (Deezer error envelope, non-quota) → 400 not-found', async () => {
   const fetchImpl = async () => okText(JSON.stringify({ error: { code: 800, message: 'no data' } }));
   const r = await tracksRequest({
     method: 'GET', origin: '', albumId: '999999999',
     token: tracksToken('999999999'), cache: noCache, fetchImpl,
   });
-  assert.equal(r.statusCode, 422);
+  assert.equal(r.statusCode, 400);
   assert.deepEqual(r.body, { _error: 'not-found' });
 });
 
-test('tracksRequest: upstream 404 is remapped to our own 422 (never trips the ban jail)', async () => {
+test('tracksRequest: upstream 404 is remapped to our own 400 (never trips the ban jail)', async () => {
   const fetchImpl = async () => ({ ok: false, status: 404, text: async () => '' });
   const r = await tracksRequest({
     method: 'GET', origin: '', albumId: '302127',
     token: tracksToken('302127'), cache: noCache, fetchImpl,
   });
-  assert.equal(r.statusCode, 422);
+  assert.equal(r.statusCode, 400);
   assert.deepEqual(r.body, { _error: 'not-found' });
 });
 
@@ -1127,7 +1127,7 @@ test('tracksRequest: a response truncated at MAX_RESPONSE_BYTES fails to parse, 
     method: 'GET', origin: '', albumId: '302127',
     token: tracksToken('302127'), cache: noCache, fetchImpl, logger,
   });
-  assert.equal(r.statusCode, 422);
+  assert.equal(r.statusCode, 400);
   assert.deepEqual(r.body, { _error: 'not-found' });
   assert.ok(warnings.some(w => w.msg === 'tracks response unparseable'),
     'a truncated/unparseable body must be logged, not silently remapped');
