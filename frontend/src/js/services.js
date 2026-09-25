@@ -200,3 +200,83 @@ export function buildSearchUrl(slug, artist, title) {
   const svc = SERVICES.find(s => s.slug === slug);
   return svc ? svc.searchUrl(artist, title) : null;
 }
+
+// ── Choosing the link to open ─────────────────────────────────────────────────
+
+/**
+ * The link the Listen button will actually open, together with the service it
+ * belongs to. The service matters for the label: when the album isn't on the
+ * user's preferred service the button names the one it will open instead,
+ * rather than silently sending them somewhere unexpected.
+ *
+ * Exact links (from the resolver — a real album page) always win over a
+ * search link (a best-effort "search this service" URL built client-side from
+ * artist+title, for a service the resolver couldn't cross-link to). `exact`
+ * tells the caller which kind it got, since a search result isn't guaranteed
+ * to be the right album the way an exact link is.
+ *
+ * @returns {{ url: string|null, service: string|null, exact: boolean }}
+ *   service is null only when falling back to a pasted URL of unknown service.
+ */
+export function pickListenTarget(album, prefService) {
+  const links = album.links || {};
+
+  // 1. preferred service, exact — nativeUri then web url
+  if (links[prefService]?.nativeUri) return { url: links[prefService].nativeUri, service: prefService, exact: true };
+  if (links[prefService]?.url)       return { url: links[prefService].url,       service: prefService, exact: true };
+
+  // 2. any service, exact — nativeUri then web url
+  for (const [slug, entry] of Object.entries(links)) {
+    if (entry?.nativeUri) return { url: entry.nativeUri, service: slug, exact: true };
+  }
+  for (const [slug, entry] of Object.entries(links)) {
+    if (entry?.url) return { url: entry.url, service: slug, exact: true };
+  }
+
+  // 3. no exact cross-service link at all — the exact URL the user originally
+  // pasted still beats a search fallback (an exact link they know is right
+  // outranks a guess), so check it before ever reaching the search tiers.
+  if (Object.keys(links).length === 0 && album.sourceUrl) {
+    return { url: album.sourceUrl, service: album.service || null, exact: true };
+  }
+
+  // 4 & 5. search fallback — only meaningful once artist+title are actually
+  // known (a pending/sparse record has nothing worth searching for).
+  if (album.artist && album.title) {
+    const prefSearch = buildSearchUrl(prefService, album.artist, album.title);
+    if (prefSearch) return { url: prefSearch, service: prefService, exact: false };
+
+    // prefService isn't in the registry — e.g. a preference saved before
+    // Amazon Music/SoundCloud were dropped. Fall back to a known-good service
+    // rather than giving up on a search link entirely.
+    const fallback = SERVICES[0].slug;
+    const anySearch = buildSearchUrl(fallback, album.artist, album.title);
+    if (anySearch) return { url: anySearch, service: fallback, exact: false };
+  }
+
+  // 6. last resort — the link the user originally pasted (links is non-empty
+  // here, just missing a usable url/nativeUri on every entry — vanishingly
+  // rare, but the source link is still the right thing to fall back to)
+  return { url: album.sourceUrl || null, service: album.sourceUrl ? (album.service || null) : null, exact: true };
+}
+
+export function pickListenUrl(album, prefService) {
+  return pickListenTarget(album, prefService).url;
+}
+
+/** Display names of every service this album has a usable link for. */
+export function linkedServiceNames(album) {
+  return Object.entries(album.links || {})
+    .filter(([, e]) => e?.url || e?.nativeUri)
+    .map(([slug]) => serviceLabel(slug) || slug);
+}
+
+/**
+ * True when the album has a usable link (url or nativeUri) for the preferred
+ * service. Used to decide whether to show the Listen button as enabled or
+ * disabled (with an X) — avoids silently opening a different service.
+ */
+export function isOnPreferredService(album, prefService) {
+  const e = album.links?.[prefService];
+  return !!(e && (e.url || e.nativeUri));
+}
