@@ -22,7 +22,40 @@ export function upgradeAlbumRecord(rec) {
   return { ...rec, sourceUrl: spotifyUrl || rec.sourceUrl || null, legacyId: spotifyId, links };
 }
 
-export function loadAlbums()  { try { return (JSON.parse(localStorage.getItem(STORAGE_KEY)) || []).map(upgradeAlbumRecord); } catch { return []; } }
+/**
+ * One id per album, whatever era saved it. Spotify records have carried three
+ * id shapes over the app's lifetime — a bare 22-char id (the original
+ * login-era records), `SPOTIFY_ALBUM::<id>` (the Odesli era), and
+ * `spotify:<id>` (the current resolver) — so the same album saved twice
+ * across eras compared as two albums and was queued twice. Every other id
+ * (`mb:`, `apple:`, `pending:`, …) is already canonical.
+ */
+export function canonicalAlbumId(id) {
+  if (typeof id !== 'string') return id;
+  if (/^[A-Za-z0-9]{22}$/.test(id)) return `spotify:${id}`;
+  const odesli = id.match(/^SPOTIFY_ALBUM::([A-Za-z0-9]+)$/);
+  return odesli ? `spotify:${odesli[1]}` : id;
+}
+
+/**
+ * Bring stored records up to the current shape: the v1 links upgrade, a
+ * canonical id, and — since canonical ids can reveal duplicates saved under
+ * different eras' ids — one record per album (the earliest-saved one wins).
+ * Runs on every read; the result is persisted by the next write.
+ */
+function normalizeAlbums(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const rec of raw.map(upgradeAlbumRecord)) {
+    const id = canonicalAlbumId(rec.id);
+    if (id != null && seen.has(id)) continue;
+    if (id != null) seen.add(id);
+    out.push(id === rec.id ? rec : { ...rec, id });
+  }
+  return out;
+}
+
+export function loadAlbums()  { try { return normalizeAlbums(JSON.parse(localStorage.getItem(STORAGE_KEY)) || []); } catch { return []; } }
 export function saveAlbums(a) { localStorage.setItem(STORAGE_KEY, JSON.stringify(a)); }
 /**
  * Read the stored queue, apply `fn`, and save — all synchronously, so no await
@@ -162,7 +195,7 @@ export function parseBackup(text) {
     return stub;
   }).filter(Boolean);
 
-  return { albums, done: data.done };
+  return { albums: normalizeAlbums(albums), done: data.done };
 }
 
 /**

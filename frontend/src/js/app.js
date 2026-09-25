@@ -697,10 +697,12 @@ async function boot() {
       } else {
         const rec = await resolveAlbumResilient(url, { service });
         if (!rec._error) {
-          saveResolvedAlbum(rec);
+          // Short links make every share's URL unique, so the sourceUrl check
+          // above rarely catches a repeat — the resolved id is what does.
+          const added = saveResolvedAlbum(rec);
           highlightId = rec.id;
           addedMeta = rec;
-          phase = 'added';
+          phase = added ? 'added' : 'exists';
         } else if (isRetryableResolveError(rec._error)) {
           // Resolver + MusicBrainz both failed with a retryable error — save pending stub so share isn't lost
           const stub = makePendingRecord(url, service);

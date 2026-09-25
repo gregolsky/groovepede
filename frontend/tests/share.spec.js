@@ -147,6 +147,27 @@ test('sharing an album that is already queued says so', async ({ page, context }
   await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Already in your queue!', { timeout: 6000 });
 });
 
+test('sharing an album already queued under a different link says so (dedupe by resolved id)', async ({ page, context }) => {
+  // Short links (spotify.link, open.spotify.com/s/…) and ?si= tracking make
+  // every share's URL unique, so the sourceUrl check can't catch a repeat —
+  // the resolved album id has to.
+  await fakeStandalone(context);
+  await stubApis(context);
+  await context.addInitScript(({ keys, id }) => {
+    localStorage.setItem(keys.ALBUMS, JSON.stringify([{
+      id, title: 'Share Test Album', artist: 'Share Artist',
+      sourceUrl: 'https://open.spotify.com/s/someOtherShareCode',
+      cover: 'https://img/cover', year: '2024', tags: [], addedAt: new Date().toISOString(),
+      links: { spotify: { url: 'https://open.spotify.com/album/x', nativeUri: null } },
+    }]));
+  }, { keys: KEYS, id: RECORD_ID });
+
+  await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`);
+
+  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Already in your queue!', { timeout: 6000 });
+  await expect(page.locator('.card')).toHaveCount(1);
+});
+
 test('sharing an unresolvable link explains the failure instead of doing nothing', async ({ page, context }) => {
   await fakeStandalone(context);
   await stubApis(context);

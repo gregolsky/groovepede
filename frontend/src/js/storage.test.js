@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum, filterAlbums, updateAlbums, updateAlbum } from './storage.js';
+import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum, filterAlbums, updateAlbums, updateAlbum, canonicalAlbumId } from './storage.js';
 import { SERVICES } from './services.js';
 
 describe('filterAlbums', () => {
@@ -454,6 +454,32 @@ describe('loadAlbums migration', () => {
   it('returns empty array when storage is empty', () => {
     expect(loadAlbums()).toEqual([]);
   });
+
+  it('canonicalises legacy ids and collapses records that turn out to be the same album', () => {
+    // A queue carrying the three Spotify id eras at once — the same album
+    // saved long ago (bare id) and again recently (spotify:<id>) is one album.
+    localStorage.setItem('gp_albums', JSON.stringify([
+      { id: '65mmHlZPWc1L3wkfWzG0n9', title: 'Functional Designs', artist: 'Deepchord', tags: [], links: {}, sourceUrl: 'https://open.spotify.com/album/65mmHlZPWc1L3wkfWzG0n9' },
+      { id: 'SPOTIFY_ALBUM::4D18mfFBl73AN5URPMV083', title: 'Underneath My Tears', artist: 'Betwixt The Stars', tags: [], links: {}, sourceUrl: 'https://open.spotify.com/album/4D18mfFBl73AN5URPMV083' },
+      { id: 'spotify:65mmHlZPWc1L3wkfWzG0n9', title: 'Functional Designs', artist: 'Deepchord', tags: [], links: {}, sourceUrl: 'https://open.spotify.com/album/65mmHlZPWc1L3wkfWzG0n9?si=x' },
+    ]));
+    const ids = loadAlbums().map(a => a.id);
+    expect(ids).toEqual(['spotify:65mmHlZPWc1L3wkfWzG0n9', 'spotify:4D18mfFBl73AN5URPMV083']);
+  });
+});
+
+describe('canonicalAlbumId', () => {
+  it('maps every legacy Spotify id shape to spotify:<id>', () => {
+    expect(canonicalAlbumId('65mmHlZPWc1L3wkfWzG0n9')).toBe('spotify:65mmHlZPWc1L3wkfWzG0n9');
+    expect(canonicalAlbumId('SPOTIFY_ALBUM::4D18mfFBl73AN5URPMV083')).toBe('spotify:4D18mfFBl73AN5URPMV083');
+    expect(canonicalAlbumId('spotify:0KujZH5TNJs8KcFNvkvahF')).toBe('spotify:0KujZH5TNJs8KcFNvkvahF');
+  });
+
+  it('leaves every other id alone', () => {
+    for (const id of ['mb:9d7b0c1a', 'apple:1097861328', 'deezer:302127', 'pending:https://open.spotify.com/album/x', null]) {
+      expect(canonicalAlbumId(id)).toBe(id);
+    }
+  });
 });
 
 describe('serializeBackup / parseBackup', () => {
@@ -681,6 +707,16 @@ describe('parseBackup sanitizes untrusted records', () => {
   it('drops entries that are not objects', () => {
     const { albums } = parseBackup(wrap([null, 'str', 5, []]));
     expect(albums).toHaveLength(0);
+  });
+
+  it('canonicalises ids and drops cross-era duplicates on import', () => {
+    const rec = (id, url) => ({ id, title: 'T', artist: 'A', tags: [], sourceUrl: url, links: {} });
+    const { albums } = parseBackup(wrap([
+      rec('65mmHlZPWc1L3wkfWzG0n9', 'https://open.spotify.com/album/65mmHlZPWc1L3wkfWzG0n9'),
+      rec('SPOTIFY_ALBUM::4D18mfFBl73AN5URPMV083', 'https://open.spotify.com/album/4D18mfFBl73AN5URPMV083'),
+      rec('spotify:65mmHlZPWc1L3wkfWzG0n9', 'https://open.spotify.com/album/65mmHlZPWc1L3wkfWzG0n9?si=x'),
+    ]));
+    expect(albums.map(a => a.id)).toEqual(['spotify:65mmHlZPWc1L3wkfWzG0n9', 'spotify:4D18mfFBl73AN5URPMV083']);
   });
 
   it('keeps an ordinary record intact', () => {
