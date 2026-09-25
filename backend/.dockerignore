@@ -1,9 +1,16 @@
-# Allowlist: only what the Dockerfile COPYs belongs in the build context —
-# package*.json and the (non-test) .mjs sources. Everything else stays out,
-# including .env and data/ (certbot keys, the sqlite cache), which never need
-# to reach the Docker daemon at all.
-*
-!package.json
-!package-lock.json
-!*.mjs
+# Denylist, not an allowlist: with `COPY *.mjs` in the Dockerfile, any `!`
+# re-include pattern makes BuildKit walk every directory to look for matches —
+# including data/certbot/conf/accounts, which certbot creates root-only, so the
+# build dies with "permission denied" on the Pi. A plain exclude of data/ is
+# never descended into.
+#
+# Keep secrets (.env, data/: certbot keys, the sqlite cache) out of the build
+# context; the rest is just weight the Dockerfile never COPYs.
+data
+.env
+deploy.env
+node_modules
 *.test.mjs
+ansible
+nginx
+fail2ban
