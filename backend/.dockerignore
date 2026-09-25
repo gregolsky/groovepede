@@ -1,0 +1,9 @@
+# Allowlist: only what the Dockerfile COPYs belongs in the build context —
+# package*.json and the (non-test) .mjs sources. Everything else stays out,
+# including .env and data/ (certbot keys, the sqlite cache), which never need
+# to reach the Docker daemon at all.
+*
+!package.json
+!package-lock.json
+!*.mjs
+*.test.mjs

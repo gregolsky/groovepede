@@ -10,9 +10,13 @@ Odesli's public API — what this resolver proxied wholesale until 2026-08 — w
 deprecated (`401 PUBLIC_API_ACCESS_DEPRECATED`); see `resolver-core.mjs`'s
 top-of-file comment and git history for the retired proxy code.
 
-`resolver-core.mjs` owns ECDSA token verification, CORS, host allowlist,
-per-service extraction, and cross-linking; `server.mjs` is the node:http +
-node:sqlite adapter around it.
+`resolver-core.mjs` is the entry point: the request handlers and the shared
+request pipeline, re-exporting the rest — `auth.mjs` (ECDSA token verification,
+CORS), `upstream.mjs` (bounded upstream fetches, redirects), `extractors.mjs`
+(host allowlist, per-service extraction) and `crosslink.mjs` (cross-service
+links). `server.mjs` is the node:http + node:sqlite adapter around it. The
+Dockerfile copies every non-test `.mjs`, so a new module needs no Dockerfile
+change.
 
 ## Architecture
 

@@ -7,7 +7,7 @@
 // pure client-rendered JS shells with no server-rendered metadata at all
 // (verified live — no og: tags, no JSON-LD, and SoundCloud's oEmbed endpoint
 // 404s outright), so the resolver has no way to extract a title/artist from
-// either and neither can be supported. See backend/resolver-core.mjs.
+// either and neither can be supported. See backend/extractors.mjs.
 //
 // `searchUrl(artist, title)` builds a search-results link, used when an album
 // doesn't have an exact cross-service link (see pickListenTarget in render.js)
@@ -26,7 +26,7 @@ export const SERVICES = [
     // instead of an open.spotify.com URL. What it points to can't be told
     // client-side (that needs following an HTTP redirect) — isShortLinkHost
     // makes parseMusicLink skip albumMatch for these and defer to the
-    // resolver, whose extractSpotify (backend/resolver-core.mjs) follows the
+    // resolver, whose extractSpotify (backend/extractors.mjs) follows the
     // redirect and rejects anything that isn't an album.
     shortLinkHosts: ['spotify.link', 'spotify.app.link'],
     // A THIRD short-link shape, confirmed live: the "Share" sheet's
