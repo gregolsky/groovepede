@@ -18,7 +18,7 @@ export const COVERART_BASE     = 'https://coverartarchive.org';
 
 // Per-service throttle policy. minIntervalMs = 60_000 / rpm (with headroom).
 // isRateLimited / retryAfterOf are wired in api.js per-service.
-export const THROTTLE = {
+const PROD_THROTTLE = {
   // Our own resolver: nginx allows 10r/s per IP; 1 100 ms ≈ 54/min — comfortably under it.
   resolver:    { minIntervalMs: 1_100,  cooldownMs: 60_000, maxCooldownMs: 300_000 },
   // MusicBrainz: ~1 req/s guideline; 1 200 ms is safe.
@@ -30,6 +30,17 @@ export const THROTTLE = {
   // Deezer via our own resolver — nginx allows 10r/s; 500 ms is well under.
   deezer:      { minIntervalMs:   500,  cooldownMs: 30_000, maxCooldownMs: 300_000 },
 };
+
+// e2e (npm run test:e2e, `vite --mode e2e`) stubs every remote host, so the
+// real-world rate limits above only slow the suite down for nothing — every
+// stubbed request paces itself against the resolver/Last.fm/Deezer intervals
+// even though there's no quota on the other end. minIntervalMs is cut to 10ms;
+// cooldownMs/maxCooldownMs stay put so a spec that deliberately triggers a 429
+// still exercises real cooldown behaviour. Dead code in the production
+// bundle — import.meta.env.MODE is inlined and bundled out by Vite.
+export const THROTTLE = import.meta.env.MODE === 'e2e'
+  ? Object.fromEntries(Object.entries(PROD_THROTTLE).map(([k, v]) => [k, { ...v, minIntervalMs: 10 }]))
+  : PROD_THROTTLE;
 
 // TheAudioDB — artist images, called directly from the browser (it sends
 // Access-Control-Allow-Origin: *). `123` is the free public key documented in
