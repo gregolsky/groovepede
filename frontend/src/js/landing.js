@@ -1,4 +1,5 @@
 import { serviceListText } from './services.js';
+import { html } from './html.js';
 
 /**
  * The empty-queue landing page: hero, feature cards, extras and the
@@ -8,7 +9,7 @@ import { serviceListText } from './services.js';
  * builds (it also appears in the populated queue's toolbar).
  */
 export function renderLanding(addSection) {
-  return `
+  return html`
     <div class="landing">
       <div class="landing-hero">
         <div class="landing-hero-text">

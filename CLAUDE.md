@@ -61,7 +61,7 @@ Resolver itself needs no API key from client's perspective — see `backend/READ
 ## Conventions
 
 - All rendering is string-based HTML concat in `render.js` — no DOM manipulation elsewhere
-- Every interpolated value in `render.js` goes through `escapeHtml()` (`attr()` = same). Records come from imported backups + Last.fm tags → never trust any field. Imported records validated at boundary by `sanitizeRecord()` (storage.js); Listen opens only `isSafeLinkUrl()` URLs (services.js)
+- Markup in `render.js`/`landing.js` built only with the `html` tagged template (`html.js`): escapes every interpolated value unless it's an `html`/`raw()` fragment. Never plain template literal for markup, never `raw()` on data. Records come from imported backups + Last.fm → never trust any field. Imported records validated at boundary by `sanitizeRecord()` (storage.js); Listen opens only `isSafeLinkUrl()` URLs (services.js)
 - State lives in module-level vars in `app.js`; `rerender()` rebuilds full UI
 - Queue changes go through `updateAlbums(fn)` / `updateAlbum(id, fn)` (storage.js) — synchronous read-modify-write. Never `loadAlbums()` → `await` → `saveAlbums()`: stale snapshot undoes changes made during the await
 - Album ids canonical: `canonicalAlbumId()` maps legacy Spotify id shapes to `spotify:<id>`; dedupe keys on id, not `sourceUrl` (short links make every share URL unique)

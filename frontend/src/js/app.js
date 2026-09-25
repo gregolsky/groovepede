@@ -520,7 +520,7 @@ function showShareOverlay(phase, data = {}) {
   // a stutter at precisely the moment this thing exists to reassure. The scrim
   // appears instantly; only the cover and badge animate, and by then boot is done.
   _shareEl.className = `share-overlay--${phase}`;
-  _shareEl.innerHTML = renderShareOverlay({ phase, ...data });
+  _shareEl.innerHTML = String(renderShareOverlay({ phase, ...data }));
 }
 
 /** Apply a terminal phase, honouring the minimum visible time. */

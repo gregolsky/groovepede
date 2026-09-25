@@ -1,19 +1,24 @@
 import { filterAlbums } from './storage.js';
 import { renderLanding } from './landing.js';
-import { SERVICES, serviceLabel, serviceListText, joinList, pickListenTarget, pickListenUrl, linkedServiceNames, isOnPreferredService } from './services.js';
+import { SERVICES, serviceLabel, serviceListText, joinList, pickListenTarget, pickListenUrl, linkedServiceNames, isOnPreferredService, isWebUrl } from './services.js';
 import { TRACKS_ERROR } from './api.js';
+import { html, raw } from './html.js';
+
+// Every template in this module is an html`` template: interpolated values
+// are escaped unless they're html``/raw() fragments themselves (see html.js).
+// Never build markup with a plain template literal here.
 
 // Last.fm icon — stylised "lfm" scrobble mark
 function lastfmIcon(w, h) {
-  return `<svg width="${w}" height="${h}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+  return html`<svg width="${w}" height="${h}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <path d="M11.07 15.73l-.7-1.9s-1.14 1.27-2.84 1.27c-1.5 0-2.57-1.31-2.57-3.4 0-2.68 1.35-3.64 2.68-3.64 1.92 0 2.52 1.24 3.04 2.84l.7 2.12c.7 2.12 2.02 3.82 5.8 3.82 2.72 0 4.56-1.68 4.56-3.84 0-2.24-1.28-3.4-3.68-3.96l-1.12-.24c-1.24-.28-1.6-.76-1.6-1.56 0-.92.72-1.46 1.88-1.46 1.28 0 1.96.48 2.08 1.64l2.66-.32c-.24-2.32-1.8-3.28-4.6-3.28-2.4 0-4.48 1.12-4.48 3.76 0 1.8.88 2.96 3.08 3.48l1.2.28c1.44.32 2.08.88 2.08 1.88 0 1.12-.96 1.76-2.28 1.76-2.2 0-3.08-1.16-3.6-2.72l-.72-2.12C11.67 8.17 10.23 6.5 7.15 6.5 3.87 6.5 2 8.9 2 11.73c0 2.68 1.44 5.32 5.27 5.32 2.16 0 3.8-1.32 3.8-1.32z"/>
   </svg>`;
 }
 
-const CHECKMARK_SVG = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>`;
-const PLAY_SVG      = `<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>`;
-const X_SVG         = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>`;
-const SEARCH_SVG    = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/></svg>`;
+const CHECKMARK_SVG = raw(`<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>`);
+const PLAY_SVG      = raw(`<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>`);
+const X_SVG         = raw(`<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>`);
+const SEARCH_SVG    = raw(`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/></svg>`);
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
@@ -50,27 +55,13 @@ export function tagsByFrequency(albums) {
   return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
 }
 
-export function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
+/** `text` with the first case-insensitive match of `query` wrapped in <mark>. */
 export function highlightMatch(text, query) {
-  if (!query) return escapeHtml(text);
-  const q = query.trim().toLowerCase();
-  if (!q) return escapeHtml(text);
-  const idx = text.toLowerCase().indexOf(q);
-  if (idx === -1) return escapeHtml(text);
-  return escapeHtml(text.slice(0, idx))
-    + '<mark class="hl">' + escapeHtml(text.slice(idx, idx + q.length)) + '</mark>'
-    + escapeHtml(text.slice(idx + q.length));
+  const q = (query || '').trim().toLowerCase();
+  const idx = q ? text.toLowerCase().indexOf(q) : -1;
+  if (idx === -1) return html`${text}`;
+  return html`${text.slice(0, idx)}<mark class="hl">${text.slice(idx, idx + q.length)}</mark>${text.slice(idx + q.length)}`;
 }
-
-// Attribute values get the same full escape as text: a partial escape (just
-// & and ") is safe inside a double-quoted attribute, but it leaves two rules for
-// "which values need which escape", and that split is how C1 slipped through.
-const attr = escapeHtml;
 
 /**
  * Render the Listen button for a resolved album.
@@ -98,21 +89,21 @@ function renderListenBtn(album, prefService, { showService = false } = {}) {
 
   if (isOnPreferredService(album, prefService)) {
     const url   = pickListenUrl(album, prefService);
-    const label = showService ? `Listen on ${escapeHtml(prefName)}` : 'Listen';
-    return `<button class="btn btn-listen" data-action="listen" data-url="${attr(url)}" title="${attr(`Opens this album in ${prefName}`)}">${PLAY_SVG} ${label}</button>`;
+    const label = showService ? `Listen on ${prefName}` : 'Listen';
+    return html`<button class="btn btn-listen" data-action="listen" data-url="${url}" title="${`Opens this album in ${prefName}`}">${PLAY_SVG} ${label}</button>`;
   }
 
   const target = pickListenTarget(album, prefService);
   if (!target.url) {
-    return `<button class="btn btn-listen btn-listen--unavailable" disabled title="${attr(`No link on ${prefName} or any other supported service yet — try Refresh details.`)}">${X_SVG} No link yet</button>`;
+    return html`<button class="btn btn-listen btn-listen--unavailable" disabled title="${`No link on ${prefName} or any other supported service yet — try Refresh details.`}">${X_SVG} No link yet</button>`;
   }
 
   const altName = target.service ? (serviceLabel(target.service) || target.service) : '';
 
   if (!target.exact) {
     const tip = `Not on ${prefName} — this searches for it on ${altName || 'another service'} instead of opening the album directly.`;
-    const label = altName ? `Find on ${escapeHtml(altName)}` : 'Find';
-    return `<button class="btn btn-listen btn-listen--search" data-action="listen" data-url="${attr(target.url)}" title="${attr(tip)}">${SEARCH_SVG} ${label}</button>`;
+    const label = altName ? `Find on ${altName}` : 'Find';
+    return html`<button class="btn btn-listen btn-listen--search" data-action="listen" data-url="${target.url}" title="${tip}">${SEARCH_SVG} ${label}</button>`;
   }
 
   const elsewhere = linkedServiceNames(album);
@@ -122,19 +113,19 @@ function renderListenBtn(album, prefService, { showService = false } = {}) {
   // In the list the service name stands alone — the play icon already says
   // "listen", and "Listen on YouTube Music" squeezes the album title on a
   // phone. The explore card has room for the full phrase.
-  const altLabel = altName ? (showService ? `Listen on ${escapeHtml(altName)}` : escapeHtml(altName)) : 'Listen';
-  return `<button class="btn btn-listen btn-listen--alt" data-action="listen" data-url="${attr(target.url)}" title="${attr(tip)}">${PLAY_SVG} ${altLabel}</button>`;
+  const altLabel = altName ? (showService ? `Listen on ${altName}` : altName) : 'Listen';
+  return html`<button class="btn btn-listen btn-listen--alt" data-action="listen" data-url="${target.url}" title="${tip}">${PLAY_SVG} ${altLabel}</button>`;
 }
 
 // ── Header actions ───────────────────────────────────────────────────────────
 
 export function renderHeaderActions(el) {
-  el.innerHTML = `
+  el.innerHTML = String(html`
     <button class="profile-icon-btn" data-action="open-profile" aria-label="Profile &amp; settings" title="Profile, listening service, backups">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
       </svg>
-    </button>`;
+    </button>`);
 }
 
 // ── Empty-state hero (shown when queue has 0 albums) ─────────────────────────
@@ -148,27 +139,27 @@ export function renderHeaderActions(el) {
  * so it was the one place the list could never actually be read.
  */
 function renderAddForm({ loadingAdd, addError }) {
-  return `
+  return html`
     <div class="add-reveal">
-      <input class="add-input" id="url-input" placeholder="Paste an album link…" title="Paste an album link from ${attr(serviceListText({ conj: 'or' }))}">
+      <input class="add-input" id="url-input" placeholder="Paste an album link…" title="Paste an album link from ${serviceListText({ conj: 'or' })}">
       <button class="add-btn" data-action="add" ${loadingAdd ? 'disabled' : ''} title="Add this album to your queue">
-        ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
+        ${loadingAdd ? html`<div class="spinner"></div>` : 'Add'}
       </button>
     </div>
-    ${addError ? `<div class="add-error">${escapeHtml(addError)}</div>` : ''}
+    ${addError && html`<div class="add-error">${addError}</div>`}
     <p class="add-hint">${serviceListText()} &mdash; or share straight from your phone's music app.</p>`;
 }
 
 function renderHero({ loadingAdd, addError, addOpen }) {
-  const addSection = addOpen ? `
+  const addSection = addOpen ? html`
     <div class="landing-add-open">
       ${renderAddForm({ loadingAdd, addError })}
-    </div>` : `
+    </div>` : html`
     <button class="auth-btn landing-cta" data-action="toggle-add" title="No account needed — paste a link and it's in your queue">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
       Paste a music album link
     </button>
-    <p class="landing-note">${serviceListText({ sep: ' &middot; ', conj: '' })}</p>`;
+    <p class="landing-note">${serviceListText({ sep: ' · ', conj: '' })}</p>`;
 
   return renderLanding(addSection);
 }
@@ -182,23 +173,23 @@ function renderHero({ loadingAdd, addError, addOpen }) {
  * ended up staring at a radio group with nothing selected and no explanation.
  */
 function renderPrefServiceSection(prefService) {
-  return `
+  return html`
     <div class="profile-pref-service">
       <div class="profile-pref-service-label">Listen on</div>
       <div class="profile-pref-service-desc">Where the Listen button opens albums. Set automatically from your first pasted link.</div>
       <div class="profile-pref-service-options">
-        ${SERVICES.map(({ slug, label }) => `
-        <label class="pref-service-option${prefService === slug ? ' active' : ''}" title="${attr(`Open albums in ${label}`)}">
+        ${SERVICES.map(({ slug, label }) => html`
+        <label class="pref-service-option${prefService === slug ? ' active' : ''}" title="${`Open albums in ${label}`}">
           <input type="radio" name="pref-service" value="${slug}" data-action="set-pref-service" ${prefService === slug ? 'checked' : ''}>
           ${label}
-        </label>`).join('')}
+        </label>`)}
       </div>
     </div>`;
 }
 
 function renderProfile(prefService, albums, done) {
-  const tags   = tagsByFrequency(albums);
-  return `
+  const tags = tagsByFrequency(albums);
+  return html`
     <div class="profile">
       <div class="profile-nav">
         <button class="profile-back" data-action="close-profile">← Back</button>
@@ -223,7 +214,7 @@ function renderProfile(prefService, albums, done) {
 // ── Import summary modal ──────────────────────────────────────────────────────
 
 function renderImportSummaryModal({ added, failed }) {
-  return `
+  return html`
   <div class="import-summary-overlay" role="dialog" aria-modal="true" aria-label="Import complete">
     <div class="import-summary">
       <div class="import-summary-top">
@@ -234,14 +225,16 @@ function renderImportSummaryModal({ added, failed }) {
         <svg width="14" height="14" viewBox="0 0 12 12" fill="none" stroke="#0FD287" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>
         ${added} album${added !== 1 ? 's' : ''} added to your queue
       </p>
-      ${failed.length ? `
+      ${failed.length > 0 && html`
       <div class="import-summary-failed">
         <p class="import-summary-failed-title">${failed.length} link${failed.length !== 1 ? 's' : ''} couldn't be resolved</p>
         <ul class="import-summary-failed-list">
-          ${failed.map(u => `<li><a class="import-summary-link" href="${attr(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a></li>`).join('')}
+          ${failed.map(u => html`<li>${isWebUrl(u)
+            ? html`<a class="import-summary-link" href="${u}" target="_blank" rel="noopener">${u}</a>`
+            : u}</li>`)}
         </ul>
         <button class="profile-action-btn import-summary-copy" data-action="copy-import-links" title="Copy these links to the clipboard so you can try them again">Copy links</button>
-      </div>` : ''}
+      </div>`}
       <button class="auth-btn import-summary-dismiss" data-action="close-import-summary">Close</button>
     </div>
   </div>`;
@@ -249,22 +242,22 @@ function renderImportSummaryModal({ added, failed }) {
 
 // ── Share-target overlay ──────────────────────────────────────────────────────
 
-const VINYL_SVG = `<svg class="share-vinyl" width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true">
+const VINYL_SVG = raw(`<svg class="share-vinyl" width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true">
   <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>
   <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-</svg>`;
+</svg>`);
 
-const SHARE_CHECK_SVG = `<svg class="share-check" viewBox="0 0 52 52" aria-hidden="true">
+const SHARE_CHECK_SVG = raw(`<svg class="share-check" viewBox="0 0 52 52" aria-hidden="true">
   <circle cx="26" cy="26" r="26"/>
   <path d="M14 27l8 8 16-16"/>
-</svg>`;
+</svg>`);
 
 // Rejected links get a struck-through record rather than a spinning one — the
 // art slot should stop looking busy the moment there's nothing left to wait for.
-const SHARE_X_SVG = `<svg class="share-x" width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" aria-hidden="true">
+const SHARE_X_SVG = raw(`<svg class="share-x" width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" aria-hidden="true">
   <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>
   <line x1="5" y1="19" x2="19" y2="5" stroke-width="1.5"/>
-</svg>`;
+</svg>`);
 
 // The mono line each phase ends on. `adding` has none — it shows the
 // indeterminate bar instead. The error line is an instruction, not a repeat of
@@ -307,19 +300,19 @@ export function renderShareOverlay({ phase, service, album, message }) {
 
   const cover = album?.cover || null;
 
-  return `
+  return html`
     <div class="share-art">
       <div class="share-art-skeleton">${phase === 'error' ? SHARE_X_SVG : VINYL_SVG}</div>
-      ${cover ? `<img class="share-art-cover" src="${attr(cover)}" alt="">` : ''}
-      ${phase === 'added' || phase === 'exists' ? `<span class="share-badge">${SHARE_CHECK_SVG}</span>` : ''}
+      ${cover && html`<img class="share-art-cover" src="${cover}" alt="">`}
+      ${(phase === 'added' || phase === 'exists') && html`<span class="share-badge">${SHARE_CHECK_SVG}</span>`}
     </div>
     <div class="share-text">
-      <p class="share-overlay__title">${escapeHtml(title)}</p>
-      ${sub ? `<p class="share-overlay__sub">${escapeHtml(sub)}</p>` : ''}
+      <p class="share-overlay__title">${title}</p>
+      ${sub && html`<p class="share-overlay__sub">${sub}</p>`}
     </div>
     ${done
-      ? `<p class="share-overlay__label">${escapeHtml(SHARE_LABELS[phase] || '')}</p>`
-      : `<div class="share-progress" role="presentation"><span></span></div>`}`;
+      ? html`<p class="share-overlay__label">${SHARE_LABELS[phase] || ''}</p>`
+      : html`<div class="share-progress" role="presentation"><span></span></div>`}`;
 }
 
 // ── Main app ──────────────────────────────────────────────────────────────────
@@ -329,7 +322,7 @@ export function renderApp(el, { albums, done, activeFilter, loadingAdd, artistCa
   const visible = filterAlbums(albums, activeFilter, searchQuery);
 
   if (profileOpen) {
-    el.innerHTML = renderProfile(prefService, albums, done);
+    el.innerHTML = String(renderProfile(prefService, albums, done));
     return;
   }
 
@@ -337,22 +330,20 @@ export function renderApp(el, { albums, done, activeFilter, loadingAdd, artistCa
     const album  = visible[exploreIndex];
     const cached = album ? artistCache[album.artist] : null;
     const tracks = album ? (trackCache[album.id] || null) : null;
-    el.innerHTML = renderExploreCard(album, cached, tracks, exploreIndex, visible.length, prefService, refreshingId);
+    el.innerHTML = String(renderExploreCard(album, cached, tracks, exploreIndex, visible.length, prefService, refreshingId));
     return;
   }
 
   // Empty queue → show the hero landing. Exception: if an import summary is
   // waiting, keep it visible over the (now-empty) queue so the user sees the result.
   if (albums.length === 0) {
-    let html = renderHero({ loadingAdd, addError, addOpen });
-    if (importSummary) html += renderImportSummaryModal(importSummary);
-    el.innerHTML = html;
+    el.innerHTML = String(html`${renderHero({ loadingAdd, addError, addOpen })}${importSummary && renderImportSummaryModal(importSummary)}`);
     return;
   }
 
   const addedToday = albums.filter(a => (a.addedAt || '').slice(0, 10) === todayStr()).length;
 
-  let html = `
+  el.innerHTML = String(html`
     <div class="stats">
       <div class="stat"><div class="stat-num">${albums.length}</div><div class="stat-label">queued</div></div>
       <div class="stat"><div class="stat-num green">${done}</div><div class="stat-label">listened</div></div>
@@ -363,74 +354,69 @@ export function renderApp(el, { albums, done, activeFilter, loadingAdd, artistCa
         <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
-        <input class="search-input" id="search-input" placeholder="Search your queue…" title="Filters the albums in your queue by title or artist" aria-label="Search your queue by album title or artist" value="${attr(searchQuery || '')}" autocomplete="off">
-        ${searchQuery ? `<button class="search-clear" data-action="clear-search" aria-label="Clear search" title="Clear search">&times;</button>` : ''}
+        <input class="search-input" id="search-input" placeholder="Search your queue…" title="Filters the albums in your queue by title or artist" aria-label="Search your queue by album title or artist" value="${searchQuery || ''}" autocomplete="off">
+        ${searchQuery && html`<button class="search-clear" data-action="clear-search" aria-label="Clear search" title="Clear search">&times;</button>`}
       </div>
-      <button class="add-toggle${addOpen ? ' active' : ''}" data-action="toggle-add" aria-expanded="${addOpen}" title="Add an album by pasting a link">+ Add</button>
+      <button class="add-toggle${addOpen ? ' active' : ''}" data-action="toggle-add" aria-expanded="${String(addOpen)}" title="Add an album by pasting a link">+ Add</button>
     </div>
-    ${addOpen ? renderAddForm({ loadingAdd, addError }) : ''}`;
+    ${addOpen && renderAddForm({ loadingAdd, addError })}
+    ${importProgress && renderImportProgress(importProgress)}
+    ${renderTagBar(albums, activeFilter, tagsExpanded)}
+    <div class="list">${visible.length ? renderCards(visible, searchQuery, prefService) : renderEmpty(activeFilter, searchQuery)}</div>
+    ${importSummary && renderImportSummaryModal(importSummary)}`);
+}
 
-  if (importProgress) {
-    const pct      = importProgress.total > 0 ? (importProgress.done / importProgress.total * 100) : 0;
-    const waiting  = (importProgress.retrying || 0) > 0;
-    const label    = waiting
-      ? `Rate limited — retrying&hellip; <span class="import-progress-retry">(${importProgress.retrying})</span> &bull; ${importProgress.done} / ${importProgress.total}`
-      : `Fetching links &amp; tags &mdash; <span>${importProgress.done} / ${importProgress.total}</span>`;
-    html += `
+function renderImportProgress({ done, total, retrying }) {
+  const pct     = total > 0 ? (done / total * 100) : 0;
+  const waiting = (retrying || 0) > 0;
+  const label   = waiting
+    ? html`Rate limited — retrying&hellip; <span class="import-progress-retry">(${retrying})</span> &bull; ${done} / ${total}`
+    : html`Fetching links &amp; tags &mdash; <span>${done} / ${total}</span>`;
+  return html`
     <div class="import-progress${waiting ? ' import-progress--waiting' : ''}">
       <div class="import-progress-label">${label}</div>
       <div class="import-progress-track"><div class="import-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
     </div>`;
-  }
-
-  const tagFreqList = tagsByFrequency(albums);
-  if (tagFreqList.length) {
-    const TOP_N = 6;
-    const showMore = tagFreqList.length > 7;
-    let displayTags;
-    if (showMore && !tagsExpanded) {
-      let topN = tagFreqList.slice(0, TOP_N);
-      if (activeFilter !== 'all' && !topN.includes(activeFilter)) topN[TOP_N - 1] = activeFilter;
-      displayTags = topN;
-    } else {
-      displayTags = tagFreqList;
-    }
-    html += `
-      <div class="filter-bar">
-        <button class="filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-action="filter" data-tag="all" title="Show every album in your queue">All</button>
-        ${displayTags.map(t => `
-        <button class="filter-chip ${activeFilter === t ? 'active' : ''}" data-action="filter" data-tag="${attr(t)}" title="${attr(`Show only ${t} albums`)}">${escapeHtml(t)}</button>`).join('')}
-        ${showMore ? `<button class="tag-more" data-action="toggle-tags" title="${tagsExpanded ? 'Show fewer genre tags' : 'Show every genre tag in your queue'}">${tagsExpanded ? 'Less ▴' : 'More ▾'}</button>` : ''}
-      </div>`;
-  }
-
-  html += '<div class="list">';
-  html += visible.length ? renderCards(visible, albums, searchQuery, prefService) : renderEmpty(activeFilter, searchQuery);
-  html += '</div>';
-
-  if (importSummary) html += renderImportSummaryModal(importSummary);
-  el.innerHTML = html;
 }
 
-function renderEmpty(activeFilter, searchQuery) {
-  const icon = `<div class="empty-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="1.2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.5" fill="#444" stroke="none"/></svg></div>`;
-  if (searchQuery?.trim()) {
-    return `<div class="empty">${icon}<div class="empty-title">No matches for &ldquo;${escapeHtml(searchQuery.trim())}&rdquo;</div><div class="empty-body"><button class="empty-clear" data-action="clear-search">Clear search</button></div></div>`;
+function renderTagBar(albums, activeFilter, tagsExpanded) {
+  const tagFreqList = tagsByFrequency(albums);
+  if (!tagFreqList.length) return '';
+  const TOP_N = 6;
+  const showMore = tagFreqList.length > 7;
+  let displayTags = tagFreqList;
+  if (showMore && !tagsExpanded) {
+    displayTags = tagFreqList.slice(0, TOP_N);
+    if (activeFilter !== 'all' && !displayTags.includes(activeFilter)) displayTags[TOP_N - 1] = activeFilter;
   }
-  const noTag = activeFilter !== 'all';
-  if (noTag) {
-    return `<div class="empty">${icon}<div class="empty-title">No albums with this tag</div><div class="empty-body">Try a different filter.</div></div>`;
+  return html`
+      <div class="filter-bar">
+        <button class="filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-action="filter" data-tag="all" title="Show every album in your queue">All</button>
+        ${displayTags.map(t => html`
+        <button class="filter-chip ${activeFilter === t ? 'active' : ''}" data-action="filter" data-tag="${t}" title="${`Show only ${t} albums`}">${t}</button>`)}
+        ${showMore && html`<button class="tag-more" data-action="toggle-tags" title="${tagsExpanded ? 'Show fewer genre tags' : 'Show every genre tag in your queue'}">${tagsExpanded ? 'Less ▴' : 'More ▾'}</button>`}
+      </div>`;
+}
+
+const EMPTY_ICON = raw(`<div class="empty-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="1.2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.5" fill="#444" stroke="none"/></svg></div>`);
+
+function renderEmpty(activeFilter, searchQuery) {
+  if (searchQuery?.trim()) {
+    return html`<div class="empty">${EMPTY_ICON}<div class="empty-title">No matches for &ldquo;${searchQuery.trim()}&rdquo;</div><div class="empty-body"><button class="empty-clear" data-action="clear-search">Clear search</button></div></div>`;
+  }
+  if (activeFilter !== 'all') {
+    return html`<div class="empty">${EMPTY_ICON}<div class="empty-title">No albums with this tag</div><div class="empty-body">Try a different filter.</div></div>`;
   }
   // "All" filter but no albums — shouldn't normally be reached now that albums.length===0
   // goes to the hero; but guard just in case (e.g. pending records only / cleared mid-render)
-  return `<div class="empty">${icon}<div class="empty-title">Nothing here</div><div class="empty-body">Tap <strong>+ Add</strong> to paste a link.</div></div>`;
+  return html`<div class="empty">${EMPTY_ICON}<div class="empty-title">Nothing here</div><div class="empty-body">Tap <strong>+ Add</strong> to paste a link.</div></div>`;
 }
 
 function renderPendingCard(album, visibleIdx) {
   const svcLabel = serviceLabel(album.service) || 'Music link';
   const listenUrl = album.sourceUrl || null;
-  return `
-    <div class="card card--pending" id="card-${attr(album.id)}">
+  return html`
+    <div class="card card--pending" id="card-${album.id}">
       <div class="card-main">
         <div class="card-cover">
           <div class="card-cover-placeholder card-cover-placeholder--pending">
@@ -442,35 +428,35 @@ function renderPendingCard(album, visibleIdx) {
           </div>
         </div>
         <div class="card-body">
-          <div class="card-title card-title--pending">${escapeHtml(svcLabel)}</div>
+          <div class="card-title card-title--pending">${svcLabel}</div>
           <div class="card-artist card-artist--pending">Looking up details…</div>
           <div class="card-meta" title="Waiting on the link resolver — this retries by itself, and your link is already saved">Added ${timeAgo(album.addedAt)} · resolving</div>
         </div>
         <div class="card-actions">
-          ${listenUrl ? `
-          <button class="btn btn-listen" data-action="listen" data-url="${attr(listenUrl)}" title="Opens the link you saved">${PLAY_SVG} Listen</button>` : ''}
-          <button class="btn btn-done" data-action="done" data-index="${visibleIdx}" title="${attr(DONE_TIP)}">${CHECKMARK_SVG} Done</button>
+          ${listenUrl && html`
+          <button class="btn btn-listen" data-action="listen" data-url="${listenUrl}" title="Opens the link you saved">${PLAY_SVG} Listen</button>`}
+          <button class="btn btn-done" data-action="done" data-index="${visibleIdx}" title="${DONE_TIP}">${CHECKMARK_SVG} Done</button>
         </div>
       </div>
     </div>`;
 }
 
-function renderCards(visible, albums, searchQuery, prefService) {
+function renderCards(visible, searchQuery, prefService) {
   return visible.map((album, visibleIdx) => {
     if (album._pending) return renderPendingCard(album, visibleIdx);
 
-    const tagHtml = [
-      album.year ? `<span class="tag year">${escapeHtml(album.year)}</span>` : '',
-      ...(album.tags || []).map(t => `<span class="tag genre" data-action="filter" data-tag="${attr(t)}" title="${attr(`Filter your queue by ${t}`)}">${escapeHtml(t)}</span>`),
-    ].filter(Boolean).join('');
+    const tagChips = [
+      album.year && html`<span class="tag year">${album.year}</span>`,
+      ...(album.tags || []).map(t => html`<span class="tag genre" data-action="filter" data-tag="${t}" title="${`Filter your queue by ${t}`}">${t}</span>`),
+    ].filter(Boolean);
 
-    return `
-      <div class="card" id="card-${attr(album.id)}" data-action="explore" data-index="${visibleIdx}" role="button" tabindex="0" style="--i:${visibleIdx}">
+    return html`
+      <div class="card" id="card-${album.id}" data-action="explore" data-index="${visibleIdx}" role="button" tabindex="0" style="--i:${visibleIdx}">
         <div class="card-main">
           <div class="card-cover">
             ${album.cover
-              ? `<img src="${attr(album.cover)}" alt="" width="96" height="96" loading="lazy">`
-              : `<div class="card-cover-placeholder">
+              ? html`<img src="${album.cover}" alt="" width="96" height="96" loading="lazy">`
+              : html`<div class="card-cover-placeholder">
                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1">
                      <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>
                      <circle cx="12" cy="12" r="1.5" fill="#333" stroke="none"/>
@@ -480,16 +466,16 @@ function renderCards(visible, albums, searchQuery, prefService) {
           <div class="card-body">
             <div class="card-title">${highlightMatch(album.title || 'Unknown album', searchQuery)}</div>
             <div class="card-artist">${highlightMatch(album.artist || '', searchQuery)}</div>
-            ${tagHtml ? `<div class="card-tags">${tagHtml}</div>` : ''}
+            ${tagChips.length > 0 && html`<div class="card-tags">${tagChips}</div>`}
             <div class="card-meta">Added ${timeAgo(album.addedAt)}</div>
           </div>
           <div class="card-actions">
             ${renderListenBtn(album, prefService)}
-            <button class="btn btn-done" data-action="done" data-index="${visibleIdx}" title="${attr(DONE_TIP)}">${CHECKMARK_SVG} Done</button>
+            <button class="btn btn-done" data-action="done" data-index="${visibleIdx}" title="${DONE_TIP}">${CHECKMARK_SVG} Done</button>
           </div>
         </div>
       </div>`;
-  }).join('');
+  });
 }
 
 /**
@@ -510,83 +496,83 @@ export function artistInitials(name) {
 
 // ── Explore card ──────────────────────────────────────────────────────────────
 
+function renderTracklist(tracks, index) {
+  if (tracks === TRACKS_ERROR) {
+    return html`<div class="explore-tracklist-error">Couldn&rsquo;t load the tracklist.
+        <button class="explore-retry" data-action="retry-tracks" data-index="${index}">Retry</button>
+      </div>`;
+  }
+  if (tracks === null) return html`<div class="explore-loading">Loading tracks…</div>`;
+  if (!tracks.length) return '';
+  return html`<ol class="explore-tracklist">
+            ${tracks.map(t => html`
+              <li class="explore-track">
+                <span class="explore-track-num">${t.number != null ? t.number : ''}</span>
+                <span class="explore-track-name">${t.name || 'Untitled track'}</span>
+                <span class="explore-track-dur">${t.duration_ms != null ? fmtDuration(t.duration_ms) : ''}</span>
+              </li>`)}
+          </ol>`;
+}
+
 function renderExploreCard(album, cached, tracks, index, total, prefService, refreshingId = null) {
   const hasPrev = index > 0;
   const hasNext = index < total - 1;
   const loading = !cached;
 
-  const image      = cached?.image     || null;
-  const bio        = cached?.bio       || '';
-  const similar    = cached?.similar   || [];
-  const tags       = cached?.tags      || [];
-  const lastfmUrl  = cached?.lastfmUrl  || null;
+  const image     = cached?.image   || null;
+  const bio       = cached?.bio     || '';
+  const tags      = cached?.tags    || [];
+  // Last.fm-supplied links: only http(s) ever becomes an href.
+  const similar   = (cached?.similar || []).filter(a => isWebUrl(a?.url));
+  const lastfmUrl = isWebUrl(cached?.lastfmUrl) ? cached.lastfmUrl : null;
 
-  const lastfmLink = lastfmUrl
-    ? `<a class="explore-link explore-link--lastfm" href="${attr(lastfmUrl)}" target="_blank" title="${attr(`${album.artist || 'This artist'} on Last.fm — where the genre tags come from`)}">${lastfmIcon(12, 12)} Last.fm</a>`
-    : '';
+  const lastfmLink = lastfmUrl && html`<a class="explore-link explore-link--lastfm" href="${lastfmUrl}" target="_blank" title="${`${album.artist || 'This artist'} on Last.fm — where the genre tags come from`}">${lastfmIcon(12, 12)} Last.fm</a>`;
 
-  const tracklistHtml = tracks === TRACKS_ERROR
-    ? `<div class="explore-tracklist-error">Couldn&rsquo;t load the tracklist.
-        <button class="explore-retry" data-action="retry-tracks" data-index="${index}">Retry</button>
-      </div>`
-    : tracks === null
-      ? `<div class="explore-loading">Loading tracks…</div>`
-      : tracks.length
-        ? `<ol class="explore-tracklist">
-            ${tracks.map(t => `
-              <li class="explore-track">
-                <span class="explore-track-num">${t.number != null ? t.number : ''}</span>
-                <span class="explore-track-name">${escapeHtml(t.name || 'Untitled track')}</span>
-                <span class="explore-track-dur">${t.duration_ms != null ? fmtDuration(t.duration_ms) : ''}</span>
-              </li>`).join('')}
-          </ol>`
-        : '';
-
-  return `
+  return html`
     <div class="explore">
       <div class="explore-nav">
         <button class="explore-back" data-action="close-explore" title="Back to your queue">← Back</button>
-        <span class="explore-counter" title="${attr(`Album ${index + 1} of ${total} in the current view`)}">${index + 1} / ${total}</span>
+        <span class="explore-counter" title="${`Album ${index + 1} of ${total} in the current view`}">${index + 1} / ${total}</span>
         <div class="explore-arrows">
           <button class="explore-arrow" data-action="explore-prev" ${hasPrev ? '' : 'disabled'} aria-label="Previous album" title="Previous album">‹</button>
           <button class="explore-arrow" data-action="explore-next" ${hasNext ? '' : 'disabled'} aria-label="Next album" title="Next album">›</button>
         </div>
       </div>
 
-      ${loading ? `<div class="explore-loading" style="margin-top:48px;text-align:center">Loading…</div>` : `
+      ${loading ? html`<div class="explore-loading" style="margin-top:48px;text-align:center">Loading…</div>` : html`
 
       <div class="explore-album">
-        ${album.cover ? `<img class="explore-album-cover" src="${attr(album.cover)}" alt="${attr(album.title || '')}">` : ''}
+        ${album.cover && html`<img class="explore-album-cover" src="${album.cover}" alt="${album.title || ''}">`}
         <div class="explore-album-meta">
-          <h3 class="explore-album-title">${escapeHtml(album.title || 'Unknown album')}</h3>
-          ${album.year ? `<span class="explore-album-year">${escapeHtml(album.year)}</span>` : ''}
+          <h3 class="explore-album-title">${album.title || 'Unknown album'}</h3>
+          ${album.year && html`<span class="explore-album-year">${album.year}</span>`}
         </div>
         <div class="explore-album-actions">
           ${renderListenBtn(album, prefService, { showService: true })}
-          <button class="btn btn-done" data-action="explore-done" data-index="${index}" title="${attr(DONE_TIP)}">Done</button>
+          <button class="btn btn-done" data-action="explore-done" data-index="${index}" title="${DONE_TIP}">Done</button>
         </div>
-        ${tracklistHtml}
+        ${renderTracklist(tracks, index)}
       </div>
 
       <div class="explore-artist">
         <div class="explore-artist-hero">
           ${image
-            ? `<img class="explore-artist-image" src="${attr(image)}" alt="${attr(album.artist)}">`
-            : `<div class="explore-artist-image explore-artist-image--initials" aria-hidden="true">${escapeHtml(artistInitials(album.artist))}</div>`}
+            ? html`<img class="explore-artist-image" src="${image}" alt="${album.artist}">`
+            : html`<div class="explore-artist-image explore-artist-image--initials" aria-hidden="true">${artistInitials(album.artist)}</div>`}
           <div class="explore-artist-info">
-            <h2 class="explore-artist-name">${escapeHtml(album.artist || '')}</h2>
-            ${tags.length ? `<div class="explore-tags">${tags.map(t => `<span class="tag genre">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+            <h2 class="explore-artist-name">${album.artist || ''}</h2>
+            ${tags.length > 0 && html`<div class="explore-tags">${tags.map(t => html`<span class="tag genre">${t}</span>`)}</div>`}
             <div class="explore-links">
               ${lastfmLink}
             </div>
           </div>
         </div>
-        ${bio ? `<p class="explore-bio">${escapeHtml(bio)}</p>` : ''}
-        ${similar.length ? `
+        ${bio && html`<p class="explore-bio">${bio}</p>`}
+        ${similar.length > 0 && html`
           <div class="explore-section-label">Similar artists</div>
           <div class="similar-list">
-            ${similar.map(a => `<a class="similar-chip" href="${attr(a.url)}" target="_blank">${escapeHtml(a.name)}</a>`).join('')}
-          </div>` : ''}
+            ${similar.map(a => html`<a class="similar-chip" href="${a.url}" target="_blank">${a.name}</a>`)}
+          </div>`}
       </div>
 
       <div class="explore-footer">
