@@ -3,7 +3,7 @@ import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
 import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtistImage, fetchAlbumTracks, deezerAlbumId, TRACKS_ERROR } from './api.js';
-import { loadAlbums, saveAlbums, loadDone, saveDone, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
+import { loadAlbums, saveAlbums, updateAlbums, updateAlbum, loadDone, saveDone, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, renderShareOverlay } from './render.js';
 import { initBeacon, reportFailure } from './beacon.js';
 import { isSafeLinkUrl } from './services.js';
@@ -72,17 +72,19 @@ function rerender() {
  * Shared by all three entry points (paste, share-target launch, pending retry)
  * so the id-dedupe and the Last.fm enrichment can't drift between them.
  *
- * Re-reads storage rather than trusting a caller-held array: resolving is async,
- * and a share-target add or a pending retry can land in between.
+ * Goes through updateAlbums rather than a caller-held array: resolving is
+ * async, and a share-target add or a pending retry can land in between.
+ * Returns false when an album with the same id was already queued.
  */
-async function saveResolvedAlbum(rec) {
-  const albums = loadAlbums();
-  if (albums.find(a => a.id === rec.id)) return rec;  // already queued
-  const fresh = loadAlbums();
-  fresh.push(rec);
-  saveAlbums(fresh);
-  enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
-  return rec;
+function saveResolvedAlbum(rec) {
+  let added = false;
+  updateAlbums(albums => {
+    if (albums.some(a => a.id === rec.id)) return;
+    albums.push(rec);
+    added = true;
+  });
+  if (added) enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
+  return added;
 }
 
 function setFilter(tag) {
@@ -126,7 +128,7 @@ async function handleAdd() {
     if (service && !hasExplicitPreferredService()) setPreferredService(service);
 
     // Success — dedup on resolved ID too (different URL, same album)
-    await saveResolvedAlbum(rec);
+    saveResolvedAlbum(rec);
     loadingAdd = false;
     addOpen = false;
     rerender();
@@ -134,11 +136,9 @@ async function handleAdd() {
     if (inp) inp.value = '';
   } else if (isRetryableResolveError(rec._error)) {
     // Resolver + MusicBrainz both failed with a retryable error — save a pending stub so the link isn't lost
-    const fresh = loadAlbums();
-    if (!fresh.find(a => a.sourceUrl === url)) {
-      fresh.push(makePendingRecord(url, service));
-      saveAlbums(fresh);
-    }
+    updateAlbums(albums => {
+      if (!albums.some(a => a.sourceUrl === url)) albums.push(makePendingRecord(url, service));
+    });
     loadingAdd = false;
     addOpen = false;
     rerender();
@@ -176,11 +176,13 @@ function markDone(visibleIdx, triggerEl, { explore = false } = {}) {
 }
 
 function applyDone(visibleIdx, album, explore) {
-  const albums = loadAlbums();
-  const idx    = albums.findIndex(a => a.id === album.id);
-  if (idx === -1) return;
-  albums.splice(idx, 1);
-  saveAlbums(albums);
+  let removed = false;
+  updateAlbums(albums => {
+    const kept = albums.filter(a => a.id !== album.id);
+    removed = kept.length !== albums.length;
+    return kept;
+  });
+  if (!removed) return;
   saveDone(loadDone() + 1);
 
   if (explore) {
@@ -335,11 +337,10 @@ async function refreshAlbum(visibleIdx) {
   rerender();
   try {
     const rec = await resolveAlbumResilient(album.sourceUrl, { service: album.service });
-    if (!rec._error) {
-      const merged = mergeRefreshedAlbum(album, rec);
-      const all = loadAlbums();
-      const pos = all.findIndex(a => a.id === album.id);
-      if (pos !== -1) { all[pos] = merged; saveAlbums(all); }
+    // Merged into the record as stored NOW, not the pre-await `album` — see
+    // updateAlbum. Null when the album left the queue during the refresh.
+    const merged = rec._error ? null : updateAlbum(album.id, current => mergeRefreshedAlbum(current, rec));
+    if (merged) {
       delete artistCache[album.artist]; // clear so explore re-fetches artist data
       // Clear so explore re-fetches the tracklist too — the refresh may have
       // picked up a Deezer cross-link that didn't exist before, and this was
@@ -589,10 +590,7 @@ async function resolvePending({ summarize = false } = {}) {
         if (!rec._error) {
           // ── Resolved ──────────────────────────────────────────────────────
           rec.addedAt = stub.addedAt; // preserve original addedAt
-          const fresh = loadAlbums();
-          const pos = fresh.findIndex(a => a.id === stub.id);
-          if (pos !== -1) fresh.splice(pos, 1, rec);
-          saveAlbums(fresh);
+          updateAlbum(stub.id, () => rec);
           enrichWithLastfm(rec.id, rec.artist, rec.title, rerender);
           added++;
           break;
@@ -612,9 +610,7 @@ async function resolvePending({ summarize = false } = {}) {
         } else {
           // ── Permanent failure (not-found / 4xx) — drop stub, record URL ──
           failed.push(stub.sourceUrl);
-          const fresh = loadAlbums();
-          const pos = fresh.findIndex(a => a.id === stub.id);
-          if (pos !== -1) { fresh.splice(pos, 1); saveAlbums(fresh); }
+          updateAlbums(albums => albums.filter(a => a.id !== stub.id));
           reportFailure('add-failed', { route: 'pending-resolve', service: stub.service, msg: String(rec._error) });
           break;
         }
@@ -701,16 +697,14 @@ async function boot() {
       } else {
         const rec = await resolveAlbumResilient(url, { service });
         if (!rec._error) {
-          await saveResolvedAlbum(rec);
+          saveResolvedAlbum(rec);
           highlightId = rec.id;
           addedMeta = rec;
           phase = 'added';
         } else if (isRetryableResolveError(rec._error)) {
           // Resolver + MusicBrainz both failed with a retryable error — save pending stub so share isn't lost
           const stub = makePendingRecord(url, service);
-          const fresh = loadAlbums();
-          fresh.push(stub);
-          saveAlbums(fresh);
+          updateAlbums(albums => { albums.push(stub); });
           highlightId = stub.id;
           addedMeta = null; // no cover/title yet — the overlay says so
           phase = 'pending';

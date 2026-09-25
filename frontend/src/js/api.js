@@ -1,6 +1,6 @@
 import { LASTFM_KEY, RESOLVER_BASE, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
 import { signRequestToken } from './sign.js';
-import { loadAlbums, saveAlbums, extractAlbumId } from './storage.js';
+import { loadAlbums, updateAlbum, extractAlbumId } from './storage.js';
 import { createThrottle } from './throttle.js';
 import { reportFailure } from './beacon.js';
 
@@ -179,6 +179,9 @@ export async function resolveAlbumResilient(sourceUrl, { service } = {}) {
   return lastResolverErr; // both failed — caller leaves stub pending
 }
 
+/** Concatenate tag lists, keeping the first occurrence of each tag, in order. */
+const mergeUnique = (...lists) => [...new Set(lists.flat())];
+
 // Fetch Last.fm tags in the background and update the saved album.
 // onUpdate() is called after storage is written so the caller can re-render.
 export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate) {
@@ -191,47 +194,38 @@ export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate
     fetchLastfmAlbum(primaryArtist, albumTitle),
   ]);
 
-  const albums = loadAlbums();
-  const album  = albums.find(x => x.id === albumId);
+  // Read-only snapshot: only used to decide which further lookups are worth
+  // making. It is never written back — see the commit at the end.
+  const snapshot = loadAlbums().find(x => x.id === albumId);
+  if (!snapshot) return; // left the queue while Last.fm was answering
 
-  // Merge: the album's existing (resolver-supplied) tags come first — they're
-  // already curated per-album — then artist tags, then album tags, skipping
-  // duplicates at each step. This is an enrichment pass, not a replacement:
-  // Last.fm coverage is spotty, and overwriting a resolver-supplied genre
-  // with an empty/thinner Last.fm result would be a regression, not enrichment.
-  const existingTags = album?.tags || [];
-  const seen = new Set(existingTags);
-  const merged = [...existingTags];
-  for (const t of artistTags) {
-    if (!seen.has(t)) { merged.push(t); seen.add(t); }
-  }
-  for (const t of albumData.tags) {
-    if (!seen.has(t)) { merged.push(t); seen.add(t); }
-  }
+  // The album's existing (resolver-supplied) tags come first — they're already
+  // curated per-album — then artist tags, then album tags. This is an
+  // enrichment pass, not a replacement: Last.fm coverage is spotty, and
+  // overwriting a resolver-supplied genre with a thinner Last.fm result would
+  // be a regression, not enrichment.
+  let tags = mergeUnique(snapshot.tags || [], artistTags, albumData.tags);
 
   // Fall back to similar artists if we still have nothing at all
-  let tags = merged;
-  if (!tags.length) {
-    tags = await fetchTagsFromSimilarArtists(primaryArtist);
-  }
+  if (!tags.length) tags = await fetchTagsFromSimilarArtists(primaryArtist);
 
   // Last.fm coverage thins out fast for obscure artists. Deezer's own (coarser)
   // genre labels fill that gap — but only when Last.fm came up thin, so a
   // well-tagged mainstream album isn't diluted with broad Deezer categories.
-  const deezerId = album ? deezerAlbumId(album) : null;
+  const deezerId = deezerAlbumId(snapshot);
   if (tags.length < 3 && deezerId) {
-    const deezerData   = await fetchDeezerArtistData(primaryArtist, deezerId);
-    const deezerGenres = deezerData?.genres?.length
-      ? cleanTags(deezerData.genres.map(name => ({ name })), primaryArtist)
-      : [];
-    const seenTags = new Set(tags);
-    for (const g of deezerGenres) if (!seenTags.has(g)) { tags.push(g); seenTags.add(g); }
+    const deezerData = await fetchDeezerArtistData(primaryArtist, deezerId);
+    if (deezerData?.genres?.length) {
+      tags = mergeUnique(tags, cleanTags(deezerData.genres.map(name => ({ name })), primaryArtist));
+    }
   }
 
-  if (!tags.length || !album) return;
-  album.tags = tags.slice(0, 7);
-  saveAlbums(albums);
-  onUpdate?.();
+  if (!tags.length) return;
+  // Commit in one synchronous step against the record as it is NOW, not the
+  // snapshot: the awaits above can take seconds under throttling, and the
+  // queue may have changed meanwhile (updateAlbum is a no-op if it's gone).
+  const saved = updateAlbum(albumId, a => { a.tags = mergeUnique(a.tags || [], tags).slice(0, 7); });
+  if (saved) onUpdate?.();
 }
 
 // ── Last.fm ───────────────────────────────────────────────────────────────────

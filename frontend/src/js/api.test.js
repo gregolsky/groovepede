@@ -599,6 +599,38 @@ describe('enrichWithLastfm', () => {
     expect(album.tags).toEqual(['post-rock', 'rock', 'alternative']);
   });
 
+  it('does not undo queue changes made while it was awaiting the network (lost update)', async () => {
+    // Enrichment awaits Last.fm and then Deezer. If the user marks an album
+    // Done or adds one in that window, writing back a snapshot taken BEFORE the
+    // awaits would resurrect the Done album and drop the new one.
+    seedAlbumWithDeezerLink('album-1');
+    const queue = JSON.parse(localStorage.getItem('gp_albums'));
+    queue.push({ ...queue[0], id: 'album-2', links: {} });
+    localStorage.setItem('gp_albums', JSON.stringify(queue));
+
+    const responses = [
+      { toptags: { tag: [{ name: 'post-rock', count: 10 }] } }, // artist.gettoptags — thin
+      { album: { tags: { tag: [] } } },                          // album.getinfo
+      { image: null, genres: ['Rock'] },                         // resolver /v1/artist
+    ];
+    let calls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      const body = responses[calls++];
+      if (calls === 3) {
+        // Mid-enrichment: album-2 marked Done, album-3 added.
+        const now = JSON.parse(localStorage.getItem('gp_albums')).filter(a => a.id !== 'album-2');
+        now.push({ ...now[0], id: 'album-3', tags: [], links: {} });
+        localStorage.setItem('gp_albums', JSON.stringify(now));
+      }
+      return Promise.resolve({ ok: true, json: async () => body });
+    });
+
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
+    const ids = loadAlbums().map(a => a.id);
+    expect(ids).toEqual(['album-1', 'album-3']);
+    expect(loadAlbums()[0].tags).toEqual(['post-rock', 'rock']);
+  });
+
   it('does not query Deezer when Last.fm is thin but the album has no Deezer link', async () => {
     seedAlbum('album-1'); // no links.deezer
     let calls = 0;

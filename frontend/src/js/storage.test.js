@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum, filterAlbums } from './storage.js';
+import { extractAlbumId, parseMusicLink, serializeBackup, parseBackup, upgradeAlbumRecord, loadAlbums, saveAlbums, getPreferredService, setPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum, filterAlbums, updateAlbums, updateAlbum } from './storage.js';
 import { SERVICES } from './services.js';
 
 describe('filterAlbums', () => {
@@ -690,6 +690,41 @@ describe('parseBackup sanitizes untrusted records', () => {
       links: { spotify: { url: 'https://open.spotify.com/album/abc', nativeUri: 'spotify:album:abc' } },
     };
     expect(parseBackup(wrap([rec])).albums[0]).toEqual(rec);
+  });
+});
+
+describe('updateAlbums / updateAlbum', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', {
+      _store: {},
+      getItem(k) { return this._store[k] ?? null; },
+      setItem(k, v) { this._store[k] = v; },
+      removeItem(k) { delete this._store[k]; },
+    });
+    saveAlbums([{ id: 'a', tags: [], links: {} }, { id: 'b', tags: [], links: {} }]);
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('updateAlbums saves a returned list', () => {
+    updateAlbums(albums => albums.filter(x => x.id !== 'a'));
+    expect(loadAlbums().map(x => x.id)).toEqual(['b']);
+  });
+
+  it('updateAlbums saves in-place mutation when fn returns nothing', () => {
+    updateAlbums(albums => { albums.push({ id: 'c', tags: [], links: {} }); });
+    expect(loadAlbums().map(x => x.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('updateAlbum changes one record and returns it', () => {
+    const saved = updateAlbum('b', rec => { rec.title = 'T'; });
+    expect(saved.title).toBe('T');
+    expect(loadAlbums().find(x => x.id === 'b').title).toBe('T');
+  });
+
+  it('updateAlbum is a no-op returning null for an album no longer queued', () => {
+    const setItem = vi.spyOn(localStorage, 'setItem');
+    expect(updateAlbum('gone', rec => { rec.title = 'T'; })).toBeNull();
+    expect(setItem).not.toHaveBeenCalled();
   });
 });
 

@@ -24,6 +24,36 @@ export function upgradeAlbumRecord(rec) {
 
 export function loadAlbums()  { try { return (JSON.parse(localStorage.getItem(STORAGE_KEY)) || []).map(upgradeAlbumRecord); } catch { return []; } }
 export function saveAlbums(a) { localStorage.setItem(STORAGE_KEY, JSON.stringify(a)); }
+/**
+ * Read the stored queue, apply `fn`, and save — all synchronously, so no await
+ * can land between the read and the write. Every change to the queue goes
+ * through this (or updateAlbum): a caller that loads, awaits, then saves
+ * writes back a stale snapshot and silently undoes whatever happened in
+ * between (an album marked Done comes back, a just-added one disappears).
+ * `fn` may return a new list, or mutate in place and return nothing.
+ */
+export function updateAlbums(fn) {
+  const albums = loadAlbums();
+  const next = fn(albums) ?? albums;
+  saveAlbums(next);
+  return next;
+}
+
+/**
+ * Apply `fn` to one album by id, via the same synchronous read-modify-write.
+ * `fn` may return a replacement record or mutate in place. Returns the stored
+ * record, or null — without writing anything — when the album is no longer
+ * in the queue (e.g. marked Done while an async lookup for it was in flight).
+ */
+export function updateAlbum(id, fn) {
+  const albums = loadAlbums();
+  const i = albums.findIndex(a => a.id === id);
+  if (i === -1) return null;
+  albums[i] = fn(albums[i]) ?? albums[i];
+  saveAlbums(albums);
+  return albums[i];
+}
+
 export function loadDone()    { return parseInt(localStorage.getItem(DONE_KEY) || '0'); }
 export function saveDone(n)   { localStorage.setItem(DONE_KEY, String(n)); }
 
