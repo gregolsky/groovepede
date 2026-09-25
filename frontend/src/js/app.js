@@ -110,9 +110,8 @@ async function handleAdd() {
   addError = null;
   input.classList.remove('error');
 
-  const albums = loadAlbums();
-  // Dedup on sourceUrl before resolving (fast path for re-pasting same link)
-  if (albums.find(a => a.sourceUrl === url || (a._pending && a.sourceUrl === url))) {
+  // Fast path for re-pasting the exact same link: no resolve needed.
+  if (loadAlbums().some(a => a.sourceUrl === url)) {
     input.value = '';
     addOpen = false;
     rerender();
@@ -121,37 +120,53 @@ async function handleAdd() {
 
   loadingAdd = true;
   rerender();
+  const outcome = await addAlbumFromUrl(url, service, 'manual-resolve');
+  loadingAdd = false;
 
-  const rec = await resolveAlbumResilient(url, { service });
-
-  if (!rec._error) {
-    // Auto-set preferred service from the first link pasted (if never explicitly chosen)
-    if (service && !hasExplicitPreferredService()) setPreferredService(service);
-
-    // Success — dedup on resolved ID too (different URL, same album)
-    saveResolvedAlbum(rec);
-    loadingAdd = false;
-    addOpen = false;
+  if (outcome.kind === 'failed') {
+    addError = RESOLVE_FAILED_MSG;
     rerender();
-    const inp = appEl.querySelector('#url-input');
-    if (inp) inp.value = '';
-  } else if (isRetryableResolveError(rec._error)) {
-    // Resolver + MusicBrainz both failed with a retryable error — save a pending stub so the link isn't lost
-    updateAlbums(albums => {
-      if (!albums.some(a => a.sourceUrl === url)) albums.push(makePendingRecord(url, service));
-    });
-    loadingAdd = false;
-    addOpen = false;
-    rerender();
-    const inp = appEl.querySelector('#url-input');
-    if (inp) inp.value = '';
-  } else {
-    // Non-retryable (404 / 400) — show error, don't save
-    addError = 'Couldn’t find that album — double-check the link and try again.';
-    loadingAdd = false;
-    rerender();
-    reportFailure('add-failed', { route: 'manual-resolve', service, msg: String(rec._error) });
+    return;
   }
+  // Auto-set preferred service from the first link pasted (if never explicitly chosen)
+  if (outcome.kind !== 'pending' && service && !hasExplicitPreferredService()) setPreferredService(service);
+  addOpen = false;
+  rerender();
+  const inp = appEl.querySelector('#url-input');
+  if (inp) inp.value = '';
+}
+
+const RESOLVE_FAILED_MSG = 'Couldn’t find that album — double-check the link and try again.';
+
+/**
+ * Resolve `url` and record the outcome in the queue. The one implementation of
+ * the add lifecycle shared by paste (handleAdd) and a share-target launch
+ * (boot) — they used to be two copies, and had already drifted: the share path
+ * pushed a pending stub without checking for one. Resolves to one of
+ *   { kind: 'added',   album } — new album saved; enrichment started
+ *   { kind: 'exists',  album } — resolved to an album already queued (by id)
+ *   { kind: 'pending', album } — resolver unreachable: saved as a stub, retried later
+ *   { kind: 'failed',  error } — permanent failure: nothing saved; reported
+ *
+ * resolvePending and refreshAlbum resolve too but do something different with
+ * the result (replace a stub in place with retries; merge into an existing
+ * record), so they deliberately don't route through here.
+ */
+async function addAlbumFromUrl(url, service, route) {
+  const rec = await resolveAlbumResilient(url, { service });
+  if (!rec._error) {
+    return { kind: saveResolvedAlbum(rec) ? 'added' : 'exists', album: rec };
+  }
+  if (isRetryableResolveError(rec._error)) {
+    let stub;
+    updateAlbums(albums => {
+      stub = albums.find(a => a.sourceUrl === url);
+      if (!stub) albums.push(stub = makePendingRecord(url, service));
+    });
+    return { kind: 'pending', album: stub };
+  }
+  reportFailure('add-failed', { route, service, msg: String(rec._error) });
+  return { kind: 'failed', error: rec._error };
 }
 
 /**
@@ -712,27 +727,19 @@ async function boot() {
         addedMeta = existing._pending ? null : existing;
         phase = existing._pending ? 'pending' : 'exists';
       } else {
-        const rec = await resolveAlbumResilient(url, { service });
-        if (!rec._error) {
-          // Short links make every share's URL unique, so the sourceUrl check
-          // above rarely catches a repeat — the resolved id is what does.
-          const added = saveResolvedAlbum(rec);
-          highlightId = rec.id;
-          addedMeta = rec;
-          phase = added ? 'added' : 'exists';
-        } else if (isRetryableResolveError(rec._error)) {
-          // Resolver + MusicBrainz both failed with a retryable error — save pending stub so share isn't lost
-          const stub = makePendingRecord(url, service);
-          updateAlbums(albums => { albums.push(stub); });
-          highlightId = stub.id;
-          addedMeta = null; // no cover/title yet — the overlay says so
-          phase = 'pending';
-        } else {
-          // Non-retryable (404 / 400) — surface the failure instead of dropping it silently
-          addError = 'Couldn’t find that album — double-check the link and try again.';
+        // Short links make every share's URL unique, so the sourceUrl check
+        // above rarely catches a repeat — addAlbumFromUrl's id dedupe does.
+        const outcome = await addAlbumFromUrl(url, service, 'share-resolve');
+        if (outcome.kind === 'failed') {
+          // Surface the failure instead of dropping it silently
+          addError = RESOLVE_FAILED_MSG;
           addOpen = true;
           phase = 'error';
-          reportFailure('add-failed', { route: 'share-resolve', service, msg: String(rec._error) });
+        } else {
+          highlightId = outcome.album.id;
+          // A pending stub has no cover/title yet — the overlay says so.
+          addedMeta = outcome.kind === 'pending' ? null : outcome.album;
+          phase = outcome.kind;   // 'added' | 'exists' | 'pending' — the overlay's phases
         }
       }
       window.history.replaceState({}, document.title, window.location.pathname);
