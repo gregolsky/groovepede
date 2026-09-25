@@ -4,7 +4,7 @@ import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
 import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtistImage, fetchAlbumTracks, deezerAlbumId, TRACKS_ERROR } from './api.js';
 import { loadAlbums, saveAlbums, updateAlbums, updateAlbum, loadDone, saveDone, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
-import { renderAuthArea, renderApp, renderShareOverlay } from './render.js';
+import { renderHeaderActions, renderApp, renderShareOverlay } from './render.js';
 import { initBeacon, reportFailure } from './beacon.js';
 import { isSafeLinkUrl } from './services.js';
 
@@ -52,7 +52,7 @@ function rerender() {
     setTimeout(() => appEl.classList.remove('animate-in'), 2500);
   }
 
-  renderAuthArea(authEl);
+  renderHeaderActions(authEl);
   renderApp(appEl, getState());
 
   if (focusId === 'search-input' || focusId === 'url-input') {
@@ -483,11 +483,10 @@ window.addEventListener('popstate', () => {
 });
 
 // ── Share-target overlay ──────────────────────────────────────────────────────
-// Launching from a share used to show nothing at all until the album resolved:
-// a token refresh, a /me call and a resolver round trip happen first, so the app
-// sat there looking ignored for 2-3 seconds. The overlay now goes up BEFORE the
-// first await and morphs into the confirmation, instead of only existing at the
-// end of the flow.
+// Launching from a share used to show nothing at all until the album resolved,
+// so the app sat there looking ignored for the whole resolver round trip. The
+// overlay now goes up BEFORE the first await and morphs into the confirmation,
+// instead of only existing at the end of the flow.
 
 let _shareEl      = null;
 let _shareShownAt = 0;
@@ -537,11 +536,6 @@ function highlightCard(highlightId) {
 }
 
 /**
- * Close out a successful share: hold the confirmation briefly, close the window
- * when this was a share launch (the user is expecting to land back where they
- * came from), and otherwise fall back to highlighting the card in place.
- */
-/**
  * The error phase is the one the user has to read, so it neither auto-closes
  * fast nor blocks: a tap dismisses it, otherwise it fades after a few seconds,
  * revealing the add form with the same message already in it.
@@ -554,6 +548,11 @@ function dismissShareError() {
   setTimeout(close, 3200);
 }
 
+/**
+ * Close out a successful share: hold the confirmation briefly, close the window
+ * when this was a share launch (the user is expecting to land back where they
+ * came from), and otherwise fall back to highlighting the card in place.
+ */
 function finishShareOverlay(highlightId, isShareLaunch) {
   if (isShareLaunch) setTimeout(() => window.close(), 900);
   setTimeout(() => {

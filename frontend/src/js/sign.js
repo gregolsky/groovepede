@@ -7,7 +7,8 @@
  *
  * Token format:  "<unix_seconds>.<base64url(ieee-p1363 signature)>"
  * Signed payload: UTF-8 bytes of "`${ts}\n${payload}`" — the album URL for
- * /v1/resolve, `artist:<name>|<albumId>` for /v1/artist.
+ * /v1/album, `tracks:<albumId>` for /v1/tracks, `artist:<name>|<albumId>` for
+ * /v1/artist, and the fixed string `log` for /v1/log.
  *
  * The private key (VITE_GP_PRIVATE_KEY) is a base64-encoded PKCS8 DER blob.
  * The matching public key (GP_PUBLIC_KEY on the resolver) is base64-encoded SPKI DER.

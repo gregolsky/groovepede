@@ -537,8 +537,6 @@ body::after {
   gap: 4px;
 }
 .explore-link:hover { border-color: var(--border-2); color: var(--text); background: var(--surface-2); }
-.explore-link--spotify { background: rgba(15,210,135,.1); border-color: rgba(15,210,135,.35); color: var(--accent); }
-.explore-link--spotify:hover { background: rgba(15,210,135,.2); border-color: var(--accent); }
 .explore-link--lastfm { background: rgba(213,25,0,.1); border-color: rgba(213,25,0,.35); color: #d51900; }
 .explore-link--lastfm:hover { background: rgba(213,25,0,.2); border-color: #d51900; }
 .explore-bio { font-size: 14px; color: var(--text-dim); line-height: 1.75; margin-bottom: 20px; overflow-wrap: anywhere; }

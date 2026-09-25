@@ -2,12 +2,6 @@ import { loadAlbums, loadDone, filterAlbums } from './storage.js';
 import { SERVICES, serviceLabel, serviceListText, joinList, buildSearchUrl } from './services.js';
 import { TRACKS_ERROR } from './api.js';
 
-const SPOTIFY_ICON = 'M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.8 3.3-7.3 1.7-20-12.2-45.2-15-74.9-8.2-2.9.7-5.7-1.1-6.4-4-.7-2.9 1.1-5.7 4-6.4 32.5-7.4 60.4-4.2 82.9 9.5 2.5 1.6 3.3 4.9 1.7 7.4zm10.3-22.8c-2 3.1-6.1 4.1-9.2 2.1-22.9-14.1-57.8-18.1-84.9-9.9-3.4 1-7.1-.9-8.2-4.3-1-3.4.9-7.1 4.3-8.2 31-9.4 69.5-4.9 95.8 11.2 3.1 2 4.1 6.1 2.2 9.1zm.9-23.7C108.4 59 63.5 57.6 37.8 65.5c-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.7-9 79.1-7.3 110.3 11 3.7 2.2 4.9 6.9 2.7 10.5-2.1 3.7-6.9 4.9-10.5 2.7z';
-
-function spotifyIcon(w, h) {
-  return `<svg width="${w}" height="${h}" viewBox="0 0 168 168" fill="currentColor"><path d="${SPOTIFY_ICON}"/></svg>`;
-}
-
 // Last.fm icon — stylised "lfm" scrobble mark
 function lastfmIcon(w, h) {
   return `<svg width="${w}" height="${h}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -211,9 +205,9 @@ function renderListenBtn(album, prefService, { showService = false } = {}) {
   return `<button class="btn btn-listen btn-listen--alt" data-action="listen" data-url="${attr(target.url)}" title="${attr(tip)}">${PLAY_SVG} ${altLabel}</button>`;
 }
 
-// ── Auth area ─────────────────────────────────────────────────────────────────
+// ── Header actions ───────────────────────────────────────────────────────────
 
-export function renderAuthArea(el) {
+export function renderHeaderActions(el) {
   el.innerHTML = `
     <button class="profile-icon-btn" data-action="open-profile" aria-label="Profile &amp; settings" title="Profile, listening service, backups">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -711,10 +705,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
   const bio        = cached?.bio       || '';
   const similar    = cached?.similar   || [];
   const tags       = cached?.tags      || [];
-  const genres     = cached?.genres    || [];
-  const spotifyUrl = cached?.spotifyUrl || null;
   const lastfmUrl  = cached?.lastfmUrl  || null;
-  const mergedTags = [...new Set([...genres, ...tags])];
 
   const lastfmLink = lastfmUrl
     ? `<a class="explore-link explore-link--lastfm" href="${attr(lastfmUrl)}" target="_blank" title="${attr(`${album.artist || 'This artist'} on Last.fm — where the genre tags come from`)}">${lastfmIcon(12, 12)} Last.fm</a>`
@@ -770,9 +761,8 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
             : `<div class="explore-artist-image explore-artist-image--initials" aria-hidden="true">${escapeHtml(artistInitials(album.artist))}</div>`}
           <div class="explore-artist-info">
             <h2 class="explore-artist-name">${escapeHtml(album.artist || '')}</h2>
-            ${mergedTags.length ? `<div class="explore-tags">${mergedTags.map(t => `<span class="tag genre">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+            ${tags.length ? `<div class="explore-tags">${tags.map(t => `<span class="tag genre">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
             <div class="explore-links">
-              ${spotifyUrl ? `<a class="explore-link explore-link--spotify" href="${attr(spotifyUrl)}" target="_blank" title="${attr(`Open ${album.artist || 'this artist'}'s page on Spotify`)}">${spotifyIcon(12, 12)} Artist on Spotify</a>` : ''}
               ${lastfmLink}
             </div>
           </div>

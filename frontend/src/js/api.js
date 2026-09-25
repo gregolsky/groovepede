@@ -520,9 +520,8 @@ export async function fetchLastfmArtist(artistName) {
 // 2019 (album.getinfo images are still real — it's artist images specifically).
 // Album-page extraction carries no artist imagery either, only album covers.
 //
-// Order: Spotify (caller, when connected — explicitly licensed and already
-// attributed) → TheAudioDB (browser-direct, CORS-enabled, free) → Deezer via
-// our resolver (best coverage, but api.deezer.com sends no CORS header).
+// Order: TheAudioDB (browser-direct, CORS-enabled, free) → Deezer via our
+// resolver (best coverage, but api.deezer.com sends no CORS header).
 // Only URLs are handled anywhere in this chain; the browser loads the image
 // itself straight from the source's CDN.
 
