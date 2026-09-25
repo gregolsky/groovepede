@@ -13,6 +13,8 @@
  * Arrays render item by item with no separator (so `.map()` needs no
  * `.join('')`, which would lose the safe type), null/undefined/false render as
  * nothing, and anything else — strings, numbers, true — is escaped as text.
+ * Mind `${cond && html`…`}`: that's safe for a string/object/boolean cond,
+ * but a numeric cond of 0 renders a literal "0" — test `count > 0` instead.
  * A result is a SafeHtml; String() it (or assign it to innerHTML) to get the
  * markup.
  */

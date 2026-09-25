@@ -64,6 +64,27 @@ async function gatedResolver(context) {
   return release;
 }
 
+/**
+ * The overlay's text at the moment it reaches `phase`, read in one page-side
+ * check. The terminal phases (added/exists/pending) auto-dismiss after ~1s, so
+ * a chain of separate expect()s — each retrying on its own — can outlast the
+ * phase and find the overlay already gone. Reading everything in the same
+ * tick the phase appears can't.
+ */
+async function overlayAt(page, phase) {
+  const handle = await page.waitForFunction(p => {
+    const o = document.querySelector(`#share-overlay.share-overlay--${p}`);
+    const text = sel => o.querySelector(sel)?.textContent.trim() ?? null;
+    return o && {
+      title: text('.share-overlay__title'),
+      sub:   text('.share-overlay__sub'),
+      label: text('.share-overlay__label'),
+      hasCover: !!o.querySelector('.share-art-cover'),
+    };
+  }, phase, { timeout: SETTLE_MS, polling: 100 });
+  return handle.jsonValue();
+}
+
 // ── The loading phase — the reason this overlay exists ─────────────────────────
 
 test('share-target shows the adding overlay before the album resolves', async ({ page, context }) => {
@@ -84,8 +105,7 @@ test('share-target shows the adding overlay before the album resolves', async ({
 
   // …and then becomes the confirmation in place, once the resolver answers.
   release();
-  await expect(overlay).toHaveClass(/share-overlay--added/, { timeout: SETTLE_MS });
-  await expect(overlay.locator('.share-art-cover')).toBeVisible();
+  expect((await overlayAt(page, 'added')).hasCover).toBe(true);
 });
 
 // ── Share in standalone (PWA) mode shows overlay ───────────────────────────────
@@ -96,10 +116,9 @@ test('share-target shows confirmation overlay in standalone mode', async ({ page
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
-  await expect(page.locator('#share-overlay')).toBeVisible({ timeout: SETTLE_MS });
-  await expect(page.locator('#share-overlay .share-overlay__title')).toHaveText('Share Test Album');
-  await expect(page.locator('#share-overlay .share-overlay__sub')).toHaveText('Share Artist');
-  await expect(page.locator('#share-overlay .share-overlay__label')).toHaveText('Added to queue!');
+  expect(await overlayAt(page, 'added')).toMatchObject({
+    title: 'Share Test Album', sub: 'Share Artist', label: 'Added to queue!',
+  });
 });
 
 test('share-target overlay disappears and card is highlighted when window.close() does not close', async ({ page, context }) => {
@@ -215,10 +234,9 @@ test('sharing while the resolver is down still confirms the link was saved', asy
 
   await page.goto(`/?url=${encodeURIComponent(SHARE_URL)}`, { waitUntil: 'commit' });
 
-  const overlay = page.locator('#share-overlay');
-  await expect(overlay).toHaveClass(/share-overlay--pending/, { timeout: SETTLE_MS });
-  await expect(overlay.locator('.share-overlay__title')).toHaveText('Got it — saved!');
-  await expect(overlay.locator('.share-overlay__label')).toHaveText('Fetching details…');
+  expect(await overlayAt(page, 'pending')).toMatchObject({
+    title: 'Got it — saved!', label: 'Fetching details…',
+  });
 });
 
 test('a shared link that is not an album is rejected on the overlay', async ({ page, context }) => {

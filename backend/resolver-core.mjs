@@ -38,7 +38,7 @@ export const TRACKS_TTL_S  = 60 * 60 * 24 * 30;            // 30 days — trackl
 /**
  * The steps every signed JSON endpoint (/v1/album, /v1/artist, /v1/tracks)
  * shares, in the one order they must run: CORS and the OPTIONS preflight →
- * token check (403, logged) → input validation (400) → cache read → compute →
+ * token check (403, logged) → input parsing (400) → cache read → compute →
  * cache write. Cache errors are logged and never fatal. Each endpoint supplies
  * only what differs. Transport-agnostic: adapters pass parsed inputs plus a
  * cache adapter and translate the returned {statusCode, headers, body}.
@@ -46,12 +46,14 @@ export const TRACKS_TTL_S  = 60 * 60 * 24 * 30;            // 30 days — trackl
  * @param {object}   p
  * @param {string}   p.route          for log lines, e.g. '/v1/album'
  * @param {string}   p.signedPayload  the string the client signed for this request
- * @param {() => string|null} p.validate  an _error string for a 400, or null
- * @param {() => string}      p.cacheKey  only called once validate() passed
- * @param {() => Promise<{status:number, body:any, ttlS?:number}>} p.compute
+ * @param {() => {error:string}|object} p.parse  `{ error }` for a 400; otherwise
+ *        the parsed input, handed to cacheKey and compute — so what they
+ *        depend on is explicit, not state parse() left behind in a closure
+ * @param {(input:object) => string} p.cacheKey
+ * @param {(input:object) => Promise<{status:number, body:any, ttlS?:number}>} p.compute
  *        a 200 with ttlS is cached for that long; without ttlS it isn't.
  */
-async function signedJsonEndpoint({ method, origin, token, cache, logger, route, signedPayload, validate, cacheKey, compute }) {
+async function signedJsonEndpoint({ method, origin, token, cache, logger, route, signedPayload, parse, cacheKey, compute }) {
   const cors = corsHeaders(origin || '');
   if (method === 'OPTIONS') return { statusCode: 204, headers: cors, body: null };
 
@@ -63,10 +65,10 @@ async function signedJsonEndpoint({ method, origin, token, cache, logger, route,
     logger.warn({ route, reason: auth.reason }, 'forbidden');
     return reply(403, { _error: 'forbidden' });
   }
-  const invalid = validate();
-  if (invalid) return reply(400, { _error: invalid });
+  const input = parse();
+  if (input.error) return reply(400, { _error: input.error });
 
-  const key = cacheKey();
+  const key = cacheKey(input);
   try {
     const hit = await cache.get(key);
     if (hit) return reply(200, hit);
@@ -74,7 +76,7 @@ async function signedJsonEndpoint({ method, origin, token, cache, logger, route,
     logger.warn({ route, key, err: err.message }, 'cache get error (non-fatal)');
   }
 
-  const { status, body, ttlS } = await compute();
+  const { status, body, ttlS } = await compute(input);
   if (status === 200 && ttlS) {
     try {
       await cache.put(key, body, ttlS);
@@ -121,19 +123,19 @@ function upstreamFailure(err, logger, logFields) {
  * @returns {Promise<{statusCode:number, headers:object, body:any}>}
  */
 export async function albumRequest({ method, origin, url, token, cache, fetchImpl = fetch, logger = NOOP_LOGGER }) {
-  let parsed, service;
   return signedJsonEndpoint({
     method, origin, token, cache, logger,
     route: '/v1/album',
     signedPayload: url || '',
-    validate: () => {
-      if (!url) return 'missing url';
-      try { parsed = new URL(url); } catch { return 'bad url'; }
-      service = serviceForHost(parsed.hostname);
-      return service ? null : 'unsupported url';
+    parse: () => {
+      if (!url) return { error: 'missing url' };
+      let parsed;
+      try { parsed = new URL(url); } catch { return { error: 'bad url' }; }
+      const service = serviceForHost(parsed.hostname);
+      return service ? { parsed, service } : { error: 'unsupported url' };
     },
     cacheKey: () => `album:v1:${normalizeUrl(url)}`,
-    compute: () => computeAlbum({ url, parsed, service, fetchImpl, logger }),
+    compute: ({ parsed, service }) => computeAlbum({ url, parsed, service, fetchImpl, logger }),
   });
 }
 
@@ -255,11 +257,11 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
     route: '/v1/artist',
     // Bound to the same canonical string the client signed.
     signedPayload: `artist:${name || ''}|${albumId || ''}`,
-    validate: () => {
-      if (!name) return 'missing name';
+    parse: () => {
+      if (!name) return { error: 'missing name' };
       // albumId goes straight into a URL path; only ever a Deezer numeric id.
-      if (albumId && !/^\d+$/.test(albumId)) return 'bad albumId';
-      return null;
+      if (albumId && !/^\d+$/.test(albumId)) return { error: 'bad albumId' };
+      return {};
     },
     cacheKey: () => `artist:${normalizeArtist(name)}`,
     compute: () => computeArtist({ name, albumId, fetchImpl, logger }),
@@ -327,10 +329,10 @@ export async function tracksRequest({ method, origin, albumId, token, cache, fet
     method, origin, token, cache, logger,
     route: '/v1/tracks',
     signedPayload: `tracks:${albumId || ''}`,
-    validate: () => {
-      if (!albumId) return 'missing albumId';
+    parse: () => {
+      if (!albumId) return { error: 'missing albumId' };
       // albumId goes straight into a URL path; only ever a Deezer numeric id.
-      return /^\d+$/.test(albumId) ? null : 'bad albumId';
+      return /^\d+$/.test(albumId) ? {} : { error: 'bad albumId' };
     },
     cacheKey: () => `tracks:${albumId}`,
     compute: () => computeTracks({ albumId, fetchImpl, logger }),

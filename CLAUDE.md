@@ -22,7 +22,7 @@ Two top-level workspaces:
 - **`frontend/src/css/style.css`** — all styles, imported via JS
 - **`frontend/src/js/app.js`** — entry point: state management, event delegation, boot sequence
 - **`frontend/src/js/api.js`** — calls our resolver (album-page extraction + cross-service links + tracklists, see `backend/`) + Last.fm API
-- **`frontend/src/js/render.js`** — pure HTML string rendering (no virtual DOM, no templates)
+- **`frontend/src/js/render.js`** — pure HTML string rendering via the escape-by-default `html` tagged template (`html.js`); no virtual DOM, reads nothing from storage (everything comes in through `getState()`)
 - **`frontend/src/js/storage.js`** — localStorage read/write for albums, listen count, preferred service; link parsing, backup (de)serialisation, `filterAlbums` (visible-list source of truth)
 - **`frontend/src/js/services.js`** — supported-service registry; service labels, per-host album matching, search-link templates (`buildSearchUrl`), profile's "Listen on" options, and every user-facing service list (`serviceListText`) all derive from it. Static markup can't call it — add a service here, also update `src/faq.html` (`<details>` copy + FAQPage JSON-LD) and meta descriptions in `src/index.html`. Service goes here only if its album page (or a free keyless API) actually exposes extractable metadata — see per-service extractors in `backend/extractors.mjs`.
 - **`frontend/src/js/sign.js`** — ECDSA-P256 request signing for resolver's `x-gp-token`
@@ -60,7 +60,7 @@ Resolver itself needs no API key from client's perspective — see `backend/READ
 
 ## Conventions
 
-- All rendering is string-based HTML concat in `render.js` — no DOM manipulation elsewhere
+- All rendering is string-based HTML in `render.js`/`landing.js` — no DOM manipulation elsewhere, except behaviour markup can't carry without inline handlers (a strict CSP forbids those): e.g. `app.js`'s capture-phase landing-image load/error listeners
 - Markup in `render.js`/`landing.js` built only with the `html` tagged template (`html.js`): escapes every interpolated value unless it's an `html`/`raw()` fragment. Never plain template literal for markup, never `raw()` on data. Records come from imported backups + Last.fm → never trust any field. Imported records validated at boundary by `sanitizeRecord()` (storage.js); Listen opens only `isSafeLinkUrl()` URLs (services.js)
 - State lives in module-level vars in `app.js`; `rerender()` rebuilds full UI
 - Queue changes go through `updateAlbums(fn)` / `updateAlbum(id, fn)` (storage.js) — synchronous read-modify-write. Never `loadAlbums()` → `await` → `saveAlbums()`: stale snapshot undoes changes made during the await
