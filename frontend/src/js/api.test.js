@@ -56,10 +56,27 @@ const MB_RESPONSE = {
 
 // ── resolveAlbum ──────────────────────────────────────────────────────────────
 
+/** A fetch that never answers on its own — only the caller's AbortSignal ends it. */
+function stalledFetch() {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation((url, opts = {}) => new Promise((_, reject) => {
+    opts.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+  }));
+}
+
 describe('resolveAlbum', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     resetThrottles();
+  });
+
+  it('gives up with a retryable network error when the resolver stalls, instead of spinning forever', async () => {
+    vi.useFakeTimers();
+    try {
+      stalledFetch();
+      const p = resolveAlbum('https://open.spotify.com/album/x');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await p).toEqual({ _error: 'network' });
+    } finally { vi.useRealTimers(); }
   });
 
   it('returns album record with title, artist, cover, year, tags from the resolver', async () => {
@@ -212,6 +229,16 @@ describe('parseMbRelease', () => {
 
 describe('resolveAlbumMusicBrainz', () => {
   beforeEach(() => { vi.restoreAllMocks(); resetThrottles(); });
+
+  it('gives up with a network error when MusicBrainz stalls', async () => {
+    vi.useFakeTimers();
+    try {
+      stalledFetch();
+      const p = resolveAlbumMusicBrainz('https://open.spotify.com/album/x', 'spotify');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await p).toEqual({ _error: 'network' });
+    } finally { vi.useRealTimers(); }
+  });
 
   it('returns album record on success', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');

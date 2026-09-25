@@ -43,6 +43,44 @@ let throttles = makeThrottles();
 /** Override throttles (tests only) — inject no-op / fake-clock instances. */
 export function _setThrottles(t) { throttles = { ...throttles, ...t }; }
 
+// ── Fetch with a deadline ─────────────────────────────────────────────────────
+// Every outbound call gets one. Without it a stalled connection never settles,
+// and whatever awaits it — the Add button's spinner, a throttle slot that
+// every later call queues behind — waits forever.
+
+// /v1/album can legitimately take ~24s (short-link redirect + page fetch +
+// cross-linking; see nginx's proxy_read_timeout for `location /`), so the
+// client waits a little longer than that: on a slow upstream, nginx's own
+// answer arrives before we give up.
+const ALBUM_TIMEOUT_MS   = 30_000;
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+/**
+ * fetch(), aborted after `timeoutMs`. Resolves to the Response or rejects
+ * (network failure, or an AbortError on timeout) exactly like fetch() —
+ * callers keep their own mapping of a rejection to their failure shape.
+ */
+async function fetchWithTimeout(url, opts = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * GET one of our resolver's endpoints. `signedPayload` is what the resolver
+ * reconstructs and verifies for that route (see backend/resolver-core.mjs):
+ * the album URL for /v1/album, `tracks:<id>`, `artist:<name>|<albumId>`.
+ */
+async function resolverGet(path, params, signedPayload, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  return fetchWithTimeout(`${RESOLVER_BASE}${path}?${new URLSearchParams(params)}`, {
+    headers: { 'x-gp-token': await signRequestToken(signedPayload) },
+  }, timeoutMs);
+}
+
 // ── Resolver (album-page extraction + cross-service links) ───────────────────
 
 /**
@@ -54,10 +92,7 @@ export function _setThrottles(t) { throttles = { ...throttles, ...t }; }
  */
 export async function resolveAlbum(inputUrl) {
   try {
-    const params = new URLSearchParams({ url: inputUrl });
-    const res = await fetch(`${RESOLVER_BASE}/v1/album?${params}`, {
-      headers: { 'x-gp-token': await signRequestToken(inputUrl) },
-    });
+    const res = await resolverGet('/v1/album', { url: inputUrl }, inputUrl, ALBUM_TIMEOUT_MS);
     if (!res.ok) {
       if (res.status === 429) return rateLimitError(res);
       return { _error: res.status };
@@ -135,7 +170,7 @@ export function parseMbRelease(data, sourceUrl, service) {
 async function fetchMbReleaseGenres(mbid) {
   try {
     const params = new URLSearchParams({ inc: 'genres', fmt: 'json' });
-    const res = await fetch(`${MUSICBRAINZ_BASE}/release/${mbid}?${params}`);
+    const res = await fetchWithTimeout(`${MUSICBRAINZ_BASE}/release/${mbid}?${params}`);
     if (!res.ok) return [];
     const data = await res.json();
     return (data?.genres || []).map(g => g.name).filter(Boolean);
@@ -148,7 +183,7 @@ async function fetchMbReleaseGenres(mbid) {
 export async function resolveAlbumMusicBrainz(sourceUrl, service) {
   try {
     const params = new URLSearchParams({ resource: sourceUrl, inc: 'release-rels+artist-credits', fmt: 'json' });
-    const res = await fetch(`${MUSICBRAINZ_BASE}/url?${params}`);
+    const res = await fetchWithTimeout(`${MUSICBRAINZ_BASE}/url?${params}`);
     if (!res.ok) return { _error: res.status };
     const data = await res.json();
     const rec  = parseMbRelease(data, sourceUrl, service);
@@ -232,14 +267,11 @@ export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate
 
 async function _lfmGet(params) {
   const p = new URLSearchParams({ ...params, api_key: LASTFM_KEY, format: 'json' });
-  const ctrl  = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const res = await fetch(LASTFM + '?' + p, { signal: ctrl.signal });
-    clearTimeout(timer);
+    const res = await fetchWithTimeout(LASTFM + '?' + p, {}, 8000);
     if (!res.ok) return null;
-    return res.json();
-  } catch { clearTimeout(timer); return null; }
+    return await res.json();
+  } catch { return null; }
 }
 
 function lfmGet(params) {
@@ -386,22 +418,13 @@ export async function fetchAlbumTracks(albumId) {
   if (throttles.deezer.coolingDown()) return TRACKS_ERROR;
 
   const result = await throttles.deezer.run(async () => {
-    const ctrl  = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 10_000);
     try {
-      const params = new URLSearchParams({ albumId });
-      const signed = `tracks:${albumId}`;
-      const res = await fetch(`${RESOLVER_BASE}/v1/tracks?${params}`, {
-        headers: { 'x-gp-token': await signRequestToken(signed) },
-        signal: ctrl.signal,
-      });
+      const res = await resolverGet('/v1/tracks', { albumId }, `tracks:${albumId}`);
       if (!res.ok) return res.status === 429 ? rateLimitError(res) : { _httpError: res.status };
       const data = await res.json();
       return data?.tracks || [];
     } catch (err) {
       return { _networkError: err?.name === 'AbortError' ? 'timeout' : 'network' };
-    } finally {
-      clearTimeout(timer);
     }
   });
 
@@ -466,7 +489,7 @@ function isBlankImage(url) {
 export async function fetchAudiodbArtistImage(artistName) {
   const data = await throttles.audiodb.run(async () => {
     try {
-      const res = await fetch(`${AUDIODB_BASE}/search.php?s=${encodeURIComponent(artistName)}`);
+      const res = await fetchWithTimeout(`${AUDIODB_BASE}/search.php?s=${encodeURIComponent(artistName)}`);
       if (!res.ok) return null;
       return res.json();
     } catch { return null; }
@@ -491,13 +514,8 @@ export async function fetchAudiodbArtistImage(artistName) {
 export async function fetchDeezerArtistData(artistName, albumId) {
   return throttles.deezer.run(async () => {
     try {
-      const params = new URLSearchParams({ name: artistName });
-      if (albumId) params.set('albumId', albumId);
-      // Signed payload must match exactly what the resolver reconstructs.
-      const signed = `artist:${artistName}|${albumId || ''}`;
-      const res = await fetch(`${RESOLVER_BASE}/v1/artist?${params}`, {
-        headers: { 'x-gp-token': await signRequestToken(signed) },
-      });
+      const params = albumId ? { name: artistName, albumId } : { name: artistName };
+      const res = await resolverGet('/v1/artist', params, `artist:${artistName}|${albumId || ''}`);
       if (!res.ok) return res.status === 429 ? rateLimitError(res) : null;
       const data = await res.json();
       return { image: isBlankImage(data?.image) ? null : data.image, genres: data?.genres || [] };
