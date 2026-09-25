@@ -19,6 +19,28 @@ const is429        = r => r?._error === 429;
 const retryAfterMs = r => r?._retryAfter != null ? r._retryAfter * 1000 : null;
 
 /**
+ * The one failure shape every function in this file returns on a transport
+ * failure — a timeout, a 5xx, a 429, a malformed body, "network". `code` is
+ * either an HTTP status or one of rejectionReason()'s strings. Never an
+ * expected "no" answer (a 404, "no such artist") — those are `null`/`[]`,
+ * a real (if empty) result.
+ *
+ * A plain `_error` property, not a class, so the throttle's own
+ * `_error === 429` cooldown check (is429 above) keeps seeing it with no
+ * translation layer — the throttle wraps the raw return value of the function
+ * it paces, before this module gets a chance to look at it. Frozen so nothing
+ * downstream mutates a value that error-message code may hold onto.
+ */
+function apiError(code, extra) {
+  return Object.freeze({ _error: code, ...extra });
+}
+
+/** True for any value built by apiError() above — the one failure shape. */
+export function isApiError(x) {
+  return !!x && typeof x === 'object' && '_error' in x;
+}
+
+/**
  * The error shape every rate-limited response returns. `_retryAfter` (seconds,
  * from the server's Retry-After header) is only present when the server sent a
  * usable one — the throttler treats its absence as "escalate our own backoff".
@@ -26,7 +48,7 @@ const retryAfterMs = r => r?._retryAfter != null ? r._retryAfter * 1000 : null;
 function rateLimitError(res) {
   const raw = res.headers?.get?.('retry-after');
   const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
-  return { _error: 429, ...(retryAfter != null && { _retryAfter: retryAfter }) };
+  return apiError(429, retryAfter != null ? { _retryAfter: retryAfter } : undefined);
 }
 
 function makeThrottles() {
@@ -127,7 +149,7 @@ export async function resolveAlbum(inputUrl) {
     const res = await resolverGet('/v1/album', { url: inputUrl }, signedPayload.album(inputUrl), ALBUM_TIMEOUT_MS);
     if (!checkResponse('/v1/album', res)) {
       if (res.status === 429) return rateLimitError(res);
-      return { _error: res.status };  // a 4xx is the caller's to report, as the add outcome
+      return apiError(res.status);  // a 4xx is the caller's to report, as the add outcome
     }
     const data = await res.json();
     // Every stored record needs an id (dedupe, updates, card ids all key on
@@ -135,7 +157,7 @@ export async function resolveAlbum(inputUrl) {
     // kept as a pending stub rather than saved id-less.
     if (!data?.id) {
       reportApiFailure('/v1/album', 'bad-response');
-      return { _error: 'network' };
+      return apiError('network');
     }
 
     return {
@@ -151,7 +173,7 @@ export async function resolveAlbum(inputUrl) {
     };
   } catch (err) {
     reportApiFailure('/v1/album', rejectionReason(err));
-    return { _error: 'network' };
+    return apiError('network');
   }
 }
 
@@ -227,15 +249,15 @@ export async function resolveAlbumMusicBrainz(sourceUrl, service) {
     const res = await fetchWithTimeout(`${MUSICBRAINZ_BASE}/url?${params}`);
     // Reported here, not by the caller: resolveAlbumResilient returns the
     // resolver's error when both fail, so MusicBrainz's own would be lost.
-    if (!checkResponse('musicbrainz:url', res)) return { _error: res.status };
+    if (!checkResponse('musicbrainz:url', res)) return apiError(res.status);
     const data = await res.json();
     const rec  = parseMbRelease(data, sourceUrl, service);
-    if (!rec) return { _error: 'not-found' };
+    if (!rec) return apiError('not-found');
     rec.tags = await fetchMbReleaseGenres(rec.id.slice(3)); // strip the 'mb:' prefix back to the raw mbid
     return rec;
   } catch (err) {
     reportApiFailure('musicbrainz:url', rejectionReason(err));
-    return { _error: 'network' };
+    return apiError('network');
   }
 }
 
@@ -250,7 +272,7 @@ export async function resolveAlbumResilient(sourceUrl, { service } = {}) {
     lastResolverErr = await throttles.resolver.run(() => resolveAlbum(sourceUrl));
     if (!lastResolverErr._error) return lastResolverErr;
   } else {
-    lastResolverErr = { _error: 429 }; // cooldown active = effectively rate-limited
+    lastResolverErr = apiError(429); // cooldown active = effectively rate-limited
   }
   // MusicBrainz fallback (throttled independently)
   const mbRec = await throttles.musicbrainz.run(() => resolveAlbumMusicBrainz(sourceUrl, service));
@@ -282,8 +304,9 @@ export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate
   // curated per-album — then artist tags, then album tags. This is an
   // enrichment pass, not a replacement: Last.fm coverage is spotty, and
   // overwriting a resolver-supplied genre with a thinner Last.fm result would
-  // be a regression, not enrichment.
-  let tags = mergeUnique(snapshot.tags || [], artistTags, albumData.tags);
+  // be a regression, not enrichment. albumData is an ApiError, not {tags},
+  // when album.getinfo itself failed — treated the same as "no album tags".
+  let tags = mergeUnique(snapshot.tags || [], artistTags, isApiError(albumData) ? [] : albumData.tags);
 
   // Fall back to similar artists if we still have nothing at all
   if (!tags.length) tags = await fetchTagsFromSimilarArtists(primaryArtist);
@@ -314,11 +337,11 @@ async function _lfmGet(params) {
   const route = `lastfm:${params.method}`;
   try {
     const res = await fetchWithTimeout(LASTFM + '?' + p, {}, 8000);
-    if (!checkResponse(route, res)) return null;
+    if (!checkResponse(route, res)) return apiError(res.status);
     return await res.json();
   } catch (err) {
     reportApiFailure(route, rejectionReason(err));
-    return null;
+    return apiError(rejectionReason(err));
   }
 }
 
@@ -328,6 +351,7 @@ function lfmGet(params) {
 
 export async function fetchLastfmAlbum(artist, album) {
   const data = await lfmGet({ method: 'album.getinfo', artist, album, autocorrect: '1' });
+  if (isApiError(data)) return data;
   const tags = cleanTags(asArray(data?.album?.tags?.tag).slice(0, 5), artist);
   return { tags };
 }
@@ -439,24 +463,16 @@ export function normalizeAlbumStr(s) {
 }
 
 /**
- * Sentinel returned by fetchAlbumTracks on failure — distinct from `[]` (a
- * genuinely track-less album, e.g. no Deezer cross-link) and from
- * `undefined` (not fetched yet), so callers can tell "empty" from "broken"
- * apart and offer a retry instead of rendering identical blank space for
- * both. A single frozen object rather than e.g. `null`, so `trackCache[id]
- * === TRACKS_ERROR` is an unambiguous identity check.
- */
-export const TRACKS_ERROR = Object.freeze({ _tracksError: true });
-
-/**
  * A Deezer album's tracklist via our resolver (api.deezer.com sends no CORS
  * header, so the browser can't call it directly). `albumId` is Deezer's own
  * numeric album id — see deezerAlbumId() below.
  *
- * Returns an array (possibly empty) on success, or TRACKS_ERROR on any
- * failure — never throws, and never returns the throttle's raw `{_error:429}`
- * marker (that object used to be stored directly in trackCache, where its
- * truthiness permanently blocked any retry after a single transient 429).
+ * Returns an array (possibly empty — a genuinely track-less album, e.g. no
+ * Deezer cross-link) on success, or an ApiError (isApiError()) on any
+ * failure — never throws. Callers use the array/ApiError distinction to tell
+ * "empty" from "broken" apart and offer a retry instead of rendering
+ * identical blank space for both; `undefined` (never fetched) is the third
+ * state, entirely the caller's (trackCache starts empty).
  * Every failure is also reported through the client beacon (see
  * frontend/src/js/beacon.js) with the real status, so "why didn't this
  * tracklist load" is answerable from the resolver's own logs.
@@ -467,26 +483,25 @@ export async function fetchAlbumTracks(albumId) {
   // is shared with artist-image fetches, so without this check a cooldown
   // triggered by an unrelated call could leave "Loading tracks…" on screen
   // for up to 5 minutes (see THROTTLE.deezer's maxCooldownMs in config.js).
-  if (throttles.deezer.coolingDown()) return TRACKS_ERROR;
+  // Silent (no reportFailure): whatever tripped the cooldown already reported it.
+  if (throttles.deezer.coolingDown()) return apiError(429);
 
   const result = await throttles.deezer.run(async () => {
     try {
       const res = await resolverGet('/v1/tracks', { albumId }, signedPayload.tracks(albumId));
-      if (!res.ok) return res.status === 429 ? rateLimitError(res) : { _httpError: res.status };
+      if (!res.ok) return res.status === 429 ? rateLimitError(res) : apiError(res.status);
       const data = await res.json();
       return data?.tracks || [];
     } catch (err) {
-      return { _networkError: rejectionReason(err) };
+      return apiError(rejectionReason(err));
     }
   });
 
   if (Array.isArray(result)) return result;
-  // The throttle above already saw the raw {_error:429} shape it needs to
-  // manage cooldown (is429/retryAfterOf read the direct return of run()'s
-  // callback) — everything past this point sanitizes into one failure shape.
-  const status = is429(result) ? 429 : (result?._httpError || result?._networkError || 'unknown');
-  reportFailure('tracklist-fetch-failed', { msg: String(status), albumId, route: '/v1/tracks' });
-  return TRACKS_ERROR;
+  // result is already an ApiError — the same shape the throttle itself read
+  // (is429/retryAfterOf) to manage cooldown, so no translation layer needed.
+  reportFailure('tracklist-fetch-failed', { msg: String(result._error), albumId, route: '/v1/tracks' });
+  return result;
 }
 
 export async function fetchLastfmArtist(artistName) {
@@ -495,6 +510,11 @@ export async function fetchLastfmArtist(artistName) {
     lfmGet({ method: 'artist.getsimilar', artist: artistName, limit: '6', autocorrect: '1' }),
     fetchArtistTags(artistName),
   ]);
+
+  // Only surface a failure when BOTH calls that carry the bio/similar data
+  // failed to run — either one succeeding (even with a thin or "not found"
+  // answer) is a genuine result worth showing, not a failure to retry.
+  if (isApiError(infoData) && isApiError(similarData)) return infoData;
 
   // Strip the Last.fm "Read more" link, then all remaining markup.
   let bio = infoData?.artist?.bio?.content || infoData?.artist?.bio?.summary || '';
@@ -541,13 +561,14 @@ export async function fetchAudiodbArtistImage(artistName) {
   const data = await throttles.audiodb.run(async () => {
     try {
       const res = await fetchWithTimeout(`${AUDIODB_BASE}/search.php?s=${encodeURIComponent(artistName)}`);
-      if (!checkResponse('audiodb:search', res)) return null;
+      if (!checkResponse('audiodb:search', res)) return apiError(res.status);
       return await res.json();
     } catch (err) {
       reportApiFailure('audiodb:search', rejectionReason(err));
-      return null;
+      return apiError(rejectionReason(err));
     }
   });
+  if (isApiError(data)) return data;
   const want  = normalizeAlbumStr(artistName);
   const match = (data?.artists || []).find(a => normalizeAlbumStr(a?.strArtist) === want);
   // Their CDN serves https fine even though some records store an http:// URL,
@@ -562,20 +583,20 @@ export async function fetchAudiodbArtistImage(artistName) {
  * whenever cross-linking found a match) makes the lookup exact; without it the
  * resolver falls back to a strict name match and returns no genres (Deezer's
  * search endpoint doesn't carry them).
- * Returns `{ image: string|null, genres: string[] }`, a rate-limit error
- * object (`{ _error: 429, ... }`), or `null` on failure.
+ * Returns `{ image: string|null, genres: string[] }` on success, or an
+ * ApiError (isApiError()) on any failure, including a 429.
  */
 export async function fetchDeezerArtistData(artistName, albumId) {
   return throttles.deezer.run(async () => {
     try {
       const params = albumId ? { name: artistName, albumId } : { name: artistName };
       const res = await resolverGet('/v1/artist', params, signedPayload.artist(artistName, albumId));
-      if (!checkResponse('/v1/artist', res)) return res.status === 429 ? rateLimitError(res) : null;
+      if (!checkResponse('/v1/artist', res)) return res.status === 429 ? rateLimitError(res) : apiError(res.status);
       const data = await res.json();
       return { image: isBlankImage(data?.image) ? null : data.image, genres: data?.genres || [] };
     } catch (err) {
       reportApiFailure('/v1/artist', rejectionReason(err));
-      return null;
+      return apiError(rejectionReason(err));
     }
   });
 }
@@ -588,15 +609,20 @@ export function deezerAlbumId(album) {
 
 /**
  * Artist image for an album, trying the free browser-direct source first and
- * only falling back to our resolver. Returns a URL or null.
+ * only falling back to our resolver. Returns a URL, `null` when neither
+ * source has a photo, or an ApiError only when BOTH sources failed to run —
+ * either one running fine and simply finding no image is a genuine "no
+ * photo", not a failure worth retrying.
  */
 export async function fetchArtistImage(album) {
   const artist = (album?.artist || '').split(',')[0].trim();
   if (!artist) return null;
 
   const fromAudiodb = await fetchAudiodbArtistImage(artist);
-  if (fromAudiodb) return fromAudiodb;
+  if (typeof fromAudiodb === 'string') return fromAudiodb;
 
   const fromDeezer = await fetchDeezerArtistData(artist, deezerAlbumId(album));
-  return typeof fromDeezer?.image === 'string' ? fromDeezer.image : null;
+  if (typeof fromDeezer?.image === 'string') return fromDeezer.image;
+
+  return (isApiError(fromAudiodb) && isApiError(fromDeezer)) ? fromDeezer : null;
 }

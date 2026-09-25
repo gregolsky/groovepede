@@ -74,19 +74,19 @@ describe('the touch points that swallow their failures report them first', () =>
 
   it('Last.fm: reports a 5xx, naming the method', async () => {
     respond(500);
-    expect(await fetchLastfmAlbum('A', 'T')).toEqual({ tags: [] });
+    expect(await fetchLastfmAlbum('A', 'T')).toEqual({ _error: 500 });
     expect(reported()).toEqual(['api-failed lastfm:album.getinfo 500']);
   });
 
   it('TheAudioDB: reports a network failure', async () => {
     reject();
-    expect(await fetchAudiodbArtistImage('A')).toBeNull();
+    expect(await fetchAudiodbArtistImage('A')).toEqual({ _error: 'network' });
     expect(reported()).toEqual(['api-failed audiodb:search network']);
   });
 
   it('/v1/artist: reports a 5xx', async () => {
     respond(502);
-    expect(await fetchDeezerArtistData('A', '1')).toBeNull();
+    expect(await fetchDeezerArtistData('A', '1')).toEqual({ _error: 502 });
     expect(reported()).toEqual(['api-failed /v1/artist 502']);
   });
 });

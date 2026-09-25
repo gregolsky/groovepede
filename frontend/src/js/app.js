@@ -2,7 +2,7 @@ import '../css/style.css';
 import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource-variable/hanken-grotesk';
 import '@fontsource-variable/geist-mono';
-import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtistImage, fetchAlbumTracks, deezerAlbumId, TRACKS_ERROR } from './api.js';
+import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtistImage, fetchAlbumTracks, deezerAlbumId, isApiError } from './api.js';
 import { loadAlbums, saveAlbums, updateAlbums, updateAlbum, loadDone, saveDone, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderHeaderActions, renderApp, renderShareOverlay } from './render.js';
 import { initBeacon, reportFailure } from './beacon.js';
@@ -224,19 +224,24 @@ async function openExplore(index) {
 async function prefetchExplore(album) {
   const { artist, id } = album;
   const deezerId    = deezerAlbumId(album);
+  // Retry-eligible when never fetched OR the last attempt failed (an
+  // ApiError) — a plain result (even an empty array, or a {bio,similar,tags}
+  // with everything blank) means "done", success or genuine no-data, and is
+  // never refetched. Without the failure branch here, a single transient
+  // failure used to be indistinguishable from "done" and could never be
+  // retried for the rest of the session.
   const needsLastfm = !artistCache[artist];
-  // Retry-eligible when never fetched OR the last attempt failed (TRACKS_ERROR)
-  // — a plain array (even []) means "done", success or genuine no-tracklist,
-  // and is never refetched. Without the TRACKS_ERROR branch here, a single
-  // transient failure used to be indistinguishable from "done" and could
-  // never be retried for the rest of the session.
-  const needsTracks = deezerId && (trackCache[id] === undefined || trackCache[id] === TRACKS_ERROR);
+  const needsTracks = deezerId && (trackCache[id] === undefined || isApiError(trackCache[id]));
   // No Deezer link → no tracklist to fetch; mark empty so the card shows no
   // tracklist instead of a perpetual "Loading tracks…".
   if (!deezerId && trackCache[id] === undefined) trackCache[id] = [];
 
   const fetches = [];
-  if (needsLastfm) fetches.push(fetchLastfmArtist(artist).then(d => { artistCache[artist] = { ...artistCache[artist], ...d }; }));
+  // On failure, leave artistCache[artist] unset rather than caching the
+  // ApiError — needsLastfm above then retries on the next explore open.
+  if (needsLastfm) fetches.push(fetchLastfmArtist(artist).then(d => {
+    if (!isApiError(d)) artistCache[artist] = { ...artistCache[artist], ...d };
+  }));
   if (needsTracks) fetches.push(fetchAlbumTracks(deezerId).then(t => { trackCache[id] = t; }));
 
   if (fetches.length) {
@@ -246,7 +251,7 @@ async function prefetchExplore(album) {
 
   if (!artistCache[artist]?.image) {
     const image = await fetchArtistImage(album);
-    if (image) {
+    if (typeof image === 'string') {
       artistCache[artist] = { ...artistCache[artist], image };
       if (exploreIndex !== null && visibleAlbums()[exploreIndex]?.id === id) rerender();
     }
@@ -260,7 +265,7 @@ function closeExplore() {
 
 /** Explicit retry for a failed tracklist fetch — the explore card's error
  * state offers this rather than making the user navigate away and back
- * (which would also retry, since prefetchExplore treats TRACKS_ERROR as
+ * (which would also retry, since prefetchExplore treats an ApiError as
  * retry-eligible, but shouldn't be the ONLY way to recover). */
 function retryTracks(visibleIdx) {
   const album = visibleAlbums()[visibleIdx];
@@ -361,7 +366,7 @@ async function refreshAlbum(visibleIdx) {
       // Clear so explore re-fetches the tracklist too — the refresh may have
       // picked up a Deezer cross-link that didn't exist before, and this was
       // previously the one thing "Refresh details" couldn't fix: a stuck
-      // TRACKS_ERROR (or a stale empty result) just sat there forever. The
+      // failed fetch (or a stale empty result) just sat there forever. The
       // "refresh" action only ever renders from inside the explore card
       // (see render.js), so re-running prefetchExplore here is always for
       // the album currently on screen.

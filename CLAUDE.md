@@ -66,7 +66,7 @@ Resolver itself needs no API key from client's perspective — see `backend/READ
 - Queue changes go through `updateAlbums(fn)` / `updateAlbum(id, fn)` (storage.js) — synchronous read-modify-write. Never `loadAlbums()` → `await` → `saveAlbums()`: stale snapshot undoes changes made during the await
 - Album ids canonical: `canonicalAlbumId()` maps legacy Spotify id shapes to `spotify:<id>`; dedupe keys on id, not `sourceUrl` (short links make every share URL unique)
 - Event handling: single delegated listener on `document.body` with `data-action` attributes
-- External API calls go through `api.js`, never throw. Every fetch has deadline (`fetchWithTimeout` / `resolverGet`). Failure shape varies per function (`{ _error }`, `null`, `TRACKS_ERROR`) — see each function's doc
+- External API calls go through `api.js`, never throw. Every fetch has a deadline (`fetchWithTimeout` / `resolverGet`). One failure shape: a transport failure (network, timeout, 5xx, 429, a malformed body) returns an ApiError (`isApiError()`); `null`/`[]` means the answer really is "nothing found"
 - Failure rule, every API touch point: return failure to caller that reports it, OR report before swallowing (`reportApiFailure` → beacon → resolver logs). Report transport failures (network, timeout, 5xx, 429, bad body); not expected answers (404, not found). Backend: log every upstream failure via injected logger, never `console.*`
 - Static assets (sw.js, manifest.json, favicon) go in `frontend/public/` — copied to `dist/` as-is
 - CSS in `frontend/src/css/style.css`, imported from `app.js` so Vite processes it

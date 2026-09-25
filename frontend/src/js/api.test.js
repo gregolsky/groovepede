@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistData, fetchAlbumTracks, TRACKS_ERROR, deezerAlbumId, fetchArtistImage, enrichWithLastfm, cleanTags } from './api.js';
+import { resolveAlbum, parseMbRelease, resolveAlbumMusicBrainz, resolveAlbumResilient, _setThrottles, normalizeAlbumStr, fetchLastfmAlbum, fetchLastfmArtist, fetchAudiodbArtistImage, fetchDeezerArtistData, fetchAlbumTracks, isApiError, deezerAlbumId, fetchArtistImage, enrichWithLastfm, cleanTags } from './api.js';
 import { _resetBeaconState } from './beacon.js';
 import { loadAlbums } from './storage.js';
 
@@ -747,15 +747,17 @@ describe('fetchAudiodbArtistImage', () => {
     expect(await fetchAudiodbArtistImage('Black Limbo')).toBeNull();
   });
 
-  it('returns null when the API has no artists or errors', async () => {
+  it('returns null (a real "no artists found") when the API answers with none', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okJson({ artists: null }));
     expect(await fetchAudiodbArtistImage('Nobody')).toBeNull();
+  });
 
+  it('returns an ApiError, not null, on an HTTP error or network failure', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 500 });
-    expect(await fetchAudiodbArtistImage('Nobody')).toBeNull();
+    expect(isApiError(await fetchAudiodbArtistImage('Nobody'))).toBe(true);
 
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
-    expect(await fetchAudiodbArtistImage('Nobody')).toBeNull();
+    expect(isApiError(await fetchAudiodbArtistImage('Nobody'))).toBe(true);
   });
 
   it('returns null when the match has no usable image', async () => {
@@ -806,12 +808,12 @@ describe('fetchDeezerArtistData', () => {
     expect(await fetchDeezerArtistData('X', null)).toEqual({ _error: 429, _retryAfter: 12 });
   });
 
-  it('returns null on other errors and on network failure', async () => {
+  it('returns an ApiError, not null, on other errors and on network failure', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 403 });
-    expect(await fetchDeezerArtistData('X', null)).toBeNull();
+    expect(await fetchDeezerArtistData('X', null)).toEqual({ _error: 403 });
 
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
-    expect(await fetchDeezerArtistData('X', null)).toBeNull();
+    expect(await fetchDeezerArtistData('X', null)).toEqual({ _error: 'network' });
   });
 });
 
@@ -841,38 +843,38 @@ describe('fetchAlbumTracks', () => {
   // A 429 (or any other failure) used to surface as a raw marker object
   // ({_error:429,...} or []) stored directly in app.js's trackCache, where
   // its truthiness permanently blocked any retry for the rest of the
-  // session — see app.js's prefetchExplore. TRACKS_ERROR is the one shape
+  // session — see app.js's prefetchExplore. An ApiError is the one shape
   // every failure now collapses to, so callers can retry on it uniformly.
-  it('collapses a 429 into TRACKS_ERROR (the throttle itself still sees the raw marker to back off)', async () => {
+  it('collapses a 429 into an ApiError (the throttle itself still sees the raw marker to back off)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false, status: 429, headers: { get: h => (h === 'retry-after' ? '12' : null) },
     });
-    expect(await fetchAlbumTracks('302127')).toBe(TRACKS_ERROR);
+    expect(await fetchAlbumTracks('302127')).toEqual({ _error: 429, _retryAfter: 12 });
   });
 
-  it('collapses other HTTP errors and network failures into TRACKS_ERROR', async () => {
+  it('collapses other HTTP errors and network failures into an ApiError', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: false, status: 422 });
-    expect(await fetchAlbumTracks('302127')).toBe(TRACKS_ERROR);
+    expect(await fetchAlbumTracks('302127')).toEqual({ _error: 422 });
 
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('offline'));
-    expect(await fetchAlbumTracks('302127')).toBe(TRACKS_ERROR);
+    expect(await fetchAlbumTracks('302127')).toEqual({ _error: 'network' });
   });
 
-  it('fails fast to TRACKS_ERROR when the shared deezer throttle is cooling down, without calling fetch', async () => {
+  it('fails fast to an ApiError when the shared deezer throttle is cooling down, without calling fetch', async () => {
     _setThrottles({ deezer: coolingThrottle() });
     const spy = vi.spyOn(globalThis, 'fetch');
-    expect(await fetchAlbumTracks('302127')).toBe(TRACKS_ERROR);
+    expect(isApiError(await fetchAlbumTracks('302127'))).toBe(true);
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('aborts and returns TRACKS_ERROR if the request takes too long', async () => {
+  it('aborts and returns an ApiError if the request takes too long', async () => {
     vi.useFakeTimers();
     vi.spyOn(globalThis, 'fetch').mockImplementation((url, { signal }) => new Promise((resolve, reject) => {
       signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
     }));
     const promise = fetchAlbumTracks('302127');
     await vi.advanceTimersByTimeAsync(10_000);
-    await expect(promise).resolves.toBe(TRACKS_ERROR);
+    await expect(promise).resolves.toEqual({ _error: 'timeout' });
     vi.useRealTimers();
   });
 });
@@ -922,5 +924,35 @@ describe('fetchArtistImage', () => {
       .mockResolvedValueOnce(okJson({ artists: [] }))
       .mockResolvedValueOnce({ ok: false, status: 429, headers: { get: () => null } });
     expect(await fetchArtistImage({ artist: 'X' })).toBeNull();
+  });
+
+  it('surfaces an ApiError only when BOTH sources fail to run, not when either just finds no image', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: false, status: 500 })
+      .mockResolvedValueOnce({ ok: false, status: 503 });
+    expect(isApiError(await fetchArtistImage({ artist: 'X' }))).toBe(true);
+  });
+});
+
+// ── ApiError (isApiError) ──────────────────────────────────────────────────────
+// The one failure shape every function above returns on a transport failure —
+// see api.js's apiError()/isApiError(). Exercised indirectly by every ".toEqual({
+// _error: ... })" / "isApiError(...)" assertion above; this block checks the
+// predicate itself against shapes a caller might plausibly compare it to.
+
+describe('isApiError', () => {
+  it('is true for a value with an _error property', () => {
+    expect(isApiError({ _error: 429 })).toBe(true);
+    expect(isApiError({ _error: 'network' })).toBe(true);
+    expect(isApiError(Object.freeze({ _error: 500 }))).toBe(true);
+  });
+
+  it('is false for a genuine "nothing found" result, and for non-error values', () => {
+    expect(isApiError(null)).toBe(false);
+    expect(isApiError(undefined)).toBe(false);
+    expect(isApiError([])).toBe(false);
+    expect(isApiError('')).toBe(false);
+    expect(isApiError(0)).toBe(false);
+    expect(isApiError({ bio: '', similar: [], tags: [], lastfmUrl: null })).toBe(false);
   });
 });

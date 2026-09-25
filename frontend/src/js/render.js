@@ -1,7 +1,7 @@
 import { filterAlbums } from './storage.js';
 import { renderLanding } from './landing.js';
 import { SERVICES, serviceLabel, serviceListText, joinList, pickListenTarget, pickListenUrl, linkedServiceNames, isOnPreferredService, isWebUrl } from './services.js';
-import { TRACKS_ERROR } from './api.js';
+import { isApiError } from './api.js';
 import { html, raw } from './html.js';
 
 // Every template in this module is an html`` template: interpolated values
@@ -497,7 +497,7 @@ export function artistInitials(name) {
 // ── Explore card ──────────────────────────────────────────────────────────────
 
 function renderTracklist(tracks, index) {
-  if (tracks === TRACKS_ERROR) {
+  if (isApiError(tracks)) {
     return html`<div class="explore-tracklist-error">Couldn&rsquo;t load the tracklist.
         <button class="explore-retry" data-action="retry-tracks" data-index="${index}">Retry</button>
       </div>`;
