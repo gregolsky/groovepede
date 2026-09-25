@@ -651,6 +651,48 @@ describe('serializeBackup / parseBackup', () => {
   });
 });
 
+// An imported backup is user-supplied JSON ("export it, import it anywhere"),
+// so every field the UI renders or opens is untrusted.
+describe('parseBackup sanitizes untrusted records', () => {
+  const wrap = albums => JSON.stringify({ version: 4, exportedAt: 'x', albums, done: 0 });
+
+  it('drops unsafe link/cover URLs and non-string tags, and coerces a numeric year', () => {
+    const { albums } = parseBackup(wrap([{
+      id: 'spotify:abc', title: 'T', artist: 'A', year: 1999, cover: 'javascript:alert(1)',
+      tags: ['rock', 42, { x: 1 }], sourceUrl: 'https://open.spotify.com/album/abc',
+      links: {
+        spotify: { url: 'javascript:alert(1)', nativeUri: 'spotify:album:abc' },
+        evil:    { url: 'data:text/html,<script>alert(1)</script>' },
+      },
+    }]));
+    const a = albums[0];
+    expect(a.year).toBe('1999');
+    expect(a.cover).toBeNull();
+    expect(a.tags).toEqual(['rock']);
+    expect(a.links.spotify).toEqual({ url: null, nativeUri: 'spotify:album:abc' });
+    expect(a.links.evil).toBeUndefined();
+  });
+
+  it('drops a record whose sourceUrl is not http(s)', () => {
+    const { albums } = parseBackup(wrap([{ id: 'x', title: 'T', artist: 'A', sourceUrl: 'javascript:alert(1)', links: {} }]));
+    expect(albums).toHaveLength(0);
+  });
+
+  it('drops entries that are not objects', () => {
+    const { albums } = parseBackup(wrap([null, 'str', 5, []]));
+    expect(albums).toHaveLength(0);
+  });
+
+  it('keeps an ordinary record intact', () => {
+    const rec = {
+      id: 'spotify:abc', title: 'T', artist: 'A', year: '2020', cover: 'https://i.scdn.co/x.jpg',
+      tags: ['rock'], sourceUrl: 'https://open.spotify.com/album/abc', addedAt: '2026-01-01T00:00:00.000Z',
+      links: { spotify: { url: 'https://open.spotify.com/album/abc', nativeUri: 'spotify:album:abc' } },
+    };
+    expect(parseBackup(wrap([rec])).albums[0]).toEqual(rec);
+  });
+});
+
 describe('mergeRefreshedAlbum', () => {
   const existing = {
     id: 'SPOTIFY_ALBUM::abc',

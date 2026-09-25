@@ -72,9 +72,10 @@ export function highlightMatch(text, query) {
     + escapeHtml(text.slice(idx + q.length));
 }
 
-function attr(value) {
-  return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-}
+// Attribute values get the same full escape as text: a partial escape (just
+// & and ") is safe inside a double-quoted attribute, but it leaves two rules for
+// "which values need which escape", and that split is how C1 slipped through.
+const attr = escapeHtml;
 
 export { serviceLabel };
 
@@ -239,7 +240,7 @@ function renderAddForm({ loadingAdd, addError }) {
         ${loadingAdd ? '<div class="spinner"></div>' : 'Add'}
       </button>
     </div>
-    ${addError ? `<div class="add-error">${addError}</div>` : ''}
+    ${addError ? `<div class="add-error">${escapeHtml(addError)}</div>` : ''}
     <p class="add-hint">${serviceListText()} &mdash; or share straight from your phone's music app.</p>`;
 }
 
@@ -590,7 +591,7 @@ export function renderApp(el, { activeFilter, loadingAdd, artistCache, trackCach
       <div class="filter-bar">
         <button class="filter-chip ${activeFilter === 'all' ? 'active' : ''}" data-action="filter" data-tag="all" title="Show every album in your queue">All</button>
         ${displayTags.map(t => `
-        <button class="filter-chip ${activeFilter === t ? 'active' : ''}" data-action="filter" data-tag="${attr(t)}" title="${attr(`Show only ${t} albums`)}">${t}</button>`).join('')}
+        <button class="filter-chip ${activeFilter === t ? 'active' : ''}" data-action="filter" data-tag="${attr(t)}" title="${attr(`Show only ${t} albums`)}">${escapeHtml(t)}</button>`).join('')}
         ${showMore ? `<button class="tag-more" data-action="toggle-tags" title="${tagsExpanded ? 'Show fewer genre tags' : 'Show every genre tag in your queue'}">${tagsExpanded ? 'Less ▴' : 'More ▾'}</button>` : ''}
       </div>`;
   }
@@ -651,12 +652,12 @@ function renderCards(visible, albums, searchQuery, prefService) {
     if (album._pending) return renderPendingCard(album, visibleIdx);
 
     const tagHtml = [
-      album.year ? `<span class="tag year">${album.year}</span>` : '',
+      album.year ? `<span class="tag year">${escapeHtml(album.year)}</span>` : '',
       ...(album.tags || []).map(t => `<span class="tag genre" data-action="filter" data-tag="${attr(t)}" title="${attr(`Filter your queue by ${t}`)}">${escapeHtml(t)}</span>`),
     ].filter(Boolean).join('');
 
     return `
-      <div class="card" id="card-${album.id}" data-action="explore" data-index="${visibleIdx}" role="button" tabindex="0" style="--i:${visibleIdx}">
+      <div class="card" id="card-${attr(album.id)}" data-action="explore" data-index="${visibleIdx}" role="button" tabindex="0" style="--i:${visibleIdx}">
         <div class="card-main">
           <div class="card-cover">
             ${album.cover
@@ -753,7 +754,7 @@ function renderExploreCard(album, cached, tracks, index, total, prefService, ref
         ${album.cover ? `<img class="explore-album-cover" src="${attr(album.cover)}" alt="${attr(album.title || '')}">` : ''}
         <div class="explore-album-meta">
           <h3 class="explore-album-title">${escapeHtml(album.title || 'Unknown album')}</h3>
-          ${album.year ? `<span class="explore-album-year">${album.year}</span>` : ''}
+          ${album.year ? `<span class="explore-album-year">${escapeHtml(album.year)}</span>` : ''}
         </div>
         <div class="explore-album-actions">
           ${renderListenBtn(album, prefService, { showService: true })}

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, pickListenTarget, linkedServiceNames, serviceLabel, isOnPreferredService, timeAgo, artistInitials } from './render.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, pickListenTarget, linkedServiceNames, serviceLabel, isOnPreferredService, timeAgo, artistInitials, renderApp } from './render.js';
 
 // ── isOnPreferredService ──────────────────────────────────────────────────────
 
@@ -386,5 +386,53 @@ describe('artistInitials', () => {
     expect(artistInitials(null)).toBe('♪');
     expect(artistInitials('   ')).toBe('♪');
     expect(artistInitials('!!!')).toBe('♪');
+  });
+});
+
+// ── renderApp: every interpolated value is escaped ────────────────────────────
+// Records reach the renderer from imported backup files (user-supplied JSON)
+// and Last.fm crowd tags, so no field can be assumed to be plain text.
+
+describe('renderApp escaping', () => {
+  const PAYLOAD = '<svg onload=alert(1)>';
+  const baseState = {
+    activeFilter: 'all', loadingAdd: false, artistCache: {}, trackCache: {},
+    exploreIndex: null, addError: null, profileOpen: false, searchQuery: '',
+    tagsExpanded: false, addOpen: false, prefService: 'spotify',
+    importProgress: null, importSummary: null, refreshingId: null,
+  };
+  const hostile = {
+    id: `x"${PAYLOAD}`, title: 'T', artist: 'A', year: PAYLOAD, tags: [PAYLOAD],
+    addedAt: new Date().toISOString(), sourceUrl: 'https://open.spotify.com/album/x',
+    links: { spotify: { url: 'https://open.spotify.com/album/x' } },
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', {
+      _store: { gp_albums: JSON.stringify([hostile]) },
+      getItem(k) { return this._store[k] ?? null; },
+      setItem(k, v) { this._store[k] = v; },
+      removeItem(k) { delete this._store[k]; },
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('escapes tags (filter chips and card tags), year and id in the queue view', () => {
+    const el = { innerHTML: '' };
+    renderApp(el, baseState);
+    expect(el.innerHTML).not.toContain(PAYLOAD);
+    expect(el.innerHTML).not.toContain('x"<');
+  });
+
+  it('escapes year in the explore view', () => {
+    const el = { innerHTML: '' };
+    renderApp(el, { ...baseState, exploreIndex: 0, artistCache: { A: { bio: '' } } });
+    expect(el.innerHTML).not.toContain(PAYLOAD);
+  });
+
+  it('escapes the add-form error message', () => {
+    const el = { innerHTML: '' };
+    renderApp(el, { ...baseState, addOpen: true, addError: PAYLOAD });
+    expect(el.innerHTML).not.toContain(PAYLOAD);
   });
 });

@@ -120,6 +120,20 @@ export function isShortLinkHost(host) {
   return _SHORT_LINK_HOSTS.has(host);
 }
 
+/** True for an http(s) URL — the only scheme a cover image or a pasted link may use. */
+export function isWebUrl(v) {
+  return typeof v === 'string' && /^https?:\/\//i.test(v);
+}
+
+/**
+ * True for a URL the Listen button may open: http(s), or a spotify: deep link
+ * (the only native URI the resolver ever produces). Anything else — notably
+ * javascript: and data:, which window.open would happily run — is refused.
+ */
+export function isSafeLinkUrl(v) {
+  return isWebUrl(v) || (typeof v === 'string' && /^spotify:/i.test(v));
+}
+
 /**
  * True when `pathname` matches one of `svc`'s shortLinkPaths — a short link
  * that shares its host with normal links for the service (so isShortLinkHost

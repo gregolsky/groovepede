@@ -6,6 +6,7 @@ import { resolveAlbumResilient, enrichWithLastfm, fetchLastfmArtist, fetchArtist
 import { loadAlbums, saveAlbums, loadDone, saveDone, parseMusicLink, filterAlbums, serializeBackup, parseBackup, getPreferredService, setPreferredService, hasExplicitPreferredService, makePendingRecord, isRetryableResolveError, mergeRefreshedAlbum } from './storage.js';
 import { renderAuthArea, renderApp, renderShareOverlay } from './render.js';
 import { initBeacon, reportFailure } from './beacon.js';
+import { isSafeLinkUrl } from './services.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let activeFilter   = 'all';
@@ -382,7 +383,9 @@ document.body.addEventListener('click', e => {
       tagsExpanded = !tagsExpanded;
       rerender();
       break;
-    case 'listen':        window.open(url, '_blank');           break;
+    // Guarded at the sink too, not just on import: records already in storage
+    // from before import-time validation existed never went through it.
+    case 'listen':        if (isSafeLinkUrl(url)) window.open(url, '_blank', 'noopener'); break;
     case 'explore':       openExplore(parseInt(index, 10));     break;
     case 'close-explore': closeExplore();                       break;
     case 'explore-prev':  navigateExplore(-1);                  break;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SERVICES, serviceNames, serviceListText, joinList, serviceLabel, findServiceByHost, buildSearchUrl } from './services.js';
+import { SERVICES, serviceNames, serviceListText, joinList, serviceLabel, findServiceByHost, buildSearchUrl, isWebUrl, isSafeLinkUrl } from './services.js';
 
 describe('serviceNames', () => {
   it('returns every registered service label in registry order', () => {
@@ -104,5 +104,24 @@ describe('buildSearchUrl', () => {
   it('returns null for an unregistered slug', () => {
     expect(buildSearchUrl('amazon', 'Radiohead', 'OK Computer')).toBeNull();
     expect(buildSearchUrl('nope', 'Radiohead', 'OK Computer')).toBeNull();
+  });
+});
+
+describe('isWebUrl / isSafeLinkUrl', () => {
+  it('accepts http(s) for both', () => {
+    for (const u of ['https://open.spotify.com/album/x', 'http://example.com/']) {
+      expect(isWebUrl(u)).toBe(true);
+      expect(isSafeLinkUrl(u)).toBe(true);
+    }
+  });
+  it('accepts a spotify: deep link only as a link, not as a web URL', () => {
+    expect(isSafeLinkUrl('spotify:album:abc')).toBe(true);
+    expect(isWebUrl('spotify:album:abc')).toBe(false);
+  });
+  it('refuses script-capable and malformed values', () => {
+    for (const u of ['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,x', 'vbscript:x', '', null, undefined, 42, {}]) {
+      expect(isWebUrl(u)).toBe(false);
+      expect(isSafeLinkUrl(u)).toBe(false);
+    }
   });
 });
