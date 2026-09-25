@@ -71,8 +71,6 @@ export function highlightMatch(text, query) {
 // "which values need which escape", and that split is how C1 slipped through.
 const attr = escapeHtml;
 
-export { serviceLabel };
-
 /**
  * The link the Listen button will actually open, together with the service it
  * belongs to. The service matters for the label: when the album isn't on the

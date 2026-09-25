@@ -14,7 +14,7 @@ process.env.GP_PUBLIC_KEY = publicKey.export({ format: 'der', type: 'spki' }).to
 
 const core = await import('./resolver-core.mjs');
 const {
-  albumRequest, verifyToken, verifyTokenDetailed, normalizeUrl, corsHeaders, _resetPublicKey,
+  albumRequest, verifyTokenDetailed, normalizeUrl, corsHeaders, _resetPublicKey,
   artistRequest, normalizeArtist, normalizeAlbumTitle, isBlankArtistImage, pickArtistImage,
   _resetSpotifyToken, SERVICE_HOSTS, EXTRACTORS, tracksRequest, logRequest, LOG_MAX_BODY_BYTES,
   PARTIAL_TTL_S, publicKeyStatus,
@@ -36,27 +36,27 @@ const SPOTIFY = 'https://open.spotify.com/album/0c0hlchA9Q66PcL7xlPPfp';
 // ── verifyToken ─────────────────────────────────────────────────────────────
 
 test('verifyToken: valid signed token passes', () => {
-  assert.equal(verifyToken(makeToken(SPOTIFY), SPOTIFY), true);
+  assert.equal(verifyTokenDetailed(makeToken(SPOTIFY), SPOTIFY).ok, true);
 });
 
 test('verifyToken: expired timestamp is rejected', () => {
   const old = Math.floor(Date.now() / 1000) - 301; // just past the 300s window
-  assert.equal(verifyToken(makeToken(SPOTIFY, old), SPOTIFY), false);
+  assert.equal(verifyTokenDetailed(makeToken(SPOTIFY, old), SPOTIFY).ok, false);
 });
 
 test('verifyToken: tampered signature is rejected', () => {
   const t = makeToken(SPOTIFY);
   const tampered = t.slice(0, -2) + (t.endsWith('AA') ? 'BB' : 'AA');
-  assert.equal(verifyToken(tampered, SPOTIFY), false);
+  assert.equal(verifyTokenDetailed(tampered, SPOTIFY).ok, false);
 });
 
 test('verifyToken: signature bound to a different url is rejected', () => {
   const other = 'https://open.spotify.com/album/DIFFERENTIDDIFFERENTID00';
-  assert.equal(verifyToken(makeToken(other), SPOTIFY), false);
+  assert.equal(verifyTokenDetailed(makeToken(other), SPOTIFY).ok, false);
 });
 
 test('verifyToken: malformed token (no dot) is rejected', () => {
-  assert.equal(verifyToken('not-a-token', SPOTIFY), false);
+  assert.equal(verifyTokenDetailed('not-a-token', SPOTIFY).ok, false);
 });
 
 test('publicKeyStatus: ok / missing / invalid, so a misconfigured key is logged at startup', () => {

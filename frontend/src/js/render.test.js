@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, pickListenTarget, linkedServiceNames, serviceLabel, isOnPreferredService, timeAgo, artistInitials, renderApp } from './render.js';
+import { tagsByFrequency, escapeHtml, highlightMatch, pickListenUrl, pickListenTarget, linkedServiceNames, isOnPreferredService, timeAgo, artistInitials, renderApp } from './render.js';
+import { serviceLabel } from './services.js';
 
 // ── isOnPreferredService ──────────────────────────────────────────────────────
 

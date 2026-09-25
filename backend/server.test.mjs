@@ -13,7 +13,7 @@ import { generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
 
 // Same throwaway-keypair pattern as resolver-core.test.mjs — resolver-core's
 // public key is read lazily on first use, so it must be set before the first
-// verifyToken() call inside handleRequest.
+// token verification inside handleRequest.
 const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 process.env.GP_PUBLIC_KEY = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
 

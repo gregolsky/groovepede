@@ -76,10 +76,9 @@ export function publicKeyStatus() {
 export function _resetPublicKey() { _publicKeyInit = false; _publicKey = undefined; _publicKeyStatus = undefined; }
 
 /**
- * Same check as verifyToken, plus a machine-readable reason for a failure —
- * used only for logging at the request-handler call sites (verifyToken
- * itself only ever needed the boolean, so it stays as-is for callers/tests
- * that don't care why).
+ * Verify a signed x-gp-token against the payload the request should be bound
+ * to. Returns { ok: true } or { ok: false, reason } — the reason is only for
+ * the request handlers' 'forbidden' log lines.
  */
 export function verifyTokenDetailed(token, url) {
   const key = getPublicKey();
@@ -104,14 +103,6 @@ export function verifyTokenDetailed(token, url) {
   }
 }
 
-/**
- * Verify a signed request token: "<ts>.<base64url_ieee_p1363_sig>"
- * Signed payload: UTF-8 of `${ts}\n${url}` (URL-bound to prevent cross-request replay).
- * Returns true only when the signature is valid and the token is within the window.
- */
-export function verifyToken(token, url) {
-  return verifyTokenDetailed(token, url).ok;
-}
 
 // ── CORS ────────────────────────────────────────────────────────────────────
 // Origin-based allowlist. Defaults cover prod + local dev; extra origins can be
