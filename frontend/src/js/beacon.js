@@ -14,6 +14,7 @@
  */
 import { RESOLVER_BASE, GP_PRIVATE_KEY } from './config.js';
 import { signRequestToken } from './sign.js';
+import { signedPayload } from './signed-payloads.js';
 
 const MAX_REPORTS_PER_SESSION = 10; // a render-loop error must not turn into a self-inflicted flood
 const MAX_FIELD_CHARS = 500;
@@ -47,7 +48,7 @@ async function send(payload) {
       service: truncate(payload.service, 40),
       ua:      truncate(navigator.userAgent, 200),
     });
-    const token = await signRequestToken('log');
+    const token = await signRequestToken(signedPayload.log());
     const url   = `${RESOLVER_BASE}/v1/log`;
 
     // sendBeacon is preferred — it's the API built for exactly this: firing

@@ -1,5 +1,6 @@
 import { LASTFM_KEY, RESOLVER_BASE, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
 import { signRequestToken } from './sign.js';
+import { signedPayload } from './signed-payloads.js';
 import { loadAlbums, updateAlbum, extractAlbumId } from './storage.js';
 import { createThrottle } from './throttle.js';
 import { reportFailure } from './beacon.js';
@@ -102,13 +103,13 @@ async function fetchWithTimeout(url, opts = {}, timeoutMs = DEFAULT_TIMEOUT_MS) 
 }
 
 /**
- * GET one of our resolver's endpoints. `signedPayload` is what the resolver
- * reconstructs and verifies for that route (see backend/resolver-core.mjs):
- * the album URL for /v1/album, `tracks:<id>`, `artist:<name>|<albumId>`.
+ * GET one of our resolver's endpoints. `payload` is the string signed into
+ * x-gp-token — always built with signedPayload (signed-payloads.js), whose
+ * formats the resolver's contract test checks against the server side.
  */
-async function resolverGet(path, params, signedPayload, timeoutMs = DEFAULT_TIMEOUT_MS) {
+async function resolverGet(path, params, payload, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return fetchWithTimeout(`${RESOLVER_BASE}${path}?${new URLSearchParams(params)}`, {
-    headers: { 'x-gp-token': await signRequestToken(signedPayload) },
+    headers: { 'x-gp-token': await signRequestToken(payload) },
   }, timeoutMs);
 }
 
@@ -123,7 +124,7 @@ async function resolverGet(path, params, signedPayload, timeoutMs = DEFAULT_TIME
  */
 export async function resolveAlbum(inputUrl) {
   try {
-    const res = await resolverGet('/v1/album', { url: inputUrl }, inputUrl, ALBUM_TIMEOUT_MS);
+    const res = await resolverGet('/v1/album', { url: inputUrl }, signedPayload.album(inputUrl), ALBUM_TIMEOUT_MS);
     if (!checkResponse('/v1/album', res)) {
       if (res.status === 429) return rateLimitError(res);
       return { _error: res.status };  // a 4xx is the caller's to report, as the add outcome
@@ -470,7 +471,7 @@ export async function fetchAlbumTracks(albumId) {
 
   const result = await throttles.deezer.run(async () => {
     try {
-      const res = await resolverGet('/v1/tracks', { albumId }, `tracks:${albumId}`);
+      const res = await resolverGet('/v1/tracks', { albumId }, signedPayload.tracks(albumId));
       if (!res.ok) return res.status === 429 ? rateLimitError(res) : { _httpError: res.status };
       const data = await res.json();
       return data?.tracks || [];
@@ -568,7 +569,7 @@ export async function fetchDeezerArtistData(artistName, albumId) {
   return throttles.deezer.run(async () => {
     try {
       const params = albumId ? { name: artistName, albumId } : { name: artistName };
-      const res = await resolverGet('/v1/artist', params, `artist:${artistName}|${albumId || ''}`);
+      const res = await resolverGet('/v1/artist', params, signedPayload.artist(artistName, albumId));
       if (!checkResponse('/v1/artist', res)) return res.status === 429 ? rateLimitError(res) : null;
       const data = await res.json();
       return { image: isBlankImage(data?.image) ? null : data.image, genres: data?.genres || [] };

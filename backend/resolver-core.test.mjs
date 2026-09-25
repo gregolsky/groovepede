@@ -76,6 +76,28 @@ test('publicKeyStatus: ok / missing / invalid, so a misconfigured key is logged 
   }
 });
 
+// ── Signed-payload contract with the frontend ───────────────────────────────
+// The client signs a per-route string (frontend/src/js/signed-payloads.js) and
+// each route here rebuilds and verifies it. Signing over the frontend's OWN
+// builder — not a copy of its format — means a change on either side fails
+// here, instead of turning into a 403 on every request in production.
+
+test('contract: a token signed over the frontend payload is accepted by every route', async () => {
+  const { signedPayload } = await import('../frontend/src/js/signed-payloads.js');
+  const cacheHit = { get: async () => ({ cached: true }), put: async () => {} }; // no upstream fetch needed
+  const ok = r => assert.notEqual(r.statusCode, 403, 'route rejected a frontend-signed token');
+
+  ok(await albumRequest({ method: 'GET', origin: '', url: SPOTIFY,
+    token: makeToken(signedPayload.album(SPOTIFY)), cache: cacheHit, fetchImpl: failFetch }));
+  ok(await tracksRequest({ method: 'GET', origin: '', albumId: '302127',
+    token: makeToken(signedPayload.tracks('302127')), cache: cacheHit, fetchImpl: failFetch }));
+  ok(await artistRequest({ method: 'GET', origin: '', name: 'Bölzer', albumId: '302127',
+    token: makeToken(signedPayload.artist('Bölzer', '302127')), cache: cacheHit, fetchImpl: failFetch }));
+  ok(await artistRequest({ method: 'GET', origin: '', name: 'Bölzer', albumId: '',
+    token: makeToken(signedPayload.artist('Bölzer', undefined)), cache: cacheHit, fetchImpl: failFetch }));
+  ok(await logRequest({ method: 'POST', origin: '', body: '{}', token: makeToken(signedPayload.log()) }));
+});
+
 // ── normalizeUrl ────────────────────────────────────────────────────────────
 
 test('normalizeUrl strips si and utm_* but keeps other params', () => {
