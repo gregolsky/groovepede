@@ -96,6 +96,16 @@ jobs:
           links=$(jq -r '[.[].target.package_name] | join(",")' ../frontend/public/.well-known/assetlinks.json)
           [ "$twa" = "$links" ] || { echo "package id mismatch: twa-manifest=$twa assetlinks=$links" >&2; exit 1; }
 
+          # Bubblewrap's AndroidSdkTools.validatePath only accepts an SDK root that has
+          # a top-level `tools/` or `bin/` folder — the pre-cmdline-tools SDK layout.
+          # ubuntu-24.04's preinstalled SDK uses the modern layout (cmdline-tools/,
+          # build-tools/, platforms/, platform-tools/) and has neither, so the check
+          # fails even though nothing here needs it: every real path this workflow
+          # uses goes through build-tools/$BUILD_TOOLS_VERSION or platform-tools/adb,
+          # never tools/ or bin/, and build-tools/platforms presence was just verified
+          # above. An empty bin/ satisfies the check without installing anything.
+          mkdir -p "$ANDROID_HOME/bin" 2>/dev/null || sudo mkdir -p "$ANDROID_HOME/bin"
+
           mkdir -p "$HOME/.bubblewrap"
           jq -n --arg jdk "$JAVA_HOME_17_X64" --arg sdk "$ANDROID_HOME" \
             '{jdkPath: $jdk, androidSdkPath: $sdk}' > "$HOME/.bubblewrap/config.json"
