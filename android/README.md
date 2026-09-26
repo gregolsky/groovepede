@@ -9,6 +9,18 @@ The [`android.yml`](../.github/workflows/android.yml) workflow builds a signed
 `.aab` (Play) and `.apk` (sideload) and uploads them as a **workflow artifact**.
 Uploading to Play is a manual step, so no Play API credential lives in GitHub.
 
+## Icon assets
+
+Upload [`store-listing/icon-512x512.png`](store-listing/icon-512x512.png) as the
+Play Console app icon. It is a full-square, 512 × 512 RGBA PNG; Play applies its
+own rounded mask and shadow. The PWA and TWA launcher icons live in
+`frontend/public/icons/`. To regenerate all sizes from the original
+`groovepede.xcf` logo, run
+`bash frontend/scripts/generate-icons.sh` from the repository root. The
+maskable export keeps the centipede inside the central circular safe area. Run
+`node frontend/scripts/check-icons.mjs` to verify dimensions and Play's upload
+format before release.
+
 ## One-time setup
 
 1. **Make the upload key** (RSA, alias must match `signingKey.alias`). Keep the
