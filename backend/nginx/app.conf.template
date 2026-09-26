@@ -125,6 +125,20 @@ server {
         proxy_read_timeout 5s;
     }
 
+    # This host has no page to serve at any path — /v1/album, /v1/artist and
+    # /healthz are the only real routes, and everything else 404s from the
+    # resolver (see resolver-core.mjs). A compliant crawler has no way to know
+    # that without trying, and a bare GET / from Googlebot (found this host via
+    # CT logs, never linked from anywhere) is exactly what put it in Search
+    # Console's coverage report as a 404. Answering robots.txt here, directly
+    # from nginx rather than proxying it to the resolver, means a compliant
+    # crawler learns not to bother BEFORE it produces a 404 that (a) shows up
+    # in GSC and (b) counts toward gp-scanner's ban threshold below.
+    location = /robots.txt {
+        default_type text/plain;
+        return 200 "User-agent: *\nDisallow: /\n";
+    }
+
     location / {
         # Drop self-identifying AI crawlers before any proxying happens.
         # Deliberately NOT in the :80 server — that block must keep serving
