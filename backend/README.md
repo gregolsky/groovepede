@@ -311,6 +311,17 @@ The fail2ban container runs as **root with `NET_ADMIN` on host networking** —
 unavoidable, since it edits the host's iptables. It's the only privileged
 container in the stack and listens on nothing.
 
+### robots.txt
+
+`nginx/app.conf.template` answers `GET /robots.txt` directly with
+`Disallow: /`, ahead of the `location /` proxy. This host has no page at any
+path — `/v1/album`, `/v1/artist`, `/healthz` are the only real routes, and
+Google discovered it purely via Certificate Transparency log monitoring of
+its Let's Encrypt cert, not a link from anywhere. A bare `GET /` from a
+compliant crawler is a 404 the resolver has no way to prevent; answering
+robots.txt in nginx first stops that crawler before it produces one, which
+also keeps it off `gp-scanner`'s 404 ban count.
+
 ### AI-crawler blocking
 
 `nginx/app.conf.template` maps ~18 known training crawlers (GPTBot, ClaudeBot,
