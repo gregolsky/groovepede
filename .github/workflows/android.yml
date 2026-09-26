@@ -177,7 +177,10 @@ jobs:
           set -euo pipefail
           "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose app-release-signed.apk
           "$JAVA_HOME_17_X64/bin/jarsigner" -verify app-release-bundle.aab
-          fp=$("$JAVA_HOME_17_X64/bin/keytool" -printcert -jarfile app-release-signed.apk | sed -n 's/^ *SHA256: *//p' | head -1)
+          # keytool prints this line as <TAB><space>SHA256: ..., not leading spaces —
+          # `sed 's/^ *SHA256:.../'` silently matches nothing against a literal tab,
+          # so this must match any leading whitespace, not just the space character.
+          fp=$("$JAVA_HOME_17_X64/bin/keytool" -printcert -jarfile app-release-signed.apk | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -1)
           [ -n "$fp" ] || { echo "could not read the signing certificate fingerprint" >&2; exit 1; }
           {
             echo "### Upload-key SHA-256 fingerprint"
