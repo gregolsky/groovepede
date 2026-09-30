@@ -23,11 +23,13 @@ magick "$tmp_dir/crop.png" \
      -morphology Close Disk:10 -morphology Dilate Disk:7 -blur 0x2 \) \
   -alpha off -compose CopyOpacity -composite "$tmp_dir/mark.png"
 
+# Play rejects 16-bit PNGs (it wants 32-bit = 8 bits x RGBA), and ImageMagick
+# keeps the XCF source's 16-bit depth unless told otherwise — hence bit-depth=8.
 # Standard and Play icons use the full mark with at least 40 px of clearance.
 magick -size 512x512 xc:'#0d1113' \
   \( "$tmp_dir/mark.png" -resize 430x386 \) \
   -gravity center -compose Over -composite -colorspace sRGB -alpha on \
-  -define png:color-type=6 "$icons_dir/icon-512x512.png"
+  -define png:color-type=6 -define png:bit-depth=8 "$icons_dir/icon-512x512.png"
 
 # Maskable icons reserve the outer 10% on every side. Scale the complete mark
 # down further so notes, legs, and every vinyl edge remain inside that circle.
@@ -35,10 +37,10 @@ magick -size 512x512 xc:'#0d1113' \
   \( "$tmp_dir/mark.png" -filter Lanczos -resize 340x340 \
      -unsharp '0x0.7+0.9+0.02' \) \
   -gravity center -compose Over -composite -colorspace sRGB -alpha on \
-  -define png:color-type=6 "$icons_dir/icon-512x512-maskable.png"
+  -define png:color-type=6 -define png:bit-depth=8 "$icons_dir/icon-512x512-maskable.png"
 cp "$icons_dir/icon-512x512.png" "$play_icon"
 
 for size in 192 180 32 16; do
   magick "$icons_dir/icon-512x512.png" -resize "${size}x${size}" \
-    -alpha on -define png:color-type=6 "$icons_dir/icon-${size}x${size}.png"
+    -alpha on -define png:color-type=6 -define png:bit-depth=8 "$icons_dir/icon-${size}x${size}.png"
 done
