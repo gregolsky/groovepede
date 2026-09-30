@@ -3,6 +3,7 @@ import { signRequestToken } from './sign.js';
 import { signedPayload } from './signed-payloads.js';
 import { loadAlbums, updateAlbum, extractAlbumId } from './storage.js';
 import { createThrottle } from './throttle.js';
+import { canonicalTag } from './tags.js';
 import { reportFailure } from './beacon.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
@@ -167,7 +168,7 @@ export async function resolveAlbum(inputUrl) {
       artist:        data.artist || null,
       cover:         data.cover || null,
       year:          data.year || null,
-      tags:          data.tags || [],
+      tags:          cleanTags((data.tags || []).map(name => ({ name })), data.artist),
       addedAt:       new Date().toISOString(),
       links:         data.links || {},
     };
@@ -235,7 +236,7 @@ async function fetchMbReleaseGenres(mbid) {
     const res = await fetchWithTimeout(`${MUSICBRAINZ_BASE}/release/${mbid}?${params}`);
     if (!checkResponse('musicbrainz:release', res)) return [];
     const data = await res.json();
-    return (data?.genres || []).map(g => g.name).filter(Boolean);
+    return data?.genres || [];
   } catch (err) {
     reportApiFailure('musicbrainz:release', rejectionReason(err));
     return [];
@@ -253,7 +254,7 @@ export async function resolveAlbumMusicBrainz(sourceUrl, service) {
     const data = await res.json();
     const rec  = parseMbRelease(data, sourceUrl, service);
     if (!rec) return apiError('not-found');
-    rec.tags = await fetchMbReleaseGenres(rec.id.slice(3)); // strip the 'mb:' prefix back to the raw mbid
+    rec.tags = cleanTags(await fetchMbReleaseGenres(rec.id.slice(3)), rec.artist); // strip the 'mb:' prefix back to the raw mbid
     return rec;
   } catch (err) {
     reportApiFailure('musicbrainz:url', rejectionReason(err));
@@ -370,23 +371,6 @@ const JUNK_TAGS = new Set([
   'awesome', 'amazing', 'love', 'favourite song',
 ]);
 
-// Near-duplicate spellings Last.fm's crowd tagging produces often enough to
-// be worth collapsing into one canonical form before dedup. Not a general
-// genre-taxonomy normalizer — just the handful of variants seen in practice.
-const CANON_MAP = {
-  'hip hop':     'hip-hop',
-  'hiphop':      'hip-hop',
-  'lofi':        'lo-fi',
-  'lo fi':       'lo-fi',
-  'synthpop':    'synth-pop',
-  'postpunk':    'post-punk',
-  'post punk':   'post-punk',
-  'postrock':    'post-rock',
-  'drum n bass': 'drum and bass',
-  'dnb':         'drum and bass',
-  'd&b':         'drum and bass',
-};
-
 function normalizeForCompare(s) {
   return s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 }
@@ -407,8 +391,7 @@ export function cleanTags(rawTags, artistName) {
     // runs inside fire-and-forget enrichment, where a throw is only ever an
     // unhandled rejection.
     if (typeof raw?.name !== 'string') continue;
-    let t = raw.name.toLowerCase();
-    t = CANON_MAP[t] || t;
+    const t = canonicalTag(raw.name);
     if (t.length <= 1 || t.length > 25) continue;
     if (YEAR_RE.test(t) || JUNK_TAGS.has(t)) continue;
     if (artistNorm && normalizeForCompare(t) === artistNorm) continue;

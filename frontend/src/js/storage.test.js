@@ -420,6 +420,19 @@ describe('loadAlbums migration', () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); });
 
+  it('folds stored tags that differ only in case or spelling into one lowercase tag', () => {
+    localStorage.setItem('gp_albums', JSON.stringify([
+      { id: 'a', title: 'T', artist: 'A', tags: ['Rock', 'rock', 'Pop', 'Rap/Hip Hop', 'hip-hop'], links: {} },
+    ]));
+    expect(loadAlbums()[0].tags).toEqual(['rock', 'pop', 'hip-hop']);
+  });
+
+  it('returns an already-clean record as-is', () => {
+    const rec = { id: 'a', title: 'T', artist: 'A', tags: ['rock', 'jazz'], links: {} };
+    localStorage.setItem('gp_albums', JSON.stringify([rec]));
+    expect(loadAlbums()[0]).toEqual(rec);
+  });
+
   it('upgrades legacy records on load', () => {
     const legacy = [{
       id: '4aawyAB9vmqN3uQ7FjRGTy',

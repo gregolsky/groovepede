@@ -1,4 +1,5 @@
 import { STORAGE_KEY, DONE_KEY, PREF_SERVICE_KEY } from './config.js';
+import { normalizeTags } from './tags.js';
 import { SERVICES, findServiceByHost, isShortLinkHost, isShortLinkPath, isWebUrl, isSafeLinkUrl, serviceListText } from './services.js';
 
 const DEFAULT_PREF_SERVICE = 'spotify';
@@ -38,9 +39,10 @@ export function canonicalAlbumId(id) {
 }
 
 /**
- * Bring stored records up to the current shape: the v1 links upgrade, a
- * canonical id, and — since canonical ids can reveal duplicates saved under
- * different eras' ids — one record per album (the earliest-saved one wins).
+ * Bring stored records up to the current shape: the v1 links upgrade,
+ * canonical tags, a canonical id, and — since canonical ids can reveal
+ * duplicates saved under different eras' ids — one record per album (the
+ * earliest-saved one wins).
  * Runs on every read; the result is persisted by the next write.
  */
 function normalizeAlbums(raw) {
@@ -50,7 +52,11 @@ function normalizeAlbums(raw) {
     const id = canonicalAlbumId(rec.id);
     if (id != null && seen.has(id)) continue;
     if (id != null) seen.add(id);
-    out.push(id === rec.id ? rec : { ...rec, id });
+    // Queues saved before resolver genres were canonicalized hold "Rock" next
+    // to Last.fm's "rock"; fold them here so they collapse on the next write.
+    const tags = Array.isArray(rec.tags) ? normalizeTags(rec.tags) : rec.tags;
+    const tagsChanged = Array.isArray(rec.tags) && (tags.length !== rec.tags.length || tags.some((t, i) => t !== rec.tags[i]));
+    out.push(id === rec.id && !tagsChanged ? rec : { ...rec, id, tags });
   }
   return out;
 }

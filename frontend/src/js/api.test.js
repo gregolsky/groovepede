@@ -93,6 +93,15 @@ describe('resolveAlbum', () => {
     expect(result._error).toBeUndefined();
   });
 
+  it("canonicalizes the resolver's service genre names so they match Last.fm's lowercase tags", async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ...RESOLVER_RESPONSE, tags: ['Pop', 'Rap/Hip Hop', 'pop', 'Radiohead'] }),
+    });
+    const result = await resolveAlbum('https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+    expect(result.tags).toEqual(['pop', 'hip-hop']);
+  });
+
   it('calls the resolver\'s /v1/album endpoint, not the retired /v1/resolve, with no userCountry param', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
@@ -567,7 +576,21 @@ describe('enrichWithLastfm', () => {
     ]);
     await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
     const album = loadAlbums().find(a => a.id === 'album-1');
-    expect(album.tags).toEqual(['Alternative', 'post-rock', 'ambient']);
+    expect(album.tags).toEqual(['alternative', 'post-rock', 'ambient']);
+  });
+
+  it('collapses a stored service genre and the same Last.fm tag that differ only in case', async () => {
+    localStorage.setItem('gp_albums', JSON.stringify([{
+      id: 'album-1', sourceUrl: 'https://open.spotify.com/album/x', title: 'OK Computer', artist: 'Radiohead',
+      cover: null, year: null, tags: ['Rock', 'Rap/Hip Hop'], addedAt: '2024-01-01T00:00:00.000Z', links: {},
+    }]));
+    mockFetchSequence([
+      { toptags: { tag: [{ name: 'rock', count: 10 }, { name: 'hip hop', count: 10 }] } },
+      { album: { tags: { tag: [{ name: 'art rock' }] } } },
+    ]);
+    await enrichWithLastfm('album-1', 'Radiohead', 'OK Computer');
+    const album = loadAlbums().find(a => a.id === 'album-1');
+    expect(album.tags).toEqual(['rock', 'hip-hop', 'art rock']);
   });
 
   it('does not duplicate an existing resolver-supplied tag that Last.fm also returns', async () => {
