@@ -48,12 +48,9 @@ test('body overflow-x is not clipped (mask must stay off)', async ({ page, conte
   expect(overflowX).not.toBe('hidden');
 });
 
-test('a card title that fits on two lines is shown in full, not ellipsized', async ({ page, context }) => {
-  // One-line nowrap used to clip "The Dark Side of the Moon" to "The Dark Side …"
-  // on every phone, although the row above the centred Listen/Done has room.
-  // 360px, the narrowest common phone: at 320px the text column is ~80px and a
-  // title this long legitimately needs a third line, so the clamp applies there.
-  await page.setViewportSize({ width: 360, height: 740 });
+test('a long card title is shown in full, not ellipsized', async ({ page, context }) => {
+  // One-line nowrap in a column squeezed by Listen/Done used to clip "The Dark
+  // Side of the Moon" on every phone; the title now spans the card's full width.
   await stubExternals(context);
   await seedAlbums(context, [{ ...WIDE_TAG_ALBUMS[0], title: 'The Dark Side of the Moon' }], 0);
   await page.goto('/');

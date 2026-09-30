@@ -329,21 +329,33 @@ body::after {
   transform: translateY(-2px);
   box-shadow: var(--shadow-card-hover);
 }
-.card-main { display: flex; align-items: stretch; }
+/* Title and artist span the full width, over the Listen/Done column: that
+   column only needs the height of the tags beside it, and giving the title
+   the whole row keeps "The Dark Side of the Moon" from clipping on a phone.
+   .card-body is `display: contents` so its children are the grid items. */
+.card-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto 1fr auto;
+  grid-template-areas:
+    "cover title  title"
+    "cover artist artist"
+    "cover tags   actions"
+    "cover meta   actions";
+  row-gap: 4px;
+  padding: 12px 12px 12px 0;
+}
 
-.card-cover { width: 80px; aspect-ratio: 1; flex-shrink: 0; align-self: center; background: var(--surface-2); overflow: hidden; border-radius: var(--r-sm); margin: 8px 0 8px 10px; }
+.card-cover { grid-area: cover; width: 80px; aspect-ratio: 1; align-self: center; background: var(--surface-2); overflow: hidden; border-radius: var(--r-sm); margin: 0 14px 0 10px; }
 .card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .card-cover-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
 
-.card-body { flex: 1; min-width: 0; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
-/* Two lines before the ellipsis: the action column is vertically centred, so
-   the title's row has room to wrap, and one line clipped "The Dark Side of
-   the Moon" on a phone. */
-.card-title { font-size: 14px; font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--text); }
-.card-artist { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); letter-spacing: 0.02em; }
-.card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
-.tag { font-size: 10px; padding: 2px 8px; border-radius: 20px; background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text-dim); cursor: default; }
+.card-body { display: contents; }
+.card-title { grid-area: title; font-size: 14px; font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--text); }
+.card-artist { grid-area: artist; font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-meta { grid-area: meta; font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); letter-spacing: 0.02em; }
+.card-tags { grid-area: tags; align-self: start; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.tag { font-size: 10px; padding: 2px 8px; white-space: nowrap; border-radius: 20px; background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text-dim); cursor: default; }
 .tag.genre { border-color: var(--accent-border); color: var(--accent); background: var(--accent-dim); cursor: pointer; }
 .tag.genre:hover { background: rgba(15,210,135,.18); }
 .tag.year { border-color: rgba(255,193,77,.22); color: var(--accent-warm); background: rgba(255,193,77,.08); }
@@ -379,7 +391,7 @@ body::after {
 .import-summary-copy { align-self: flex-start; }
 .import-summary-dismiss { width: 100%; justify-content: center; }
 
-.card-actions { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 12px 12px 12px 0; flex-shrink: 0; }
+.card-actions { grid-area: actions; align-self: center; display: flex; flex-direction: column; gap: 6px; padding-left: 10px; }
 .btn {
   height: 32px;
   padding: 0 12px;
@@ -1238,7 +1250,7 @@ body::after {
 
   /* ── Desktop queue widget ── */
   .list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-  .card-cover { width: 96px; margin: 10px 0 10px 12px; }
+  .card-cover { width: 96px; margin: 0 14px 0 12px; }
   .card-title { font-size: 15px; }
   .stats { gap: 16px; }
   .stat { padding: 16px 20px; }
