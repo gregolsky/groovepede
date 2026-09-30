@@ -25,6 +25,11 @@ Upload [`store-listing/feature-graphic-1024x500.png`](store-listing/feature-grap
 as the Play feature graphic. Regenerate it (e.g. to change its copy) with
 `node frontend/scripts/generate-feature-graphic.mjs` from the repository root.
 
+Phone screenshots (1080 × 1920, 9:16) are in
+[`store-listing/screenshots/`](store-listing/screenshots/), numbered in upload
+order. They were taken on the live site at a 405 × 720 viewport (device scale
+8/3) with a queue of 15 classic albums.
+
 ## One-time setup
 
 1. **Make the upload key** (RSA, alias must match `signingKey.alias`). Keep the
