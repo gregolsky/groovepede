@@ -21,6 +21,10 @@ maskable export keeps the centipede inside the central circular safe area. Run
 `node frontend/scripts/check-icons.mjs` to verify dimensions and Play's upload
 format before release.
 
+Upload [`store-listing/feature-graphic-1024x500.png`](store-listing/feature-graphic-1024x500.png)
+as the Play feature graphic. Regenerate it (e.g. to change its copy) with
+`node frontend/scripts/generate-feature-graphic.mjs` from the repository root.
+
 ## One-time setup
 
 1. **Make the upload key** (RSA, alias must match `signingKey.alias`). Keep the

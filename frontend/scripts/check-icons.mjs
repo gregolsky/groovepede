@@ -24,8 +24,15 @@ for (const [relativePath, size] of expected) {
 }
 
 const playIcon = `${root}/android/store-listing/icon-512x512.png`;
-const colorType = readFileSync(playIcon)[25];
-if (colorType !== 6) throw new Error('Play icon must be a 32-bit RGBA PNG');
+const [bitDepth, colorType] = readFileSync(playIcon).subarray(24, 26);
+if (colorType !== 6 || bitDepth !== 8) throw new Error('Play icon must be a 32-bit (8 bits per channel) RGBA PNG');
 if (statSync(playIcon).size > 1024 * 1024) throw new Error('Play icon exceeds 1,024 KB');
+
+const featureGraphic = `${root}/android/store-listing/feature-graphic-1024x500.png`;
+const feature = readFileSync(featureGraphic);
+if (`${feature.readUInt32BE(16)}x${feature.readUInt32BE(20)}` !== '1024x500') {
+  throw new Error('Play feature graphic must be 1024x500');
+}
+if (statSync(featureGraphic).size > 15 * 1024 * 1024) throw new Error('Play feature graphic exceeds 15 MB');
 
 console.log('Icon assets meet the required dimensions and Play upload format.');
