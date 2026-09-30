@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Privacy Policy — Groovepede</title>
-  <meta name="robots" content="noindex">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #121212; color: #ccc; padding: 40px 20px 80px; line-height: 1.7; }
@@ -26,40 +25,44 @@
 <div class="wrap">
   <a class="back" href="/">← Back to Groovepede</a>
   <h1>Privacy Policy</h1>
-  <p class="updated">Last updated: June 2026</p>
+  <p class="updated">Last updated: September 2026</p>
 
   <h2>What Groovepede is</h2>
-  <p>Groovepede is a local-first progressive web app (PWA) for queuing albums from any streaming service. It has no login and no user accounts at all. All data stays on your device.</p>
+  <p>Groovepede is a local-first app for queuing albums from any streaming service. It is available on the web and as an Android app, which is the same web app in a thin wrapper. There are no accounts and no login. Groovepede shows no ads and uses no analytics and no tracking cookies.</p>
 
-  <h2>Data we collect</h2>
-  <p>We collect no personal data. Groovepede stores the following <strong>only in your browser's <code>localStorage</code></strong>:</p>
+  <h2>Data stored on your device</h2>
+  <p>Everything you put in Groovepede is kept <strong>only in your browser's storage (<code>localStorage</code>)</strong> on your device:</p>
   <ul>
-    <li>Album metadata you add (title, artist, cover image URL, release year, Last.fm genre tags, streaming service links)</li>
+    <li>The albums you add: title, artist, cover image URL, release year, genre tags and streaming links</li>
     <li>Your listen count</li>
-    <li>Your preferred listening service setting</li>
+    <li>Your preferred listening service</li>
   </ul>
-  <p>This data never leaves your device. Clearing your browser storage or uninstalling the app removes it entirely.</p>
+  <p>We never upload this data to our servers. A backup you export is a file that stays under your control. To delete all of it, clear the site's data in your browser or uninstall the app.</p>
 
-  <h2>Link resolver</h2>
-  <p>When you paste an album link, Groovepede sends the URL to our own self-hosted resolver, which fetches that album's page from the streaming service you pasted it from and reads its title, artist, cover, and release year. It then checks Deezer, Apple Music, and Spotify's own search APIs for the same album, to give you working links on those services too. The Spotify lookup uses app-level Client Credentials auth — there is no user login involved, and Groovepede never has access to any Spotify account's data. Only the album URL (and, for cross-linking, its artist and title) is ever sent — no personal identifiers, and no data about you as a listener.</p>
+  <h2>What is sent over the network, and why</h2>
+  <ul>
+    <li><strong>Our resolver</strong> (<code>api.groovepede.gregolsky.pl</code>, self-hosted). When you paste a link, the app sends that album URL to the resolver. The resolver looks up the album's title, artist, cover and year, and finds matching links on Deezer, Apple Music and Spotify. Tracklists and artist info are fetched later using album and artist identifiers. Spotify is queried with app-level credentials, so Groovepede never has access to your Spotify account or any other streaming account.</li>
+    <li><strong>Public music databases</strong>, queried anonymously: <a href="https://www.last.fm/api" target="_blank" rel="noopener">Last.fm</a>, <a href="https://musicbrainz.org" target="_blank" rel="noopener">MusicBrainz</a>, Cover Art Archive and TheAudioDB. They receive only artist and album names or IDs, used to look up tags, bios, similar artists and artwork. Cover images load directly from the streaming services' image servers.</li>
+    <li><strong>Error reports.</strong> When something breaks, the app sends a short diagnostic report to our resolver. It contains the error message, a stack trace, the request that failed, the album ID and service involved, and your browser's user-agent. The report has no personal identifiers and is only written to the server logs.</li>
+  </ul>
 
-  <h2>Last.fm</h2>
-  <p>Groovepede calls the <a href="https://www.last.fm/api" target="_blank" rel="noopener">Last.fm API</a> anonymously (no user account required) to fetch genre tags, artist bios, and similar artist suggestions. These requests include only artist and album names — no personal identifiers.</p>
+  <h2>Server logs</h2>
+  <p>Like any web server, the resolver logs incoming requests, including the IP address and user-agent. We use these logs only for rate limiting, blocking abuse and debugging. They are rotated automatically and kept only briefly. We don't share them with anyone or use them to build profiles.</p>
 
-  <h2>Analytics</h2>
-  <p>Groovepede does not use Google Analytics or any tracking cookies. If privacy-friendly analytics (e.g. Plausible or Umami) are added in future, this policy will be updated to disclose what events are collected.</p>
+  <h2>No selling or sharing</h2>
+  <p>We never sell data about you, and we never share it with advertisers or data brokers.</p>
 
-  <h2>Third-party links</h2>
-  <p>Explore mode includes links to Spotify, Apple Music, YouTube, and Last.fm artist pages. Clicking those links takes you to those services, which have their own privacy policies.</p>
+  <h2>Third-party services</h2>
+  <p>The Listen and Explore links open Spotify, Apple Music, YouTube, Last.fm and other services. Those services have their own privacy policies.</p>
 
   <h2>Children</h2>
-  <p>Groovepede is not directed at children under 13. If you are under 13, please do not use this app.</p>
+  <p>Groovepede is not directed at children under 13.</p>
 
   <h2>Changes</h2>
-  <p>If this policy changes in a material way, we'll update the date at the top. Continued use of the app after changes constitutes acceptance.</p>
+  <p>If this policy changes in a material way, we'll update the date at the top of this page.</p>
 
   <h2>Contact</h2>
-  <p>Questions? Open an issue on <a href="https://github.com/gregolsky/groovepede" target="_blank" rel="noopener">GitHub</a>.</p>
+  <p>Questions or requests: <a href="mailto:groovepede@gregolsky.pl">groovepede@gregolsky.pl</a>, or open an issue on <a href="https://github.com/gregolsky/groovepede" target="_blank" rel="noopener">GitHub</a>.</p>
 </div>
 </body>
 </html>
