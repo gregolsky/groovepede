@@ -16,7 +16,7 @@ function lastfmIcon(w, h) {
 }
 
 const CHECKMARK_SVG = raw(`<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>`);
-const PLAY_SVG      = raw(`<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>`);
+const LISTEN_SVG    = raw(`<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>`);
 const X_SVG         = raw(`<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>`);
 const SEARCH_SVG    = raw(`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/></svg>`);
 
@@ -90,7 +90,7 @@ function renderListenBtn(album, prefService, { showService = false } = {}) {
   if (isOnPreferredService(album, prefService)) {
     const url   = pickListenUrl(album, prefService);
     const label = showService ? `Listen on ${prefName}` : 'Listen';
-    return html`<button class="btn btn-listen" data-action="listen" data-url="${url}" title="${`Opens this album in ${prefName}`}">${PLAY_SVG} ${label}</button>`;
+    return html`<button class="btn btn-listen btn--compact" data-action="listen" data-url="${url}" title="${`Opens this album in ${prefName}`}">${LISTEN_SVG} <span class="btn-label">${label}</span></button>`;
   }
 
   const target = pickListenTarget(album, prefService);
@@ -110,11 +110,11 @@ function renderListenBtn(album, prefService, { showService = false } = {}) {
   const tip = altName
     ? `Not on ${prefName} — this album is on ${joinList(elsewhere)}. Change your service in your profile.`
     : `Not on ${prefName} — opens the link you saved.`;
-  // In the list the service name stands alone — the play icon already says
+  // In the list the service name stands alone — the headphones icon already says
   // "listen", and "Listen on YouTube Music" squeezes the album title on a
   // phone. The explore card has room for the full phrase.
   const altLabel = altName ? (showService ? `Listen on ${altName}` : altName) : 'Listen';
-  return html`<button class="btn btn-listen btn-listen--alt" data-action="listen" data-url="${target.url}" title="${tip}">${PLAY_SVG} ${altLabel}</button>`;
+  return html`<button class="btn btn-listen btn-listen--alt" data-action="listen" data-url="${target.url}" title="${tip}">${LISTEN_SVG} ${altLabel}</button>`;
 }
 
 // ── Header actions ───────────────────────────────────────────────────────────
@@ -434,8 +434,8 @@ function renderPendingCard(album, visibleIdx) {
         </div>
         <div class="card-actions">
           ${listenUrl && html`
-          <button class="btn btn-listen" data-action="listen" data-url="${listenUrl}" title="Opens the link you saved">${PLAY_SVG} Listen</button>`}
-          <button class="btn btn-done" data-action="done" data-index="${visibleIdx}" title="${DONE_TIP}">${CHECKMARK_SVG} Done</button>
+          <button class="btn btn-listen btn--compact" data-action="listen" data-url="${listenUrl}" title="Opens the link you saved">${LISTEN_SVG} <span class="btn-label">Listen</span></button>`}
+          <button class="btn btn-done btn--compact" data-action="done" data-index="${visibleIdx}" title="${DONE_TIP}">${CHECKMARK_SVG} <span class="btn-label">Done</span></button>
         </div>
       </div>
     </div>`;
@@ -471,7 +471,7 @@ function renderCards(visible, searchQuery, prefService) {
           </div>
           <div class="card-actions">
             ${renderListenBtn(album, prefService)}
-            <button class="btn btn-done" data-action="done" data-index="${visibleIdx}" title="${DONE_TIP}">${CHECKMARK_SVG} Done</button>
+            <button class="btn btn-done btn--compact" data-action="done" data-index="${visibleIdx}" title="${DONE_TIP}">${CHECKMARK_SVG} <span class="btn-label">Done</span></button>
           </div>
         </div>
       </div>`;

@@ -425,6 +425,20 @@ body::after {
 .btn-done { color: var(--text-dim); border-color: var(--border-2); font-size: 12px; }
 .btn-done:hover { color: var(--text); border-color: var(--text-faint); }
 
+/* Phones: plain Listen and Done shrink to icons (headphones, tick) so the
+   title/tags column gets the width back. The label stays in the DOM, visually
+   hidden, as the button's accessible name. Only .btn--compact buttons: the
+   alt/search/unavailable Listen variants keep their text, because it names the
+   service they open instead — that must never happen silently. */
+@media (max-width: 479px) {
+  .card-actions .btn--compact { position: relative; width: 44px; height: 38px; padding: 0; justify-content: center; }
+  .card-actions .btn--compact svg { width: 17px; height: 17px; }
+  .card-actions .btn--compact .btn-label {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+}
+
 /* ── Similar artists ─────────────────────────────────────────────────────────── */
 .similar-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .similar-chip {
