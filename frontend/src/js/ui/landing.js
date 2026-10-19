@@ -1,5 +1,5 @@
-import { serviceListText } from './services.js';
-import { html } from './html.js';
+import { serviceListText } from '../domain/music-services.js';
+import { html } from '../lib/html.js';
 
 /**
  * The empty-queue landing page: hero, feature cards, extras and the

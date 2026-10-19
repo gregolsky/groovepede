@@ -23,7 +23,7 @@ const MAX_RESPONSE_BYTES = 512 * 1024; // album pages run 25-800KB in practice; 
 /** Thrown when the upstream fetch itself failed (network/timeout/non-2xx) — as
  * opposed to a successful fetch whose body just didn't contain what we wanted.
  * The distinction matters: the former should be retryable by the client
- * (isRetryableResolveError in frontend/src/js/storage.js), the latter shouldn't. */
+ * (isRetryableResolveError in frontend/src/js/domain/albums.js), the latter shouldn't. */
 export class UpstreamFetchError extends Error {
   constructor(status, cause) {
     // `cause` carries the real fetch failure (DNS, TLS, abort, …) that would

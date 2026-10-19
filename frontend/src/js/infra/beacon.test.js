@@ -7,7 +7,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 // instance — can be flipped per test via vi.resetModules() + a fresh dynamic
 // import, rather than one static vi.mock() shared by the whole file.
 //
-// Scope: reportFailure()/send() only — the function app.js's add-failure call
+// Scope: reportFailure()/send() only — the function the add flows' failure call
 // sites actually use. initBeacon()'s window 'error'/'unhandledrejection'
 // wiring predates this file and needs a DOM environment this project's unit
 // suite doesn't run under; it's covered by manual/e2e verification instead.
@@ -58,6 +58,9 @@ describe('beacon: reportFailure/send', () => {
     expect(url).toBe(`${RESOLVER_BASE}/v1/log?token=${FAKE_TOKEN}`);
     const body = JSON.parse(await blob.text());
     expect(body).toMatchObject({ kind: 'add-failed', route: 'manual-resolve', msg: '400', service: 'spotify' });
+    // A CORS-safelisted type: anything else is a preflighted credentialed
+    // request that our CORS headers reject, and the beacon never arrives.
+    expect(blob.type).toBe('text/plain');
   });
 
   it('falls back to fetch(keepalive) with x-gp-token when sendBeacon is unavailable', async () => {
@@ -87,6 +90,18 @@ describe('beacon: reportFailure/send', () => {
     await flush();
 
     expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to fetch when sendBeacon throws', async () => {
+    const { reportFailure } = await loadBeacon();
+    const sendBeacon = vi.fn(() => { throw new TypeError('blocked'); });
+    vi.stubGlobal('navigator', { sendBeacon, userAgent: 'test-ua' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true });
+
+    reportFailure('add-failed', { route: 'share-parse', msg: 'thrown' });
+    await flush();
+
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 

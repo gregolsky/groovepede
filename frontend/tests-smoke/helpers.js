@@ -1,8 +1,8 @@
 // Shared helpers for the production smoke suite.
-// Keep these dependency-free of the app's own ESM modules: src/js/config.js
+// Keep these dependency-free of the app's own ESM modules: src/js/infra/config.js
 // reads `import.meta.env.VITE_GP_PRIVATE_KEY`, which throws under plain Node
 // (Playwright's config/test files aren't run through Vite), so storage keys
-// below are copied literals — see src/js/config.js for the source of truth.
+// below are copied literals — see src/js/infra/config.js for the source of truth.
 import { WIDE_TAG_ALBUMS } from '../tests-lib/albums.js';
 
 const STORAGE_KEY = 'gp_albums';

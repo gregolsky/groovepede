@@ -173,7 +173,7 @@ export async function handleRequest(req, res, { cache, port = PORT, logger = NOO
         }
       }
       // navigator.sendBeacon (the frontend's preferred path — see
-      // frontend/src/js/beacon.js — chosen because it can fire reliably even
+      // frontend/src/js/infra/beacon.js — chosen because it can fire reliably even
       // as the page unloads) can't set custom headers, so it puts the signed
       // token in ?token= instead; the header is still checked first.
       const r = await logRequest({

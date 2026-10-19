@@ -76,7 +76,7 @@ Records with an existing `links` key are passed through unchanged (idempotent).
 | `gp_done` | number string | Lifetime listened count |
 | `gp_pref_service` | string slug | Preferred listening service (default: `'spotify'`) |
 
-All keys are defined in `frontend/src/js/config.js`.
+All keys are defined in `frontend/src/js/infra/config.js`.
 
 ---
 

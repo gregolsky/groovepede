@@ -56,12 +56,25 @@ async function send(payload) {
     // away or closing a share-target tab is a real case here). It can't set
     // custom headers though, so the signed token rides as a query param
     // instead; the resolver's /v1/log route accepts either (see server.mjs).
+    //
+    // text/plain, not application/json: sendBeacon sends credentials, and a
+    // non-safelisted type can make it a preflighted credentialed request,
+    // which our CORS headers (no Allow-Credentials) fail while sendBeacon
+    // still returns true. Seen in production (2026-10): Android Chrome sent
+    // the preflight and never the POST (desktop Chromium skips the preflight
+    // and delivers). A safelisted type needs no preflight anywhere; the
+    // resolver parses the body as JSON regardless.
     if (typeof navigator.sendBeacon === 'function') {
-      const ok = navigator.sendBeacon(
-        `${url}?token=${encodeURIComponent(token)}`,
-        new Blob([body], { type: 'application/json' }),
-      );
-      if (ok) return;
+      let queued = false;
+      try {
+        queued = navigator.sendBeacon(
+          `${url}?token=${encodeURIComponent(token)}`,
+          new Blob([body], { type: 'text/plain' }),
+        );
+      } catch {
+        // Some engines throw rather than return false — use the fallback.
+      }
+      if (queued) return;
     }
 
     // Fallback for environments without sendBeacon (or that reject the

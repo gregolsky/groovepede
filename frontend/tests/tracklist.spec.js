@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { stubExternals, seedAlbums } from './helpers.js';
 
 // An already-resolved album with a Deezer cross-link, so deezerAlbumId()
-// (frontend/src/js/api.js) finds an id and prefetchExplore actually calls
+// (frontend/src/js/domain/albums.js) finds an id and loadAlbumDetails actually calls
 // fetchAlbumTracks instead of short-circuiting to an empty tracklist.
 const ALBUM_WITH_DEEZER_LINK = {
   id: 'spotify:4aawyAB9vmqN3uQ7FjRGTy',
@@ -70,4 +70,23 @@ test('a failed tracklist fetch shows a retry action instead of silent blank spac
   await expect(page.locator('.explore-tracklist')).toBeVisible();
   await expect(page.locator('.explore-track-name')).toHaveText('Airbag');
   await expect(page.locator('.explore-tracklist-error')).toHaveCount(0);
+});
+
+test('navigating to a Deezer-less album whose artist is already loaded shows no stuck "Loading tracks…"', async ({ page, context }) => {
+  // Two albums by one artist, neither with a Deezer link: the second needs no
+  // fetch at all (artist info is cached, there's no tracklist to get), so
+  // nothing would ever rerender a "Loading tracks…" drawn before the load ran.
+  const base = { artist: 'Radiohead', cover: null, year: '1997', tags: [], addedAt: new Date().toISOString() };
+  await seedAlbums(context, [
+    { ...base, id: 'spotify:a', title: 'OK Computer', links: { spotify: { url: 'https://open.spotify.com/album/a' } } },
+    { ...base, id: 'spotify:b', title: 'Kid A',       links: { spotify: { url: 'https://open.spotify.com/album/b' } } },
+  ]);
+  await stubExternals(context, { resolver: null });
+
+  await page.goto('/');
+  await page.locator('.card').first().click({ position: { x: 10, y: 10 } });
+  await expect(page.locator('.explore-album-title')).toHaveText('OK Computer');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('.explore-album-title')).toHaveText('Kid A');
+  await expect(page.locator('.explore-loading')).toHaveCount(0);
 });

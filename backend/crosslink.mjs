@@ -12,7 +12,7 @@ import { DEEZER_BASE, ITUNES_BASE, SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, Upst
  * Normalise an artist name for exact matching: NFKD, strip diacritics, drop
  * everything but letters and digits (of any script — a Latin-only filter folded
  * every Japanese or Cyrillic name to ''), collapse whitespace, lowercase. Mirrors normalizeAlbumStr
- * in the frontend (frontend/src/js/api.js) — kept as its own small copy rather
+ * in the frontend (frontend/src/js/infra/api.js) — kept as its own small copy rather
  * than shared, since this module has no build step and no frontend imports.
  */
 export function normalizeArtist(s) {
@@ -30,7 +30,7 @@ export function normalizeArtist(s) {
  * Same fold as normalizeArtist, plus stripping the edition/reissue qualifiers
  * services routinely disagree on ("Deluxe Edition", "Remastered", …) before
  * comparing titles across services. Mirrors normalizeAlbumStr in the frontend
- * (frontend/src/js/api.js) — kept as its own copy for the same reason.
+ * (frontend/src/js/infra/api.js) — kept as its own copy for the same reason.
  */
 export function normalizeAlbumTitle(s) {
   if (!s) return '';

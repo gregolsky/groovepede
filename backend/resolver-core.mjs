@@ -322,7 +322,7 @@ async function computeArtist({ name, albumId, fetchImpl, logger }) {
 // Same problem as artistRequest: api.deezer.com sends no CORS header, so the
 // browser can't call it directly. albumId is Deezer's own numeric album id
 // (the client already has it for free in links.deezer.url whenever
-// cross-linking found a match, via deezerAlbumId() in frontend/src/js/api.js).
+// cross-linking found a match, via deezerAlbumId() in frontend/src/js/domain/albums.js).
 // This used to be sourced from the Spotify Web API with a user's OAuth token
 // (frontend/src/js/auth.js, retired) — moving it here means it works for every
 // album, not only ones a logged-in user had linked to Spotify.

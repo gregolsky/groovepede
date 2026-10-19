@@ -124,7 +124,7 @@ test('share-target in browser tab resolves the overlay and highlights the card',
 // ── Link embedded in the shared text (not a bare `url` param) ──────────────────
 // Spotify's mobile "Share" sheet fills Web Share's `text` field with
 // "<Title> by <Artist> <url>" rather than putting a bare link in `url` — see
-// storage.js's parseMusicLink and app.js's boot().
+// links.js's parseMusicLink and share-launch.js's beginShareLaunch().
 
 test('sharing "<title> by <artist> <url>" in the text field still resolves and queues the album', async ({ page, context }) => {
   await stubApis(context);

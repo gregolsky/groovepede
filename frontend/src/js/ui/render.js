@@ -1,8 +1,8 @@
-import { filterAlbums } from './storage.js';
+import { filterAlbums } from '../domain/albums.js';
 import { renderLanding } from './landing.js';
-import { SERVICES, serviceLabel, serviceListText, joinList, pickListenTarget, pickListenUrl, linkedServiceNames, isOnPreferredService, isWebUrl } from './services.js';
-import { isApiError } from './api.js';
-import { html, raw } from './html.js';
+import { SERVICES, serviceLabel, serviceListText, joinList, pickListenTarget, pickListenUrl, linkedServiceNames, isOnPreferredService, isWebUrl } from '../domain/music-services.js';
+import { isApiError } from '../lib/api-error.js';
+import { html, raw } from '../lib/html.js';
 
 // Every template in this module is an html`` template: interpolated values
 // are escaped unless they're html``/raw() fragments themselves (see html.js).
@@ -169,7 +169,7 @@ function renderHero({ loadingAdd, addError, addOpen }) {
 /**
  * Every service, straight from the registry. It used to be a hardcoded six,
  * which left Pandora and SoundCloud unselectable — and since adding an album
- * auto-sets the preference from the pasted link (app.js), a SoundCloud user
+ * auto-sets the preference from the pasted link (ui/add-form.js), a SoundCloud user
  * ended up staring at a radio group with nothing selected and no explanation.
  */
 function renderPrefServiceSection(prefService) {

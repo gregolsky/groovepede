@@ -1,7 +1,7 @@
 /**
  * Request authentication for the resolver: verification of the client's
  * signed x-gp-token (ECDSA P-256, bound to each request's payload), and the
- * CORS headers for the allowed origins. See frontend/src/js/sign.js for the
+ * CORS headers for the allowed origins. See frontend/src/js/infra/sign.js for the
  * signing side and the payload each route binds.
  */
 

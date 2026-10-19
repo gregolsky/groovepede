@@ -1,10 +1,12 @@
 import { LASTFM_KEY, RESOLVER_BASE, MUSICBRAINZ_BASE, COVERART_BASE, AUDIODB_BASE, THROTTLE } from './config.js';
 import { signRequestToken } from './sign.js';
 import { signedPayload } from './signed-payloads.js';
-import { loadAlbums, updateAlbum, extractAlbumId } from './storage.js';
-import { createThrottle } from './throttle.js';
-import { canonicalTag } from './tags.js';
+import { extractAlbumId } from '../domain/links.js';
+import { createThrottle } from '../lib/throttle.js';
+import { cleanTags } from '../domain/tags.js';
+import { primaryArtistOf, deezerAlbumId } from '../domain/albums.js';
 import { reportFailure } from './beacon.js';
+import { apiError, isApiError } from '../lib/api-error.js';
 
 const LASTFM = 'https://ws.audioscrobbler.com/2.0/';
 
@@ -20,28 +22,6 @@ const is429        = r => r?._error === 429;
 const retryAfterMs = r => r?._retryAfter != null ? r._retryAfter * 1000 : null;
 
 /**
- * The one failure shape every function in this file returns on a transport
- * failure — a timeout, a 5xx, a 429, a malformed body, "network". `code` is
- * either an HTTP status or one of rejectionReason()'s strings. Never an
- * expected "no" answer (a 404, "no such artist") — those are `null`/`[]`,
- * a real (if empty) result.
- *
- * A plain `_error` property, not a class, so the throttle's own
- * `_error === 429` cooldown check (is429 above) keeps seeing it with no
- * translation layer — the throttle wraps the raw return value of the function
- * it paces, before this module gets a chance to look at it. Frozen so nothing
- * downstream mutates a value that error-message code may hold onto.
- */
-function apiError(code, extra) {
-  return Object.freeze({ _error: code, ...extra });
-}
-
-/** True for any value built by apiError() above — the one failure shape. */
-export function isApiError(x) {
-  return !!x && typeof x === 'object' && '_error' in x;
-}
-
-/**
  * The error shape every rate-limited response returns. `_retryAfter` (seconds,
  * from the server's Retry-After header) is only present when the server sent a
  * usable one — the throttler treats its absence as "escalate our own backoff".
@@ -50,6 +30,11 @@ function rateLimitError(res) {
   const raw = res.headers?.get?.('retry-after');
   const retryAfter = raw ? (parseInt(raw, 10) || null) : null;
   return apiError(429, retryAfter != null ? { _retryAfter: retryAfter } : undefined);
+}
+
+/** The ApiError for a non-ok response; a 429 carries the server's Retry-After. */
+function statusError(res) {
+  return res.status === 429 ? rateLimitError(res) : apiError(res.status);
 }
 
 function makeThrottles() {
@@ -90,6 +75,13 @@ function reportApiFailure(route, reason) {
   // The route goes into msg too: the beacon dedupes on kind|msg, and the same
   // reason from two different services is two different problems.
   reportFailure('api-failed', { route, msg: `${route} ${reason}` });
+}
+
+/** Report why a fetch()/res.json() call threw, and return that as an ApiError. */
+function reportRejection(route, err) {
+  const reason = rejectionReason(err);
+  reportApiFailure(route, reason);
+  return apiError(reason);
 }
 
 /** Report `res` if it's a transport failure; returns res.ok for convenience. */
@@ -148,10 +140,8 @@ async function resolverGet(path, params, payload, timeoutMs = DEFAULT_TIMEOUT_MS
 export async function resolveAlbum(inputUrl) {
   try {
     const res = await resolverGet('/v1/album', { url: inputUrl }, signedPayload.album(inputUrl), ALBUM_TIMEOUT_MS);
-    if (!checkResponse('/v1/album', res)) {
-      if (res.status === 429) return rateLimitError(res);
-      return apiError(res.status);  // a 4xx is the caller's to report, as the add outcome
-    }
+    // A 4xx is the caller's to report, as the add outcome.
+    if (!checkResponse('/v1/album', res)) return statusError(res);
     const data = await res.json();
     // Every stored record needs an id (dedupe, updates, card ids all key on
     // it). A 200 without one is a broken response — retryable, so the link is
@@ -250,7 +240,7 @@ export async function resolveAlbumMusicBrainz(sourceUrl, service) {
     const res = await fetchWithTimeout(`${MUSICBRAINZ_BASE}/url?${params}`);
     // Reported here, not by the caller: resolveAlbumResilient returns the
     // resolver's error when both fail, so MusicBrainz's own would be lost.
-    if (!checkResponse('musicbrainz:url', res)) return apiError(res.status);
+    if (!checkResponse('musicbrainz:url', res)) return statusError(res);
     const data = await res.json();
     const rec  = parseMbRelease(data, sourceUrl, service);
     if (!rec) return apiError('not-found');
@@ -281,56 +271,6 @@ export async function resolveAlbumResilient(sourceUrl, { service } = {}) {
   return lastResolverErr; // both failed — caller leaves stub pending
 }
 
-/** Concatenate tag lists, keeping the first occurrence of each tag, in order. */
-const mergeUnique = (...lists) => [...new Set(lists.flat())];
-
-// Fetch Last.fm tags in the background and update the saved album.
-// onUpdate() is called after storage is written so the caller can re-render.
-export async function enrichWithLastfm(albumId, artistName, albumTitle, onUpdate) {
-  if (!artistName) return; // extraction can succeed with a title but no artist
-  const primaryArtist = artistName.split(',')[0].trim();
-
-  // Fetch artist + album tags in parallel; artist tags take priority
-  const [artistTags, albumData] = await Promise.all([
-    fetchArtistTags(primaryArtist),
-    fetchLastfmAlbum(primaryArtist, albumTitle),
-  ]);
-
-  // Read-only snapshot: only used to decide which further lookups are worth
-  // making. It is never written back — see the commit at the end.
-  const snapshot = loadAlbums().find(x => x.id === albumId);
-  if (!snapshot) return; // left the queue while Last.fm was answering
-
-  // The album's existing (resolver-supplied) tags come first — they're already
-  // curated per-album — then artist tags, then album tags. This is an
-  // enrichment pass, not a replacement: Last.fm coverage is spotty, and
-  // overwriting a resolver-supplied genre with a thinner Last.fm result would
-  // be a regression, not enrichment. albumData is an ApiError, not {tags},
-  // when album.getinfo itself failed — treated the same as "no album tags".
-  let tags = mergeUnique(snapshot.tags || [], artistTags, isApiError(albumData) ? [] : albumData.tags);
-
-  // Fall back to similar artists if we still have nothing at all
-  if (!tags.length) tags = await fetchTagsFromSimilarArtists(primaryArtist);
-
-  // Last.fm coverage thins out fast for obscure artists. Deezer's own (coarser)
-  // genre labels fill that gap — but only when Last.fm came up thin, so a
-  // well-tagged mainstream album isn't diluted with broad Deezer categories.
-  const deezerId = deezerAlbumId(snapshot);
-  if (tags.length < 3 && deezerId) {
-    const deezerData = await fetchDeezerArtistData(primaryArtist, deezerId);
-    if (deezerData?.genres?.length) {
-      tags = mergeUnique(tags, cleanTags(deezerData.genres.map(name => ({ name })), primaryArtist));
-    }
-  }
-
-  if (!tags.length) return;
-  // Commit in one synchronous step against the record as it is NOW, not the
-  // snapshot: the awaits above can take seconds under throttling, and the
-  // queue may have changed meanwhile (updateAlbum is a no-op if it's gone).
-  const saved = updateAlbum(albumId, a => { a.tags = mergeUnique(a.tags || [], tags).slice(0, 7); });
-  if (saved) onUpdate?.();
-}
-
 // ── Last.fm ───────────────────────────────────────────────────────────────────
 
 async function _lfmGet(params) {
@@ -341,8 +281,7 @@ async function _lfmGet(params) {
     if (!checkResponse(route, res)) return apiError(res.status);
     return await res.json();
   } catch (err) {
-    reportApiFailure(route, rejectionReason(err));
-    return apiError(rejectionReason(err));
+    return reportRejection(route, err);
   }
 }
 
@@ -359,55 +298,12 @@ export async function fetchLastfmAlbum(artist, album) {
 
 const BIO_MAX_CHARS = 900;
 
-// 4-digit years ("1990") and 2-digit decades ("90s") are both common Last.fm
-// crowd tags and neither is a genre.
-const YEAR_RE = /^\d{2,4}s?$/;
-
-// Crowd-tag noise that isn't a genre: possession/format tags and bare
-// opinion tags. Not exhaustive by design — extend as more noise turns up.
-const JUNK_TAGS = new Set([
-  'seen live', 'favorites', 'favourite', 'under 2000 listeners',
-  'albums i own', 'vinyl', 'cd', 'digital', 'owned', 'wishlist',
-  'awesome', 'amazing', 'love', 'favourite song',
-]);
-
-function normalizeForCompare(s) {
-  return s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
-}
-
-/**
- * Lowercase, canonicalize near-duplicate spellings, drop junk/year tags and
- * duplicates, and drop a tag that's just the artist's own name (Last.fm
- * frequently self-tags an artist). `artistName` is the artist these specific
- * raw tags came from — the primary artist for fetchArtistTags/
- * fetchLastfmAlbum, or each similar artist in fetchTagsFromSimilarArtists.
- */
-export function cleanTags(rawTags, artistName) {
-  const artistNorm = artistName ? normalizeForCompare(artistName) : null;
-  const seen = new Set();
-  const out = [];
-  for (const raw of rawTags) {
-    // Upstream data: a malformed entry is skipped, not allowed to throw — this
-    // runs inside fire-and-forget enrichment, where a throw is only ever an
-    // unhandled rejection.
-    if (typeof raw?.name !== 'string') continue;
-    const t = canonicalTag(raw.name);
-    if (t.length <= 1 || t.length > 25) continue;
-    if (YEAR_RE.test(t) || JUNK_TAGS.has(t)) continue;
-    if (artistNorm && normalizeForCompare(t) === artistNorm) continue;
-    if (seen.has(t)) continue;
-    seen.add(t);
-    out.push(t);
-  }
-  return out;
-}
-
-async function fetchArtistTags(artist) {
+export async function fetchArtistTags(artist) {
   const data = await lfmGet({ method: 'artist.gettoptags', artist, autocorrect: '1' });
   return cleanTags(asArray(data?.toptags?.tag).filter(t => t.count >= 5).slice(0, 5), artist);
 }
 
-async function fetchTagsFromSimilarArtists(artist) {
+export async function fetchTagsFromSimilarArtists(artist) {
   const simData = await lfmGet({ method: 'artist.getsimilar', artist, limit: '4', autocorrect: '1' });
   const simArtists = asArray(simData?.similarartists?.artist).slice(0, 4);
   const counts = {};
@@ -430,7 +326,7 @@ async function fetchTagsFromSimilarArtists(artist) {
  * Normalise an album/artist string for fuzzy matching:
  * - Unicode NFKD + strip combining diacritics
  * - Drop common edition/parenthetical noise
- * - Strip all non-alphanumeric, collapse whitespace, lowercase
+ * - Keep only letters and digits (any script), collapse whitespace, lowercase
  */
 export function normalizeAlbumStr(s) {
   if (!s) return '';
@@ -440,7 +336,7 @@ export function normalizeAlbumStr(s) {
     .toLowerCase()
     .replace(/\s*[-–—:]\s*(single|ep|album|remaster(?:ed)?|deluxe(?:\s+edition)?|expanded(?:\s+edition)?|bonus\s+tracks?|anniversary\s+edition|special\s+edition)\s*$/i, '')
     .replace(/\s*\((?:deluxe|remaster(?:ed)?|expanded|bonus\s+tracks?|anniversary|special|edition|version)[^)]*\)/gi, '')
-    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -457,7 +353,7 @@ export function normalizeAlbumStr(s) {
  * identical blank space for both; `undefined` (never fetched) is the third
  * state, entirely the caller's (trackCache starts empty).
  * Every failure is also reported through the client beacon (see
- * frontend/src/js/beacon.js) with the real status, so "why didn't this
+ * frontend/src/js/infra/beacon.js) with the real status, so "why didn't this
  * tracklist load" is answerable from the resolver's own logs.
  */
 export async function fetchAlbumTracks(albumId) {
@@ -472,7 +368,7 @@ export async function fetchAlbumTracks(albumId) {
   const result = await throttles.deezer.run(async () => {
     try {
       const res = await resolverGet('/v1/tracks', { albumId }, signedPayload.tracks(albumId));
-      if (!res.ok) return res.status === 429 ? rateLimitError(res) : apiError(res.status);
+      if (!res.ok) return statusError(res);
       const data = await res.json();
       return data?.tracks || [];
     } catch (err) {
@@ -547,12 +443,12 @@ export async function fetchAudiodbArtistImage(artistName) {
       if (!checkResponse('audiodb:search', res)) return apiError(res.status);
       return await res.json();
     } catch (err) {
-      reportApiFailure('audiodb:search', rejectionReason(err));
-      return apiError(rejectionReason(err));
+      return reportRejection('audiodb:search', err);
     }
   });
   if (isApiError(data)) return data;
   const want  = normalizeAlbumStr(artistName);
+  if (!want) return null; // folds to '' — would "match" any other such name
   const match = (data?.artists || []).find(a => normalizeAlbumStr(a?.strArtist) === want);
   // Their CDN serves https fine even though some records store an http:// URL,
   // and a mixed-content image would be blocked outright on our https origin.
@@ -574,20 +470,13 @@ export async function fetchDeezerArtistData(artistName, albumId) {
     try {
       const params = albumId ? { name: artistName, albumId } : { name: artistName };
       const res = await resolverGet('/v1/artist', params, signedPayload.artist(artistName, albumId));
-      if (!checkResponse('/v1/artist', res)) return res.status === 429 ? rateLimitError(res) : apiError(res.status);
+      if (!checkResponse('/v1/artist', res)) return statusError(res);
       const data = await res.json();
       return { image: isBlankImage(data?.image) ? null : data.image, genres: data?.genres || [] };
     } catch (err) {
-      reportApiFailure('/v1/artist', rejectionReason(err));
-      return apiError(rejectionReason(err));
+      return reportRejection('/v1/artist', err);
     }
   });
-}
-
-/** Deezer's numeric album id out of a links.deezer url, or null. */
-export function deezerAlbumId(album) {
-  const url = album?.links?.deezer?.url;
-  return url ? (url.match(/\/album\/(\d+)/)?.[1] || null) : null;
 }
 
 /**
@@ -598,7 +487,7 @@ export function deezerAlbumId(album) {
  * photo", not a failure worth retrying.
  */
 export async function fetchArtistImage(album) {
-  const artist = (album?.artist || '').split(',')[0].trim();
+  const artist = primaryArtistOf(album?.artist);
   if (!artist) return null;
 
   const fromAudiodb = await fetchAudiodbArtistImage(artist);

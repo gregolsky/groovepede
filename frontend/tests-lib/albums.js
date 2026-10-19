@@ -1,7 +1,7 @@
 // Six synthetic, fully-resolved albums (no `_pending`, no cover images — kept
 // deliberately offline, no network dependency) spanning 9 distinct tags so
 // the tag bar's "More" toggle (shown once tagsByFrequency().length > 7,
-// see src/js/render.js) is actually exercised.
+// see src/js/ui/render.js) is actually exercised.
 export const WIDE_TAG_ALBUMS = [
   { id: 'smoke::1', title: 'Song for Our Grandfathers', artist: 'Broken Social Scene', sourceUrl: 'https://open.spotify.com/album/smoke1', tags: ['indie rock', 'post-rock'], links: { spotify: { url: 'https://open.spotify.com/album/smoke1' } } },
   { id: 'smoke::2', title: 'Selected Ambient Works 85-92', artist: 'Aphex Twin', sourceUrl: 'https://open.spotify.com/album/smoke2', tags: ['ambient', 'electronic'], links: { spotify: { url: 'https://open.spotify.com/album/smoke2' } } },

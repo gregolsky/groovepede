@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { tagsByFrequency, highlightMatch, timeAgo, artistInitials, renderApp } from './render.js';
-import { escapeHtml } from './html.js';
+import { escapeHtml } from '../lib/html.js';
 
 describe('tagsByFrequency', () => {
   it('returns empty array for no albums', () => {

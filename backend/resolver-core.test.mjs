@@ -77,13 +77,13 @@ test('publicKeyStatus: ok / missing / invalid, so a misconfigured key is logged 
 });
 
 // ── Signed-payload contract with the frontend ───────────────────────────────
-// The client signs a per-route string (frontend/src/js/signed-payloads.js) and
+// The client signs a per-route string (frontend/src/js/infra/signed-payloads.js) and
 // each route here rebuilds and verifies it. Signing over the frontend's OWN
 // builder — not a copy of its format — means a change on either side fails
 // here, instead of turning into a 403 on every request in production.
 
 test('contract: a token signed over the frontend payload is accepted by every route', async () => {
-  const { signedPayload } = await import('../frontend/src/js/signed-payloads.js');
+  const { signedPayload } = await import('../frontend/src/js/infra/signed-payloads.js');
   const cacheHit = { get: async () => ({ cached: true }), put: async () => {} }; // no upstream fetch needed
   const ok = r => assert.notEqual(r.statusCode, 403, 'route rejected a frontend-signed token');
 

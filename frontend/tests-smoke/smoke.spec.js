@@ -101,7 +101,7 @@ test.describe('resolves a real link per service', () => {
 
       await expect(page.locator('.card')).toHaveCount(1, { timeout: 15_000 });
       // Load-bearing: a failed resolve still renders a visible `.card`, just
-      // with class `.card--pending` (see src/js/render.js, src/js/app.js).
+      // with class `.card--pending` (see src/js/ui/render.js, src/js/services/queue.js).
       // A dead resolver would still pass a plain ".card is visible" check.
       await expect(page.locator('.card--pending')).toHaveCount(0);
       // The real canary: extraction can 200 with a body that has no title/artist

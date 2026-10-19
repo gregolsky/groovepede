@@ -211,13 +211,13 @@ is fetched at most once, ever, so volume stays low without it.
 
 ## Client integration
 
-- `frontend/src/js/config.js` — `RESOLVER_BASE` points at the resolver;
+- `frontend/src/js/infra/config.js` — `RESOLVER_BASE` points at the resolver;
   `GP_PRIVATE_KEY` comes from `VITE_GP_PRIVATE_KEY` (`.env.local` for dev, a
   GitHub Actions secret for CI). Generate the pair with `cd backend && make keygen`.
-- `frontend/src/js/sign.js` — `signRequestToken(payload)` returns
+- `frontend/src/js/infra/sign.js` — `signRequestToken(payload)` returns
   `"<ts>.<base64url(ECDSA-SHA256 over '${ts}\n${payload}')>"`. Unchanged by
   this rewrite.
-- `frontend/src/js/api.js` — `resolveAlbum` calls `/v1/album` and adopts the
+- `frontend/src/js/infra/api.js` — `resolveAlbum` calls `/v1/album` and adopts the
   response near-verbatim (no more `linksByPlatform` reshaping — the resolver
   already returns the client's shape). `resolveAlbumResilient` wraps it with a
   MusicBrainz fallback and is now used on every interactive resolve (paste,

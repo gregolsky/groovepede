@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SERVICES, serviceNames, serviceListText, joinList, serviceLabel, findServiceByHost, buildSearchUrl, isWebUrl, isSafeLinkUrl, pickListenTarget, pickListenUrl, linkedServiceNames, isOnPreferredService } from './services.js';
+import { SERVICES, serviceNames, serviceListText, joinList, serviceLabel, findServiceByHost, buildSearchUrl, isWebUrl, isSafeLinkUrl, pickListenTarget, pickListenUrl, linkedServiceNames, isOnPreferredService } from './music-services.js';
 
 describe('serviceNames', () => {
   it('returns every registered service label in registry order', () => {
