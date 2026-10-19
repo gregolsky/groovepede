@@ -349,6 +349,15 @@ scanner noise can't fill the SD card; stdout itself is capped by Docker's own
 `json-file` logging driver (10MB × 3 files per service, set in
 `docker-compose.yml`) for the same reason.
 
+Query strings are split by who sees the client IP. nginx's line has the IP, so
+`/v1/` requests are logged as path + `?-` (their queries carry pasted album URLs
+and, on `/v1/log`, the signed token); other paths keep their query, which is
+how scanner payloads stay visible. The resolver's line has no IP and records
+the selected params as `query` (`log-query.mjs`): the album URL minus share and
+tracking ids (`si`, `utm_*`, …), the artist name and album id, and only the
+*presence* of a token. One gap: nginx's error log format isn't configurable, so
+an upstream error (resolver down) still prints the full request line there.
+
 The resolver logs structured JSON to stdout via pino (`logger.mjs`) — one line
 per request (method/path/status/ms/reqId) plus a `warn`-level line for every
 non-obvious failure (upstream errors, cache errors, a rejected token, a client

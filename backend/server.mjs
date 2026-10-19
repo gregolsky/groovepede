@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { albumRequest, artistRequest, tracksRequest, logRequest, publicKeyStatus, LOG_MAX_BODY_BYTES } from './resolver-core.mjs';
 import { log, NOOP_LOGGER } from './logger.mjs';
+import { logQuery } from './log-query.mjs';
 
 const PORT    = parseInt(process.env.PORT || '8787', 10);
 const DB_PATH = process.env.DB_PATH || '/data/cache.db';
@@ -116,15 +117,17 @@ export async function handleRequest(req, res, { cache, port = PORT, logger = NOO
   // status value at every return point below — this is the one access-log
   // line per request that was missing entirely before this change.
   let statusCode = null;
-  // Pathname only, never req.url: the query carries the album URL a user
-  // pasted and, on /v1/log, the signed token.
+  // Never req.url: the query carries the album URL a user pasted and, on
+  // /v1/log, the signed token. logQuery() keeps only the selected params.
   let path = null;
+  let query;
   const origWriteHead = res.writeHead.bind(res);
   res.writeHead = (code, headers) => { statusCode = code; return origWriteHead(code, headers); };
 
   try {
     const u = new URL(req.url, `http://localhost:${port}`);
     path = u.pathname;
+    query = logQuery(u);
 
     if (u.pathname === '/healthz') {
       // `commit` lets a deploy verify THIS build is live, not just that some
@@ -210,7 +213,7 @@ export async function handleRequest(req, res, { cache, port = PORT, logger = NOO
     res.writeHead(500, { 'content-type': 'application/json' });
     res.end('{"_error":"internal"}');
   } finally {
-    rlog.info({ method: req.method, path, status: statusCode, ms: Date.now() - start }, 'request');
+    rlog.info({ method: req.method, path, query, status: statusCode, ms: Date.now() - start }, 'request');
   }
 }
 

@@ -19,6 +19,7 @@ process.env.GP_PUBLIC_KEY = publicKey.export({ format: 'der', type: 'spki' }).to
 
 const { createSqliteCache, handleRequest } = await import('./server.mjs');
 const { _resetPublicKey } = await import('./resolver-core.mjs');
+const { logQuery, sanitizeAlbumUrl } = await import('./log-query.mjs');
 _resetPublicKey();
 
 const b64url = (buf) =>
@@ -201,17 +202,43 @@ test('handleRequest: every response is followed by exactly one "request" access-
   assert.equal(typeof accessLines[0].fields.ms, 'number');
 });
 
-test('handleRequest: the access log records the pathname, never the query (pasted URLs, tokens)', async () => {
+test('handleRequest: the access log keeps the album URL (minus tracking ids) and never a token value', async () => {
   const lines = [];
   const logger = {
     child: () => logger,
     info:  (fields, msg) => lines.push({ fields, msg }),
     warn: () => {}, error: () => {}, debug: () => {},
   };
-  const req = mockReq({ url: '/v1/album?url=https%3A%2F%2Fopen.spotify.com%2Falbum%2Fx', headers: { 'x-gp-token': 'bad' } });
-  await handleRequest(req, mockRes(), { cache: noCache, logger });
-  const access = lines.find(l => l.msg === 'request');
-  assert.equal(access.fields.path, '/v1/album');
+  const pasted = 'https://open.spotify.com/album/x?si=SHARER123&utm_source=copy-link';
+  await handleRequest(mockReq({ url: `/v1/album?url=${encodeURIComponent(pasted)}`, headers: { 'x-gp-token': 'bad' } }), mockRes(), { cache: noCache, logger });
+  await handleRequest(mockReq({ method: 'POST', url: '/v1/log?token=SECRET.TOKEN', body: '{}' }), mockRes(), { cache: noCache, logger });
+  const [album, beacon] = lines.filter(l => l.msg === 'request').map(l => l.fields);
+  assert.equal(album.path, '/v1/album');
+  assert.deepEqual(album.query, { url: 'https://open.spotify.com/album/x' });
+  assert.equal(beacon.path, '/v1/log');
+  assert.deepEqual(beacon.query, { token: true });
+  assert.doesNotMatch(JSON.stringify(lines), /SHARER123|SECRET|utm_source/);
+});
+
+test('logQuery: keeps the selected params only; undefined when there are none', () => {
+  const q = (s) => logQuery(new URL(s, 'http://localhost'));
+  assert.equal(q('/healthz'), undefined);
+  assert.equal(q('/.env?debug=1'), undefined);
+  assert.deepEqual(q('/v1/artist?name=Mg%C5%82a&albumId=deezer%3A1&extra=x'), { name: 'Mgła', albumId: 'deezer:1' });
+  assert.equal(q(`/v1/artist?name=${'a'.repeat(500)}`).name.length, 201); // 200 chars + '…'
+});
+
+test('sanitizeAlbumUrl: drops share/tracking params and the fragment, keeps what identifies the album', () => {
+  assert.equal(
+    sanitizeAlbumUrl('https://music.youtube.com/playlist?list=OLAK5uy_abc&si=SHARER&feature=share'),
+    'https://music.youtube.com/playlist?list=OLAK5uy_abc',
+  );
+  assert.equal(
+    sanitizeAlbumUrl('https://music.apple.com/us/album/x/123?i=456&uo=4&UTM_Campaign=a#top'),
+    'https://music.apple.com/us/album/x/123?i=456&uo=4',
+  );
+  assert.equal(sanitizeAlbumUrl('https://www.deezer.com/album/1?fbclid=F&sci=S&igsh=I'), 'https://www.deezer.com/album/1');
+  assert.equal(sanitizeAlbumUrl('not a url'), 'not a url');
 });
 
 test('handleRequest: /v1/log decodes a multi-byte character split across body chunks', async () => {

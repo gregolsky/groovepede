@@ -10,23 +10,33 @@ limit_req_zone $binary_remote_addr zone=gp_rl:10m rate=${RATE_LIMIT};
 # burst of real traffic shouldn't cost the beacon its budget either.
 limit_req_zone $binary_remote_addr zone=gp_log:10m rate=6r/m;
 
-# This template renders into conf.d/, which the stock image includes from inside
-# the http block — where nginx.conf has ALREADY declared
-#   access_log /var/log/nginx/access.log main;
-# Directives declared at the same level are cumulative (all of them fire), so
-# adding a SECOND access_log pointing at that same file here previously wrote
-# every request to it twice — fail2ban then counted each 404 twice and banned
-# at half the configured maxretry. The fix then was to add none at all, which
-# is why the only access log lived in the bind-mounted file fail2ban tails
-# (docker-compose.yml maps ./data/nginx-logs over /var/log/nginx, shadowing
-# the image's stdout symlink) — `docker compose logs nginx` showed nothing.
-#
-# Adding exactly ONE more destination (stdout) is safe: it's cumulative with
-# nginx.conf's file directive, not a replacement of it, so the file still
-# gets written exactly once — only stdout is new. If you ever need to touch
-# the file destination itself, do it in nginx.conf, not by adding another
-# access_log here.
-access_log /dev/stdout main;
+# ── Access log ──────────────────────────────────────────────────────────────
+# API query strings carry the album URL a user pasted (with share ids that
+# point back at their account) and, on /v1/log, the signed token. This log
+# sits next to the client IP, so /v1/ requests are logged as path + "?-"
+# ("had a query"); the resolver logs a sanitised copy of the selected params,
+# with no IP (backend/log-query.mjs). Every other path keeps its query —
+# scanner payloads, no user data.
+map $request_uri $gp_log_uri {
+    "~^(?<gp_log_path>/v1/[^?]*)\?"  "$gp_log_path?-";
+    default                          $request_uri;
+}
+
+# The stock `main` format with only the request field changed. fail2ban's
+# filters parse this line (fail2ban/filter.d/), so keep the field layout.
+log_format gp_main '$remote_addr - $remote_user [$time_local] "$request_method $gp_log_uri $server_protocol" '
+                   '$status $body_bytes_sent "$http_referer" "$http_user_agent" "$http_x_forwarded_for"';
+
+# Declared in EACH server block below, never at this level. This file renders
+# into conf.d/, included inside the http block, where the stock nginx.conf has
+# already declared `access_log /var/log/nginx/access.log main;`. access_log
+# directives at the same level are cumulative, so one added here would write
+# every request twice (fail2ban then banned at half its maxretry), and the
+# `main` line would still log full query strings. A server-level access_log
+# replaces everything inherited instead. These two servers are the only ones
+# on :80/:443 (the stock default.conf is deleted at start), so every request
+# is logged by exactly one of them: once to the file fail2ban tails
+# (./data/nginx-logs, bind-mounted), once to stdout for `docker compose logs`.
 
 # ── AI / LLM training crawlers ──────────────────────────────────────────────
 # Matched on User-Agent and dropped with 444 (close connection, no response) —
@@ -63,6 +73,9 @@ server {
     listen [::]:80;
     server_name ${DOMAIN};
 
+    access_log /var/log/nginx/access.log gp_main;
+    access_log /dev/stdout               gp_main;
+
     # Let's Encrypt webroot challenge (served by certbot's shared volume).
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -79,6 +92,9 @@ server {
     listen [::]:443 ssl;
     http2 on;
     server_name ${DOMAIN};
+
+    access_log /var/log/nginx/access.log gp_main;
+    access_log /dev/stdout               gp_main;
 
     ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
