@@ -15,7 +15,7 @@ process.env.GP_PUBLIC_KEY = publicKey.export({ format: 'der', type: 'spki' }).to
 const core = await import('./resolver-core.mjs');
 const {
   albumRequest, verifyTokenDetailed, normalizeUrl, corsHeaders, _resetPublicKey,
-  artistRequest, normalizeArtist, normalizeAlbumTitle, isBlankArtistImage, pickArtistImage,
+  artistRequest, artistCacheKey, crossLinkDeezer, crossLinkApple, normalizeArtist, normalizeAlbumTitle, isBlankArtistImage, pickArtistImage,
   _resetSpotifyToken, SERVICE_HOSTS, EXTRACTORS, tracksRequest, logRequest, LOG_MAX_BODY_BYTES,
   PARTIAL_TTL_S, publicKeyStatus,
 } = core;
@@ -121,6 +121,32 @@ test('corsHeaders returns {} for an unknown origin', () => {
 test('normalizeArtist folds diacritics, case and punctuation', () => {
   assert.equal(normalizeArtist('Bölzer'), 'bolzer');
   assert.equal(normalizeArtist('Zeal & Ardor'), 'zeal ardor');
+});
+
+test('normalizeArtist keeps non-Latin letters (they used to fold to "")', () => {
+  assert.equal(normalizeArtist('Кино'), 'кино');
+  assert.notEqual(normalizeArtist('宇多田ヒカル'), '');
+  assert.notEqual(normalizeArtist('宇多田ヒカル'), normalizeArtist('Кино'));
+  assert.equal(normalizeAlbumTitle('Группа крови (Remastered)'), 'группа крови');
+});
+
+test('cross-linking never matches a name that folds to nothing', async () => {
+  // Every candidate also folds to '' — before the guard, '' === '' "matched".
+  let fetched = false;
+  const fetchImpl = async () => { fetched = true; return okText(JSON.stringify({
+    data: [{ artist: { name: '???' }, title: '...', link: 'https://www.deezer.com/album/1' }],
+    results: [{ artistName: '???', collectionName: '...', collectionViewUrl: 'https://music.apple.com/x/1' }],
+  })); };
+  assert.equal(await crossLinkDeezer('!!!', '!!!', fetchImpl), null);
+  assert.equal(await crossLinkApple('!!!', '!!!', fetchImpl), null);
+  assert.equal(fetched, false);
+});
+
+test('artistCacheKey: distinct per album and per non-Latin artist', () => {
+  assert.notEqual(artistCacheKey('Кино', ''), artistCacheKey('宇多田ヒカル', ''));
+  assert.notEqual(artistCacheKey('Mgła', '1'), artistCacheKey('Mgła', '2'));
+  assert.notEqual(artistCacheKey('!!!', ''), artistCacheKey('???', ''));
+  assert.equal(artistCacheKey('Bölzer', '7'), artistCacheKey('bolzer', '7'));
 });
 
 test('normalizeAlbumTitle strips edition/reissue qualifiers', () => {
@@ -234,7 +260,7 @@ test('albumRequest: cache miss extracts from Spotify embed, cross-links Deezer +
   assert.equal(r.body.links.spotify.nativeUri, 'spotify:album:0c0hlchA9Q66PcL7xlPPfp');
   assert.equal(r.body.links.deezer.url, 'https://www.deezer.com/album/302');
   assert.equal(r.body.links.apple.url, 'https://music.apple.com/us/album/global-warming/999');
-  assert.equal(putKey, 'album:v1:' + normalizeUrl(SPOTIFY));
+  assert.equal(putKey, 'album:v2:' + normalizeUrl(SPOTIFY));
   assert.equal(putBody.title, 'Global Warming');
 });
 
@@ -1020,7 +1046,7 @@ test('artistRequest: no match → image null, and the negative is cached (with e
   });
   assert.equal(r.statusCode, 200);
   assert.deepEqual(r.body, { image: null, genres: [] });
-  assert.equal(putKey, 'artist:black limbo');
+  assert.equal(putKey, 'artist:v2:black limbo|');
   assert.deepEqual(putBody, { image: null, genres: [] });
 });
 

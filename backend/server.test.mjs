@@ -33,7 +33,7 @@ function makeToken(payload, ts = Math.floor(Date.now() / 1000)) {
 
 // ── mock req/res ────────────────────────────────────────────────────────────
 
-function mockReq({ method = 'GET', url, headers = {}, body = null }) {
+function mockReq({ method = 'GET', url, headers = {}, body = null, chunks = null }) {
   // EventEmitter-shaped so readBody()'s req.on('data'/'end'/'error') works for
   // POST routes (/v1/log) like a real http.IncomingMessage. readBody
   // registers 'data' before 'end', so firing each callback synchronously at
@@ -43,7 +43,8 @@ function mockReq({ method = 'GET', url, headers = {}, body = null }) {
     method, url, headers,
     destroy() {}, // readBody() calls this on an oversized body — no-op is enough for a mock
     on(event, cb) {
-      if (event === 'data' && body != null) cb(Buffer.from(body));
+      if (event === 'data' && chunks) chunks.forEach(c => cb(c));
+      else if (event === 'data' && body != null) cb(Buffer.from(body));
       if (event === 'end') cb();
       return this;
     },
@@ -198,6 +199,36 @@ test('handleRequest: every response is followed by exactly one "request" access-
   assert.equal(accessLines[0].fields.path, '/healthz');
   assert.equal(accessLines[0].fields.status, 200);
   assert.equal(typeof accessLines[0].fields.ms, 'number');
+});
+
+test('handleRequest: the access log records the pathname, never the query (pasted URLs, tokens)', async () => {
+  const lines = [];
+  const logger = {
+    child: () => logger,
+    info:  (fields, msg) => lines.push({ fields, msg }),
+    warn: () => {}, error: () => {}, debug: () => {},
+  };
+  const req = mockReq({ url: '/v1/album?url=https%3A%2F%2Fopen.spotify.com%2Falbum%2Fx', headers: { 'x-gp-token': 'bad' } });
+  await handleRequest(req, mockRes(), { cache: noCache, logger });
+  const access = lines.find(l => l.msg === 'request');
+  assert.equal(access.fields.path, '/v1/album');
+});
+
+test('handleRequest: /v1/log decodes a multi-byte character split across body chunks', async () => {
+  const warnings = [];
+  const logger = { child: () => logger, warn: (f, m) => warnings.push({ f, m }), info: () => {}, error: () => {}, debug: () => {} };
+  const bytes = Buffer.from(JSON.stringify({ kind: 'k', msg: 'Mgła' }));
+  const cut = bytes.indexOf(Buffer.from('ł')) + 1; // inside the 2-byte 'ł'
+  const req = mockReq({
+    method: 'POST', url: '/v1/log',
+    headers: { 'x-gp-token': makeToken('log') },
+    chunks: [bytes.subarray(0, cut), bytes.subarray(cut)],
+  });
+  const res = mockRes();
+  await handleRequest(req, res, { cache: noCache, logger });
+  assert.equal(res.statusCode, 204);
+  const reported = warnings.find(w => w.m === 'client-reported failure');
+  assert.equal(reported.f.msg, 'Mgła');
 });
 
 test('handleRequest: a 404 is logged at warn — these are the hits fail2ban watches for', async () => {

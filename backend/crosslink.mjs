@@ -10,7 +10,8 @@ import { DEEZER_BASE, ITUNES_BASE, SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, Upst
 
 /**
  * Normalise an artist name for exact matching: NFKD, strip diacritics, drop
- * non-alphanumerics, collapse whitespace, lowercase. Mirrors normalizeAlbumStr
+ * everything but letters and digits (of any script — a Latin-only filter folded
+ * every Japanese or Cyrillic name to ''), collapse whitespace, lowercase. Mirrors normalizeAlbumStr
  * in the frontend (frontend/src/js/api.js) — kept as its own small copy rather
  * than shared, since this module has no build step and no frontend imports.
  */
@@ -20,7 +21,7 @@ export function normalizeArtist(s) {
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -39,7 +40,7 @@ export function normalizeAlbumTitle(s) {
     .toLowerCase()
     .replace(/\s*[-–—:]\s*(single|ep|album|remaster(?:ed)?|deluxe(?:\s+edition)?|expanded(?:\s+edition)?|bonus\s+tracks?|anniversary\s+edition|special\s+edition)\s*$/i, '')
     .replace(/\s*\((?:deluxe|remaster(?:ed)?|expanded|bonus\s+tracks?|anniversary|special|edition|version)[^)]*\)/gi, '')
-    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -54,7 +55,12 @@ export function normalizeAlbumTitle(s) {
 // query for every field after it.
 const stripQuotes = s => s.replace(/"/g, '');
 
+// A name that folds to '' (all punctuation, e.g. the band "!!!") would
+// "match" every other such name — no exact match is possible, so don't try.
+const foldsToNothing = (artist, title) => !normalizeArtist(artist) || !normalizeAlbumTitle(title);
+
 export async function crossLinkDeezer(artist, title, fetchImpl) {
+  if (foldsToNothing(artist, title)) return null;
   const q = `artist:"${stripQuotes(artist)}" album:"${stripQuotes(title)}"`;
   const text = await fetchUpstream(`${DEEZER_BASE}/search/album?q=${encodeURIComponent(q)}&limit=5`, fetchImpl);
   const data = JSON.parse(text);
@@ -71,6 +77,7 @@ export async function crossLinkDeezer(artist, title, fetchImpl) {
 }
 
 export async function crossLinkApple(artist, title, fetchImpl) {
+  if (foldsToNothing(artist, title)) return null;
   const term = encodeURIComponent(`${artist} ${title}`);
   const text = await fetchUpstream(`${ITUNES_BASE}/search?term=${term}&entity=album&limit=5`, fetchImpl);
   const data = JSON.parse(text);
@@ -134,6 +141,7 @@ async function getSpotifyAppToken(fetchImpl) {
 export function _resetSpotifyToken() { _spotifyToken = null; _spotifyTokenPromise = null; }
 
 export async function crossLinkSpotify(artist, title, fetchImpl) {
+  if (foldsToNothing(artist, title)) return null;
   const token = await getSpotifyAppToken(fetchImpl);
   if (!token) return null; // not configured — inert, not a failure
 

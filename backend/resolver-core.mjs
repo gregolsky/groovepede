@@ -134,10 +134,15 @@ export async function albumRequest({ method, origin, url, token, cache, fetchImp
       const service = serviceForHost(parsed.hostname);
       return service ? { parsed, service } : { error: 'unsupported url' };
     },
-    cacheKey: () => `album:v1:${normalizeUrl(url)}`,
+    // v2: v1 entries were cross-linked while non-Latin names folded to '', so
+    // such an album could carry another album's links — don't serve those.
+    cacheKey: () => `album:v2:${normalizeUrl(url)}`,
     compute: ({ parsed, service }) => computeAlbum({ url, parsed, service, fetchImpl, logger }),
   });
 }
+
+// Every service an extracted album is cross-linked to (skipping its own).
+const CROSS_LINKERS = { deezer: crossLinkDeezer, apple: crossLinkApple, spotify: crossLinkSpotify };
 
 async function computeAlbum({ url, parsed, service, fetchImpl, logger }) {
   let extracted;
@@ -175,20 +180,11 @@ async function computeAlbum({ url, parsed, service, fetchImpl, logger }) {
     logger.warn({ route: '/v1/album', service, crossLink: target, err: err?.message }, 'cross-link failed');
   };
   if (extracted.artist && extracted.title) {
-    const jobs = [];
-    if (service !== 'deezer') {
-      jobs.push(crossLinkDeezer(extracted.artist, extracted.title, fetchImpl)
-        .then(r => { if (r) links.deezer = r; }).catch(onCrossLinkFail('deezer')));
-    }
-    if (service !== 'apple') {
-      jobs.push(crossLinkApple(extracted.artist, extracted.title, fetchImpl)
-        .then(r => { if (r) links.apple = r; }).catch(onCrossLinkFail('apple')));
-    }
-    if (service !== 'spotify') {
-      jobs.push(crossLinkSpotify(extracted.artist, extracted.title, fetchImpl)
-        .then(r => { if (r) links.spotify = r; }).catch(onCrossLinkFail('spotify')));
-    }
-    await Promise.all(jobs);
+    await Promise.all(Object.entries(CROSS_LINKERS)
+      .filter(([target]) => target !== service)
+      .map(([target, crossLink]) => crossLink(extracted.artist, extracted.title, fetchImpl)
+        .then(r => { if (r) links[target] = r; })
+        .catch(onCrossLinkFail(target))));
   }
 
   const body = {
@@ -240,6 +236,19 @@ export function pickArtistImage(candidates, name) {
 }
 
 /**
+ * Cache key for /v1/artist. Keyed on albumId too: the genres in the body come
+ * from that album (Stage 1 below), so a name-only key served one album's
+ * genres — or a name-only lookup's empty ones — for every album by the artist.
+ * A name that folds to '' (all punctuation) keys on its raw lowercase form
+ * instead, so such names can't all share one entry. v2: v1 keys were
+ * name-only, and every non-Latin artist once shared the key `artist:`.
+ */
+export function artistCacheKey(name, albumId) {
+  const who = normalizeArtist(name) || String(name).trim().toLowerCase();
+  return `artist:v2:${who}|${albumId || ''}`;
+}
+
+/**
  * Resolve an artist image URL. Same contract as albumRequest: adapters pass
  * parsed inputs plus a cache adapter and translate the return shape.
  *
@@ -263,7 +272,7 @@ export async function artistRequest({ method, origin, name, albumId, token, cach
       if (albumId && !/^\d+$/.test(albumId)) return { error: 'bad albumId' };
       return {};
     },
-    cacheKey: () => `artist:${normalizeArtist(name)}`,
+    cacheKey: () => artistCacheKey(name, albumId),
     compute: () => computeArtist({ name, albumId, fetchImpl, logger }),
   });
 }

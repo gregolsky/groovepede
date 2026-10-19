@@ -79,16 +79,24 @@ export function createSqliteCache(dbPath, logger = NOOP_LOGGER) {
  */
 function readBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
-    let data = '';
+    // Buffers, decoded once at the end: decoding chunk by chunk garbles any
+    // multi-byte UTF-8 character that straddles a chunk boundary.
+    const chunks = [];
     let total = 0;
     req.on('data', chunk => {
       total += chunk.length;
       if (total > maxBytes) { req.destroy(); reject(new Error('body too large')); return; }
-      data += chunk;
+      chunks.push(chunk);
     });
-    req.on('end', () => resolve(data));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+/** Write a resolver-core {statusCode, headers, body} result to `res`. */
+function send(res, { statusCode, headers, body }) {
+  res.writeHead(statusCode, headers);
+  res.end(body == null ? '' : JSON.stringify(body));
 }
 
 /**
@@ -108,11 +116,15 @@ export async function handleRequest(req, res, { cache, port = PORT, logger = NOO
   // status value at every return point below — this is the one access-log
   // line per request that was missing entirely before this change.
   let statusCode = null;
+  // Pathname only, never req.url: the query carries the album URL a user
+  // pasted and, on /v1/log, the signed token.
+  let path = null;
   const origWriteHead = res.writeHead.bind(res);
   res.writeHead = (code, headers) => { statusCode = code; return origWriteHead(code, headers); };
 
   try {
     const u = new URL(req.url, `http://localhost:${port}`);
+    path = u.pathname;
 
     if (u.pathname === '/healthz') {
       // `commit` lets a deploy verify THIS build is live, not just that some
@@ -132,8 +144,7 @@ export async function handleRequest(req, res, { cache, port = PORT, logger = NOO
         cache,
         logger: rlog,
       });
-      res.writeHead(r.statusCode, r.headers);
-      res.end(r.body == null ? '' : JSON.stringify(r.body));
+      send(res, r);
       return;
     }
 
@@ -146,8 +157,7 @@ export async function handleRequest(req, res, { cache, port = PORT, logger = NOO
         cache,
         logger: rlog,
       });
-      res.writeHead(r.statusCode, r.headers);
-      res.end(r.body == null ? '' : JSON.stringify(r.body));
+      send(res, r);
       return;
     }
 
@@ -173,8 +183,7 @@ export async function handleRequest(req, res, { cache, port = PORT, logger = NOO
         token:  req.headers['x-gp-token'] || u.searchParams.get('token') || '',
         logger: rlog,
       });
-      res.writeHead(r.statusCode, r.headers);
-      res.end(r.body == null ? '' : JSON.stringify(r.body));
+      send(res, r);
       return;
     }
 
@@ -195,15 +204,13 @@ export async function handleRequest(req, res, { cache, port = PORT, logger = NOO
       cache,
       logger: rlog,
     });
-
-    res.writeHead(r.statusCode, r.headers);
-    res.end(r.body == null ? '' : JSON.stringify(r.body));
+    send(res, r);
   } catch (err) {
     rlog.error({ err: err.message, stack: err.stack }, 'handler error');
     res.writeHead(500, { 'content-type': 'application/json' });
     res.end('{"_error":"internal"}');
   } finally {
-    rlog.info({ method: req.method, path: req.url, status: statusCode, ms: Date.now() - start }, 'request');
+    rlog.info({ method: req.method, path, status: statusCode, ms: Date.now() - start }, 'request');
   }
 }
 
