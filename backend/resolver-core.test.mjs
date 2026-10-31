@@ -707,6 +707,28 @@ test('albumRequest: Spotify short link redirecting to a non-http(s) scheme is re
   assert.deepEqual(r.body, { _error: 'not-found' });
 });
 
+for (const target of [
+  'http://192.168.60.60:8123/',
+  'http://127.0.0.11/',
+  'http://resolver:8787/healthz',
+  'https://evil.example/album/abc',
+  'https://open.spotify.com.evil.example/album/abc',
+]) {
+  test(`albumRequest: Spotify short link redirecting off Spotify is never fetched (${target})`, async () => {
+    const SHORT = 'https://spotify.link/aBcD1234';
+    const fetchImpl = async (url) => {
+      if (url === SHORT) return redirectTo(target);
+      throw new Error('should never fetch a redirect target off Spotify: ' + url);
+    };
+    const r = await albumRequest({
+      method: 'GET', origin: '', url: SHORT,
+      token: makeToken(SHORT), cache: noCache, fetchImpl,
+    });
+    assert.equal(r.statusCode, 400);
+    assert.deepEqual(r.body, { _error: 'extraction-failed' });
+  });
+}
+
 test('albumRequest: Spotify short link — every redirect hop shares one AbortSignal (one budget, not one per hop)', async () => {
   const SHORT = 'https://spotify.link/hop0';
   const signals = [];

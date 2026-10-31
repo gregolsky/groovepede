@@ -106,24 +106,28 @@ export async function fetchUpstream(url, fetchImpl = fetch, opts = {}) {
  *
  * Only http(s) targets are followed: a redirect hands trust to whatever
  * Location header spotify.link/spotify.app.link returns, not just to
- * Spotify's own DNS, so this fetches that target BEFORE the final
- * open.spotify.com host check in extractSpotify runs — worth constraining
- * the scheme explicitly rather than relying on fetchImpl to reject it.
+ * Spotify's own DNS — worth constraining the scheme explicitly rather than
+ * relying on fetchImpl to reject it.
+ *
+ * Only `allowedHosts` are fetched, for the same reason: the resolver sits on
+ * the Pi's LAN, so fetching any Location would let a redirect probe it. A hop
+ * to any other host is returned unfetched, for the caller to reject.
  *
  * Throws UpstreamFetchError(400, …) — a permanent, non-retryable failure —
  * once maxHops is exceeded or a hop's scheme isn't http(s), since neither is
  * a transient condition a client retry would fix.
  */
-export async function resolveRedirect(url, fetchImpl, maxHops = 3) {
+export async function resolveRedirect(url, fetchImpl, allowedHosts, maxHops = 3) {
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
     let current = url;
     for (let hop = 0; hop <= maxHops; hop++) {
-      const { protocol } = new URL(current);
+      const { protocol, hostname } = new URL(current);
       if (protocol !== 'http:' && protocol !== 'https:') {
         throw new UpstreamFetchError(400, new Error(`unsupported redirect scheme: ${protocol}`));
       }
+      if (!allowedHosts.has(hostname)) return current;
       let res;
       try {
         res = await fetchImpl(current, {

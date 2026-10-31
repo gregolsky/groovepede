@@ -80,6 +80,9 @@ function decodeHtmlEntities(s) {
     .replace(/&amp;/g, '&'); // must decode last — otherwise "&amp;quot;" double-decodes to a literal quote
 }
 
+// The only hosts a Spotify short link's redirect chain may fetch.
+const SPOTIFY_REDIRECT_HOSTS = new Set(['open.spotify.com', 'spotify.link', 'spotify.app.link']);
+
 async function extractSpotify(urlObj, fetchImpl) {
   // Spotify's mobile-app "Share" sheet hands out short codes instead of a
   // direct open.spotify.com/album/<id> URL, in one of three shapes (all
@@ -97,7 +100,7 @@ async function extractSpotify(urlObj, fetchImpl) {
     // retryable network/5xx failures from permanent ones. A malformed
     // Location header throws a plain Error instead, which albumRequest's
     // catch-all treats as a failed (non-retryable) extraction.
-    const finalUrl = await resolveRedirect(urlObj.toString(), fetchImpl);
+    const finalUrl = await resolveRedirect(urlObj.toString(), fetchImpl, SPOTIFY_REDIRECT_HOSTS);
     target = new URL(finalUrl);
     // The short link can point at anything Spotify shares (a track, artist,
     // playlist, podcast episode) — only a real album page is extractable.
