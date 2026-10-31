@@ -1,0 +1,71 @@
+# Host audit rules for the Pi. Install as /etc/audit/rules.d/50-groovepede.rules,
+# then: sudo augenrules --load
+# Watches what a break-in would touch, not everything: this is an SD card.
+# Every syscall rule comes in pairs: the Pi's arm64 kernel also runs 32-bit
+# programs, and a b64 rule never sees them.
+
+-D
+-b 8192
+--backlog_wait_time 60000
+-f 1
+
+# ── Noise ───────────────────────────────────────────────────────────────────
+-a never,exclude -F msgtype=CWD
+-a never,exclude -F msgtype=EOE
+
+# ── Accounts and privilege ──────────────────────────────────────────────────
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/sudoers -p wa -k sudoers
+-w /etc/sudoers.d/ -p wa -k sudoers
+
+# ── SSH ─────────────────────────────────────────────────────────────────────
+-w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/ssh/sshd_config.d/ -p wa -k sshd
+-w /root/.ssh/ -p wa -k ssh_keys
+-w /home/gregolsky/.ssh/ -p wa -k ssh_keys
+
+# ── Persistence ─────────────────────────────────────────────────────────────
+-w /etc/crontab -p wa -k cron
+-w /etc/cron.d/ -p wa -k cron
+-w /etc/cron.hourly/ -p wa -k cron
+-w /etc/cron.daily/ -p wa -k cron
+-w /var/spool/cron/ -p wa -k cron
+-w /etc/systemd/system/ -p wa -k systemd
+-w /home/gregolsky/.config/systemd/ -p wa -k systemd
+-w /etc/ld.so.preload -p wa -k preload
+-w /etc/ld.so.conf.d/ -p wa -k preload
+-w /usr/local/bin/ -p wa -k local_bin
+-w /usr/local/sbin/ -p wa -k local_bin
+
+# ── Docker, audit itself, deploy secrets ────────────────────────────────────
+-w /etc/docker/ -p wa -k docker
+-w /etc/audit/ -p wa -k audit_config
+-w /boot/firmware/cmdline.txt -p wa -k boot
+-w /home/gregolsky/groovepede-resolver/backend/.env -p rwa -k secrets
+
+# ── Kernel modules ──────────────────────────────────────────────────────────
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k modules
+-a always,exit -F arch=b32 -S init_module,finit_module,delete_module -k modules
+
+# ── Process injection (PTRACE_POKE*, SETREGS, ATTACH, SEIZE) ─────────────────
+-a always,exit -F arch=b64 -S ptrace -F a0>=4 -F a0<=7 -k ptrace
+-a always,exit -F arch=b32 -S ptrace -F a0>=4 -F a0<=7 -k ptrace
+
+# ── Execution ───────────────────────────────────────────────────────────────
+# Commands a logged-in user ran as root.
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root_cmd
+-a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root_cmd
+# Anything run by the nginx/resolver/certbot uid. Their steady work is only the
+# health check and the 6h reload loop, so a new binary here is the RCE signal.
+-a always,exit -F arch=b64 -S execve -F uid=10001 -k container_exec
+-a always,exit -F arch=b32 -S execve -F uid=10001 -k container_exec
+# Dropper locations.
+-a always,exit -F arch=b64 -S execve -F dir=/tmp -k exec_tmp
+-a always,exit -F arch=b32 -S execve -F dir=/tmp -k exec_tmp
+-a always,exit -F arch=b64 -S execve -F dir=/var/tmp -k exec_tmp
+-a always,exit -F arch=b32 -S execve -F dir=/var/tmp -k exec_tmp
+-a always,exit -F arch=b64 -S execve -F dir=/dev/shm -k exec_tmp
+-a always,exit -F arch=b32 -S execve -F dir=/dev/shm -k exec_tmp

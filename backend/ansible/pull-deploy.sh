@@ -23,8 +23,8 @@ BRANCH=${GP_BRANCH:-main}
 CHECKOUT=${GP_CHECKOUT:-$HOME/.ansible-pull/groovepede}
 
 # The checkout is deliberately NOT the runtime directory. ansible-pull resets
-# its checkout to a clean state on every run — if .env, data/certbot and the
-# SQLite cache lived inside it, a routine pull would wipe the live certificate.
+# its checkout to a clean state on every run — if .env and data/certbot
+# lived inside it, a routine pull would wipe the live certificate.
 # site.yml only ever rsyncs OUT of here and into the runtime dir.
 mkdir -p "$(dirname "$CHECKOUT")"
 

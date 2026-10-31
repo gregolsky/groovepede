@@ -2,6 +2,8 @@
 # docker-entrypoint (envsubst). Only ${DOMAIN}, ${RATE_LIMIT}, ${RATE_LIMIT_BURST}
 # are env vars — nginx runtime vars ($host, $remote_addr, …) are left untouched.
 
+server_tokens off;
+
 # Per-IP rate limiting — replaces AWS WAF's rate-based rule.
 limit_req_zone $binary_remote_addr zone=gp_rl:10m rate=${RATE_LIMIT};
 # Own, much stricter zone for the client error beacon (/v1/log below) — a
@@ -35,8 +37,9 @@ log_format gp_main '$remote_addr - $remote_user [$time_local] "$request_method $
 # `main` line would still log full query strings. A server-level access_log
 # replaces everything inherited instead. These two servers are the only ones
 # on :80/:443 (the stock default.conf is deleted at start), so every request
-# is logged by exactly one of them: once to the file fail2ban tails
-# (./data/nginx-logs, bind-mounted), once to stdout for `docker compose logs`.
+# is logged by exactly one of them, to the file fail2ban tails
+# (./data/nginx-logs, bind-mounted). Never also to stdout: Docker's log limit
+# is by size, so client IPs there would outlive the 30-day retention.
 
 # ── AI / LLM training crawlers ──────────────────────────────────────────────
 # Matched on User-Agent and dropped with 444 (close connection, no response) —
@@ -74,7 +77,6 @@ server {
     server_name ${DOMAIN};
 
     access_log /var/log/nginx/access.log gp_main;
-    access_log /dev/stdout               gp_main;
 
     # Let's Encrypt webroot challenge (served by certbot's shared volume).
     location /.well-known/acme-challenge/ {
@@ -94,12 +96,16 @@ server {
     server_name ${DOMAIN};
 
     access_log /var/log/nginx/access.log gp_main;
-    access_log /dev/stdout               gp_main;
 
     ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
+
+    # API only, so no CSP or frame headers. Never add_header inside a location
+    # below: one there would silently drop both of these for that location.
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options    "nosniff"          always;
 
     # Resolve the resolver's hostname at REQUEST time via Docker's embedded
     # DNS, not once at config-load time. A bare `proxy_pass http://resolver:…`

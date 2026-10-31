@@ -27,7 +27,7 @@
         mode: "0755"
 
     - name: Sync backend sources into the runtime directory
-      # --delete keeps the runtime dir honest, but data/ (certs + SQLite cache)
+      # --delete keeps the runtime dir honest, but data/ (certs + nginx logs)
       # and .env (secrets, never in git) are excluded so they are neither
       # transferred nor deleted. These excludes are the single most important
       # thing here: without them a pull would destroy the live certificate.

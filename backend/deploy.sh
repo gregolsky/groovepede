@@ -70,7 +70,7 @@ echo "→ Domain:     $DOMAIN"
 echo "→ Syncing files…"
 ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/backend'"
 
-# --delete keeps the remote in sync, but 'data/' (cache + certs) is excluded so
+# --delete keeps the remote in sync, but 'data/' (certs + logs) is excluded so
 # it is neither transferred nor deleted. deploy.env is deploy-only (holds the
 # SSH target) and must not land on the Pi.
 rsync -az --delete -e "$RSYNC_SSH" \

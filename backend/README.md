@@ -110,7 +110,8 @@ cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.12
     -xzf /backup/gp-cert-<domain>-<timestamp>.tar.gz -C /etc/letsencrypt
   docker compose up -d --force-recreate nginx
   ```
-- The Pi's `./data/` (SQLite cache + certs) is never overwritten by a redeploy.
+- The Pi's `./data/` (certs + nginx logs) and the `resolver-cache` volume are
+  never overwritten by a redeploy.
 
 > **Runtime directory renamed (2026-08-15):** it is
 > `~/groovepede-resolver/backend`, matching `backend/` in the repo. It was
@@ -127,9 +128,9 @@ cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.12
 > mv ~/groovepede-resolver/resolver ~/groovepede-resolver/backend
 > cd ~/groovepede-resolver/backend && ./deploy-local.sh
 > ```
-> All state is bind-mounted under `./data` (certs, SQLite cache, nginx logs,
-> fail2ban db), so moving the directory moves the state with it — there are no
-> named volumes to migrate.
+> State that matters is bind-mounted under `./data` (certs, nginx logs, fail2ban
+> db), so moving the directory moves it. The one named volume, `resolver-cache`,
+> needs no migrating: the pinned project name keeps it, and it can be rebuilt.
 >
 > `./data/nginx-logs` (fail2ban's log source) and `./data/fail2ban` are created
 > by `init-letsencrypt.sh`; if you're not re-running it, create them yourself:
@@ -181,7 +182,7 @@ commit it just pushed — a plain `{"ok":true}` would also come back from the
 *old* build, so matching `commit` is what actually proves the deploy landed.
 
 **The checkout is deliberately not the runtime directory.** `ansible-pull`
-resets its checkout on every run; if `.env`, `data/certbot` and the SQLite cache
+resets its checkout on every run; if `.env` and `data/certbot`
 lived inside it, a routine pull would wipe the live certificate. So the checkout
 goes to `~/.ansible-pull/groovepede` and the playbook only ever rsyncs *out of*
 it into `~/groovepede-resolver/backend`, excluding `data/` and `.env`.
@@ -369,14 +370,15 @@ beacon report). `LOG_LEVEL` (default `info`) controls the floor; set it to
 ```bash
 docker compose logs -f resolver         # structured JSON: one line per request + failure diagnostics
 docker compose logs -f resolver | jq    # same, pretty-printed
-docker compose logs -f nginx            # access / TLS
+tail -f data/nginx-logs/access.log      # access log (kept at most 30 days)
 docker compose restart resolver         # after editing .env
-docker compose down                     # stop (keeps ./data cache + certs)
+docker compose down                     # stop (keeps cache volume + certs)
 ```
 
-The SQLite cache and certs live under `./data/` (git-ignored). Deleting
-`./data/cache.db` just forces re-extraction of every album on its next paste;
-deleting `./data/certbot` means re-running `init-letsencrypt.sh`.
+Certs live under `./data/` (git-ignored); the SQLite cache lives in the
+`resolver-cache` Docker volume, so the resolver can't reach the TLS key. Removing
+that volume just forces re-extraction of every album on its next paste; deleting
+`./data/certbot` means re-running `init-letsencrypt.sh`.
 
 ## Local test (no TLS / no DNS)
 
