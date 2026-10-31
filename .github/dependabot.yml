@@ -1,0 +1,23 @@
+# Weekly PRs for the images the Pi runs. A deploy never pulls a newer image by
+# itself, so these PRs are how the pinned versions get security fixes. Merging
+# one to main deploys it.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    ignore:
+      # Node 22 LTS: move to the next major on purpose, not from a bot PR.
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: docker-compose
+    directory: /backend
+    schedule:
+      interval: weekly
+    ignore:
+      # nginx's stable line (1.30.x): 1.31 is mainline. Silences every minor, so
+      # move this pin by hand when the next stable line ships (about April 2027).
+      - dependency-name: nginx
+        update-types: [version-update:semver-major, version-update:semver-minor]

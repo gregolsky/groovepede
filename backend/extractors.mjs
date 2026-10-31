@@ -140,13 +140,20 @@ async function extractApple(urlObj, fetchImpl) {
   const matches = [...urlObj.pathname.matchAll(/\/(\d+)(?=\/|$)/g)];
   const id = matches.length ? matches[matches.length - 1][1] : null;
   if (!id) return null;
-  const text = await fetchUpstream(`${ITUNES_BASE}/lookup?id=${id}&entity=album`, fetchImpl);
-  let data;
-  try { data = JSON.parse(text); } catch { return null; }
-  // Validate the lookup actually returned the id we asked for — iTunes'
-  // /lookup can return unrelated results when the id doesn't match an album.
-  const item = (data?.results || []).find(r =>
-    r.wrapperType === 'collection' && r.collectionType === 'Album' && String(r.collectionId) === id);
+  const lookup = async (query) => {
+    const text = await fetchUpstream(`${ITUNES_BASE}/lookup?id=${id}&entity=album${query}`, fetchImpl);
+    let data;
+    try { data = JSON.parse(text); } catch { return null; }
+    // Validate the lookup actually returned the id we asked for — iTunes'
+    // /lookup can return unrelated results when the id doesn't match an album.
+    return (data?.results || []).find(r =>
+      r.wrapperType === 'collection' && r.collectionType === 'Album' && String(r.collectionId) === id);
+  };
+  // The default (US) store first, the link's own only for what it lacks: a
+  // local store localizes names (/jp/ gives "ビートルズ"), which then match
+  // nothing when cross-linking.
+  const storefront = urlObj.pathname.match(/^\/([a-z]{2})\//i)?.[1].toLowerCase();
+  const item = await lookup('') || (storefront && await lookup(`&country=${storefront}`));
   if (!item?.collectionName) return null;
   const cover = item.artworkUrl100 ? item.artworkUrl100.replace(/\d+x\d+bb\.(jpg|png)$/, '600x600bb.$1') : null;
   return {

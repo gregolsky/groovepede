@@ -106,7 +106,7 @@ cp deploy.env.example deploy.env      # set PI_SSH_TARGET (e.g. you@192.168.1.12
   ```bash
   cd ~/groovepede-resolver/backend
   docker run --rm -u 10001:10001 -v "$PWD/data/certbot/conf:/etc/letsencrypt" \
-    -v /tmp:/backup --entrypoint tar certbot/certbot \
+    -v /tmp:/backup --entrypoint tar "$(docker compose config --images | grep '^certbot/')" \
     -xzf /backup/gp-cert-<domain>-<timestamp>.tar.gz -C /etc/letsencrypt
   docker compose up -d --force-recreate nginx
   ```

@@ -801,6 +801,53 @@ test('albumRequest: Apple — extracts via iTunes lookup, upscales artwork, keep
   assert.equal(r.body.id, 'apple:1097861328');
 });
 
+// An album sold only in one storefront is missing from iTunes' default US
+// lookup, but a local store localizes names, so the default always goes first.
+const appleAlbum = {
+  wrapperType: 'collection', collectionType: 'Album', collectionId: 1443365219,
+  artistName: 'Maryla Rodowicz', collectionName: 'Buty 2 1/2',
+};
+const appleLookups = (inDefaultStore) => {
+  const countries = [];
+  const fetchImpl = async (url) => {
+    if (url.includes('itunes.apple.com/lookup')) {
+      const country = new URL(url).searchParams.get('country');
+      countries.push(country);
+      return okText(JSON.stringify({ results: country || inDefaultStore ? [appleAlbum] : [] }));
+    }
+    if (url.includes('api.deezer.com/search/album')) return noMatch;
+    if (url.includes('itunes.apple.com/search')) return noMatch;
+    throw new Error('unexpected fetch: ' + url);
+  };
+  return { countries, fetchImpl };
+};
+const requestApple = (url, fetchImpl) => albumRequest({
+  method: 'GET', origin: '', url, token: makeToken(url), cache: noCache, fetchImpl,
+});
+
+for (const segment of ['pl', 'PL']) {
+  test(`albumRequest: Apple — album missing from the default store falls back to /${segment}/`, async () => {
+    const { countries, fetchImpl } = appleLookups(false);
+    const r = await requestApple(`https://music.apple.com/${segment}/album/buty-2-1-2/1443365219`, fetchImpl);
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(countries, [null, 'pl']);
+  });
+}
+
+test('albumRequest: Apple — album in the default store never asks the local one', async () => {
+  const { countries, fetchImpl } = appleLookups(true);
+  const r = await requestApple('https://music.apple.com/jp/album/x/1443365219', fetchImpl);
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(countries, [null]);
+});
+
+test('albumRequest: Apple — link with no storefront only asks the default store', async () => {
+  const { countries, fetchImpl } = appleLookups(false);
+  const r = await requestApple('https://music.apple.com/album/x/1443365219', fetchImpl);
+  assert.equal(r.statusCode, 400);
+  assert.deepEqual(countries, [null]);
+});
+
 test('albumRequest: Apple — numeric album title picks the LAST numeric path segment as the id', async () => {
   // "/album/1984/1440833608" — a numerically-titled album. The id must be
   // 1440833608 (the last segment), not 1984 (the title, which happens to

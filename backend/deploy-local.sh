@@ -32,12 +32,15 @@ PGID=$(envval PGID); PGID="${PGID:-10001}"
 # as that uid. Backs up live/ + archive/ + renewal/ + accounts/: live/ alone is
 # dangling symlinks without archive/, and without renewal/ certbot can't renew
 # a restored cert.
+# The image compose pins, so a deploy never pulls a floating tag just for this.
+CERTBOT_IMAGE=$(docker compose config --images | grep '^certbot/')
+
 echo "→ Backing up Let's Encrypt cert…"
 if [ -d data/certbot/conf ]; then
   BACKUP_NAME="gp-cert-$DOMAIN-$(date +%Y%m%d-%H%M%S).tar.gz"
   docker run --rm -u "$PUID:$PGID" \
     -v "$PWD/data/certbot/conf:/etc/letsencrypt:ro" -v /tmp:/backup \
-    --entrypoint tar certbot/certbot -czf "/backup/$BACKUP_NAME" -C /etc/letsencrypt .
+    --entrypoint tar "$CERTBOT_IMAGE" -czf "/backup/$BACKUP_NAME" -C /etc/letsencrypt .
   # Keep the 10 most recent so this can't fill the SD card. The prune has to run
   # INSIDE the container, as the same uid that wrote the files: /tmp is sticky
   # (drwxrwxrwt), the tarballs are owned by PUID (10001), and the deploy user is
@@ -47,7 +50,7 @@ if [ -d data/certbot/conf ]; then
   # Non-fatal either way: a failed prune must never block a deploy, and the
   # backup it protects has already been written by this point.
   docker run --rm -u "$PUID:$PGID" -v /tmp:/backup \
-    -e DOMAIN="$DOMAIN" --entrypoint sh certbot/certbot -c \
+    -e DOMAIN="$DOMAIN" --entrypoint sh "$CERTBOT_IMAGE" -c \
     'ls -1t /backup/gp-cert-"$DOMAIN"-*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f' \
     || echo "   (could not prune old backups — continuing)"
   echo "   /tmp/$BACKUP_NAME"
