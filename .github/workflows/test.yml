@@ -13,7 +13,7 @@ jobs:
   frontend:
     # `npm test` = vitest + playwright. Running only playwright here meant the
     # unit suite never ran in CI at all.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: Playwright 1.60 has no chromium deps for ubuntu 26.04 (ubuntu-latest)
     defaults:
       run:
         working-directory: frontend
